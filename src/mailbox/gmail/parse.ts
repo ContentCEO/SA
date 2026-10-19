@@ -5,7 +5,7 @@ export type GmailMessagePart = {
   mimeType?: string;
   filename?: string;
   headers?: { name: string; value: string }[];
-  body?: { data?: string; size?: number };
+  body?: { data?: string; size?: number; attachmentId?: string };
   parts?: GmailMessagePart[];
 };
 
@@ -66,6 +66,42 @@ export function extractBodyText(payload: GmailMessagePart | undefined): string |
   return undefined;
 }
 
+/** Inline images smaller than this (signature logos, tracking pixels) aren't attachments. */
+const INLINE_IMAGE_MIN_BYTES = 10 * 1024;
+
+/**
+ * Check 40 P2: how many photos, PDFs and other files came with an email, by kind only. Never
+ * a file name or any content. A part counts when it has a filename or an attachment
+ * Content-Disposition; an inline image under 10 KB (a signature logo) doesn't.
+ */
+export function countAttachments(payload: GmailMessagePart | undefined): {
+  images: number;
+  pdfs: number;
+  other: number;
+} {
+  const out = { images: 0, pdfs: 0, other: 0 };
+  const walk = (p: GmailMessagePart) => {
+    const disposition = (header(p, "Content-Disposition") ?? "").trim().toLowerCase();
+    const named = !!p.filename;
+    if ((named || disposition.startsWith("attachment")) && !p.parts?.length) {
+      const mime = (p.mimeType ?? "").toLowerCase();
+      const size = p.body?.size ?? 0;
+      const inline =
+        disposition.startsWith("inline") || (!disposition && !!header(p, "Content-ID"));
+      if (mime.startsWith("image/")) {
+        if (!(inline && size < INLINE_IMAGE_MIN_BYTES)) out.images++;
+      } else if (mime === "application/pdf" || /\.pdf$/i.test(p.filename ?? "")) {
+        out.pdfs++;
+      } else {
+        out.other++;
+      }
+    }
+    for (const child of p.parts ?? []) walk(child);
+  };
+  if (payload) walk(payload);
+  return out;
+}
+
 export function toMailMessage(
   resource: GmailMessageResource,
   withBody: boolean,
@@ -88,26 +124,17 @@ export function toMailMessage(
       inReplyTo: header(p, "In-Reply-To"),
       replyTo: header(p, "Reply-To"),
       replyToRead: withBody || !!opts.replyToRead,
+      autoSubmitted: header(p, "Auto-Submitted"),
+      xAutoreply: header(p, "X-Autoreply"),
+      xAutorespond: header(p, "X-Autorespond"),
+      precedence: header(p, "Precedence"),
+      autoResponseSuppress: header(p, "X-Auto-Response-Suppress"),
     },
     bodyText: withBody ? extractBodyText(p) : undefined,
+    // Only a full read has the parts; a metadata read says nothing about attachments.
+    ...(withBody ? { attachments: countAttachments(p) } : {}),
   };
 }
 
-/** "Dana Ruiz <dana@x.com>, b@y.com" → [{name, email}] (lowercased emails). */
-export function parseAddressList(value: string | undefined): { name?: string; email: string }[] {
-  if (!value) return [];
-  const out: { name?: string; email: string }[] = [];
-  // Split on commas that are not inside quotes.
-  for (const raw of value.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/)) {
-    const part = raw.trim();
-    if (!part) continue;
-    const angle = part.match(/^(.*)<([^>]+)>$/);
-    if (angle) {
-      const name = angle[1]!.trim().replace(/^"|"$/g, "").trim();
-      out.push({ name: name || undefined, email: angle[2]!.trim().toLowerCase() });
-    } else if (part.includes("@")) {
-      out.push({ email: part.toLowerCase() });
-    }
-  }
-  return out;
-}
+/** Moved to src/mailbox/address.ts (Check 47 P2); re-exported so older imports keep working. */
+export { parseAddressList } from "../address";

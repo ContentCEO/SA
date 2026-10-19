@@ -402,6 +402,7 @@ describe("LAUNCH.md structure", () => {
     // True of the code: /connect exists, and the same address replaces the key (no limit hit).
     expect(existsSync(join(ROOT, "src/app/(app)/connect/page.tsx"))).toBe(true);
     const mailboxes = readFileSync(join(ROOT, "src/server/mailboxes.ts"), "utf8");
+    // (A plan-paused address reconnects too and stays paused: the plan pause is its own column.)
     expect(mailboxes).toContain("if (!isReconnect && existing.length >= limit)");
   });
 
@@ -507,7 +508,9 @@ describe("LAUNCH.md structure", () => {
     expect(authorized).toBeGreaterThan(0);
     expect(google).toBeGreaterThan(authorized);
     expect(appUrl).toBeGreaterThan(google);
-    expect(flat(step5)).toContain("**Redirect to** your domain");
+    // Check 33 P1 (wave 3): the old addresses forward by themselves once APP_URL is the domain.
+    expect(flat(step5)).toContain("forwards its pages to your domain by itself");
+    expect(flat(step5)).toContain("`src/config/host-redirects.ts`");
     expect(flat(step5)).not.toContain("Keep the old address working");
   });
 
@@ -659,7 +662,9 @@ describe("LAUNCH.md structure", () => {
 
   it("the referral decision in step 13 matches the committed config", () => {
     const pricing = readFileSync(join(ROOT, "src/config/pricing.ts"), "utf8");
-    expect(pricing).toMatch(/REFERRAL_CREDIT_TO\b[^=]*=\s*"referrer"/);
+    // Offer A rewards the referrer only (Davi, 2026-10-13 and 2026-10-15).
+    expect(pricing).toMatch(/REFERRAL_REWARD\b[^=]*=\s*"free_month_one_plan_up"/);
+    expect(pricing).toContain("Only the referrer is rewarded");
     expect(flat(sections[13]!.body)).toContain("referrer only");
   });
 
@@ -837,8 +842,9 @@ describe("LAUNCH.md structure", () => {
       expect(now, text).toContain(text);
     expect(now).not.toMatch(/\bDo it now\b/);
     const step1 = flat(sections.find((x) => x.n === 1)!.body);
-    expect(step1).toContain('**Not in this merge: the "I agree" boxes**');
+    // Check 1 P1: both merges are live (PR #10 = 8cfb749, PR #11 = c1bf580, 2026-10-16).
     expect(step1).toContain("`claude/squared-away-mvp-ddxl7s`");
+    expect(step1).toContain("`c1bf580`");
     expect(step1).not.toContain("Everything waiting is in **one** pull request");
     expect(launch).not.toContain("live with the next merge");
     const line = TERMS_BOX_OFF_LINE;
@@ -860,12 +866,62 @@ describe("LAUNCH.md structure", () => {
     expect(d).toContain(flat(line));
   });
 
-  it("the referral amount options are listed, with the ones that need more code marked", () => {
+  it("the 'I agree' boxes are recorded as live, and the legal text leads the open list (Check 1 P1)", () => {
+    // Production has asked owners to agree since c1bf580 (PR #11), so the notes may never say the
+    // boxes are still waiting for a merge.
+    expect(flat(launch)).not.toMatch(/Not in this merge:? (?:the )?"?I agree"? boxes/i);
+    expect(flat(launch)).not.toContain("live with the second merge");
     const { open } = step13Parts();
-    for (const option of ["A $50", "B $99", "C $199", "D $250", "E one free month", "F like E"]) {
-      expect(open, option).toContain(option);
-    }
-    expect(open).toContain("E and F need code beyond what's built today");
+    const start = open.indexOf("- **");
+    expect(start, "the first open item").toBe(open.indexOf("- **First: finish the legal text"));
+    const first = open.slice(start, open.indexOf("- **", start + 4));
+    expect(first).toContain("Owners are agreeing to the draft");
+    // Check 49 P5: the decisions moved from CLAUDE.md to docs/decisions/, so read both.
+    const claude = flat(
+      ["CLAUDE.md", ...readdirSync(join(ROOT, "docs/decisions")).map((f) => `docs/decisions/${f}`)]
+        .map((f) => readFileSync(join(ROOT, f), "utf8"))
+        .join("\n"),
+    );
+    expect(claude).not.toContain("the gate isn't live yet");
+    expect(claude).not.toContain("live only after the **second merge**");
+  });
+
+  it("step 7 has 7g: Stripe's customer emails, retries and statement descriptor (Check 17 P10)", () => {
+    const heading = "### 7g. Customer emails, retries and your name on card statements";
+    expect(sections[7]!.body).toContain(heading);
+    const g = flat(sections[7]!.body.slice(sections[7]!.body.indexOf(heading)));
+    for (const text of [
+      "Customer emails",
+      "Retries",
+      "statement descriptor",
+      "**Successful payments** and **Refunds** on",
+      "Send emails when card payments fail",
+      "8 tries within 2 weeks",
+      "Worked when:",
+    ])
+      expect(g, text).toContain(text);
+    // In the contents and in step 13's open decisions.
+    expect(launch).toContain("(#7g-customer-emails-retries-and-your-name-on-card-statements)");
+    expect(step13Parts().open).toContain("**After Stripe's last retry**");
+  });
+
+  it("the referral reward is recorded as decided, with Davi's seven answers", () => {
+    const { decided, open } = step13Parts();
+    expect(decided).toContain("#47 referral reward: offer A, a free month one plan up");
+    for (const answer of [
+      "One free month at a time (free, paid, free), no yearly cap.",
+      "Moving down a plan on Stripe's page pauses the extra inboxes too",
+      "Stripe's page offers only card, invoices and cancel",
+      "A free month of Company includes priority support",
+      "waits, with no expiry",
+      "doesn't take back the referrer's free month",
+      "No reminder email",
+    ])
+      expect(decided, answer).toContain(answer);
+    // The old amount options are gone; what's left to do is turning it on, in order.
+    expect(open).not.toMatch(/\bA \$50\b|E one free month/);
+    expect(open).toContain("#47 turning referrals on");
+    expect(open).toContain("Test Clock check");
   });
 
   it("the still-needed list keeps every hand-over item", () => {
@@ -1056,5 +1112,26 @@ describe("main only takes green CI (Check 31 P3)", () => {
       /^jobs:\n  # Required check on main\. Renaming it breaks the ruleset\.\n  check:$/m,
     );
     expect(ci).toMatch(/^  old-code-new-schema:$/m);
+  });
+});
+
+describe("Google review and the domain (wave 3, folded in by the integrator)", () => {
+  it("Check 28 P1: previews have their own Google project; the live client is cleaned before submitting", () => {
+    expect(launch).not.toContain("A separate Google client for previews (optional)");
+    expect(launch).toContain("**A separate Google project for previews and local testing.**");
+    const step0e = sections0().slice(sections0().indexOf("**0e."), sections0().indexOf("**0f."));
+    expect(step0e).toContain("**Clean the live client**");
+    expect(step0e).toContain("`https://<your domain>/api/auth/callback/google`");
+    expect(step0e).toContain("`https://<your domain>/api/gmail/callback`");
+  });
+
+  it("Check 28 P2: brand verification is in 0b, before the video", () => {
+    const s = sections0();
+    const step0b = s.slice(s.indexOf("**0b."), s.indexOf("**0c."));
+    expect(step0b).toContain("**Verify Branding**");
+    expect(step0b).toContain("**Publish branding**");
+    expect(step0b).toContain("within 7 days");
+    const step0d = s.slice(s.indexOf("**0d."), s.indexOf("**0e."));
+    expect(step0d).toContain("Branding is published (0b)");
   });
 });

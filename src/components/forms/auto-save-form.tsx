@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { rememberControl } from "@/lib/focus-after-save";
 import { isPointerChange } from "./auto-save-rules";
 
 /**
@@ -41,14 +42,20 @@ export function AutoSaveForm({
       }}
       onChange={(e) => {
         const t = e.target as unknown as HTMLInputElement;
-        // A checkbox flips on one deliberate tap or Space press: save it.
-        if (t.type === "checkbox") return form.current?.requestSubmit();
+        // A checkbox flips on one deliberate tap or Space press: save it. Check 32 P5: note the
+        // switch first, so focus comes back to it once the saved screen is back.
+        if (t.type === "checkbox") {
+          rememberControl(t);
+          return form.current?.requestSubmit();
+        }
         if (t.type !== "radio") return;
         // Arrow keys move a radio group's choice and fire `change` at every step; saving then
         // would reload the page mid-choice (WCAG 3.2.2). Only a tap or click saves at once;
         // a keyboard change waits for the Save button, which shows again.
-        if (isPointerChange(lastPointer.current, Date.now())) form.current?.requestSubmit();
-        else setKeyboard(true);
+        if (isPointerChange(lastPointer.current, Date.now())) {
+          rememberControl(t);
+          form.current?.requestSubmit();
+        } else setKeyboard(true);
       }}
     >
       {children}

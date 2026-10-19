@@ -17,7 +17,7 @@ async function seedThreads(mailboxId: string) {
       category: "complaint",
       summary: "Dana says the breaker keeps tripping since the panel swap.",
       needsOwner: true,
-      reason: "Complaint — you'll want to handle this yourself.",
+      reason: "A complaint. You'll want to answer this one yourself.",
       from: "Dana",
     },
     {
@@ -68,7 +68,7 @@ test("inbox shows sorted mail, needs-me first, and filters by category", async (
   const items = page.locator("main li");
   await expect(items).toHaveCount(3);
   await expect(items.first()).toContainText("Dana");
-  await expect(items.first()).toContainText("Needs you");
+  await expect(items.first()).toContainText("Needs me");
 
   await page.getByRole("link", { name: "Scheduling" }).click();
   await expect(page).toHaveURL(/c=scheduling/);
@@ -91,7 +91,7 @@ test("'This one needs me' moves a thread into Needs me", async ({ page, context 
   await signInAs(context, owner);
 
   await page.goto("/inbox?c=quote_request");
-  await page.getByText("Priya", { exact: true }).click();
+  await page.locator("main li").filter({ hasText: "Priya" }).locator("summary").first().click();
   await expect(page.getByText("Work")).toBeVisible();
   await page.getByRole("button", { name: "This one needs me" }).click();
   // Wait for the save to land before moving on.
@@ -99,7 +99,7 @@ test("'This one needs me' moves a thread into Needs me", async ({ page, context 
 
   await page.goto("/inbox?c=needs_me");
   await expect(page.locator("main li")).toHaveCount(2);
-  await expect(page.getByText("Priya", { exact: true })).toBeVisible();
+  await expect(page.getByText("Priya", { exact: true }).first()).toBeVisible();
 });
 
 test("a failed inspection shows the permit card with what to fix", async ({ page, context }) => {
@@ -112,6 +112,9 @@ test("a failed inspection shows the permit card with what to fix", async ({ page
       inInbox: true,
       category: "customer_question",
       summary: "Rough electrical inspection failed at 12 Elm St.",
+      // Check 36 P4: a town email needs the owner, with a line from its permit facts.
+      needsOwner: true,
+      needsOwnerReason: "From the town: inspection failed, 2 things to fix.",
       lastMessageAt: new Date(),
       extracted: {
         municipal: true,
@@ -142,6 +145,18 @@ test("a failed inspection shows the permit card with what to fix", async ({ page
   await expect(card).toContainText("Permit E-2026-118");
   await expect(card).toContainText("2 things to fix:");
   await expect(card).toContainText("Missing GFCI in garage");
+
+  // Check 37 P2: folded, the row says what's left to fix…
+  await page.goto("/inbox");
+  await expect(page.getByText("Permit E-2026-118 · 2 things to fix")).toBeVisible();
+  // …and the Queue's Needs-you card shows the permit card.
+  await page.goto("/queue");
+  const queueCard = page.locator(`#t-${t!.id}`);
+  await expect(queueCard).toContainText("From the town: inspection failed, 2 things to fix.");
+  const permitOnQueue = queueCard.getByRole("region", { name: "Permit or inspection" });
+  await expect(permitOnQueue).toContainText("Failed");
+  await expect(permitOnQueue).toContainText("Missing GFCI in garage");
+  await expect(permitOnQueue).toContainText("Label the panel");
 });
 
 test("inbox: a word per row, junk folded into one line, and a search that stays on the phone", async ({
@@ -204,6 +219,8 @@ test("inbox: a word per row, junk folded into one line, and a search that stays 
   // Search filters on the phone; nothing typed goes into the URL.
   await page.waitForLoadState("networkidle");
   const search = page.getByLabel("Search your inbox");
+  // Check 10 P2: the note says what a search looks through (3 emails + 2 junk).
+  await expect(page.getByText("Searching the 5 emails on this page.")).toBeVisible();
   await search.fill("water heater");
   await expect(page.locator("main li")).toHaveCount(1);
   await expect(row("Priya")).toBeVisible();
@@ -219,4 +236,299 @@ test("inbox: a word per row, junk folded into one line, and a search that stays 
     () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
   );
   expect(overflow).toBe(false);
+});
+
+test("Check 10 P1: 'I called them' on an Inbox card turns it back to a normal card, no longer first", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await seedThreads(owner.mailboxId!);
+  // Dana's complaint is the oldest, so only the flag puts it first.
+  await testDb
+    .update(schema.threads)
+    .set({ lastMessageAt: new Date(Date.now() - 60 * 60_000) })
+    .where(eq(schema.threads.gmailThreadId, `b-${owner.mailboxId}`));
+  await signInAs(context, owner);
+  await page.goto("/inbox");
+  const items = page.locator("main li");
+  await expect(items.first()).toContainText("Dana");
+  await expect(items.first()).toContainText("Needs me");
+
+  await page.locator("main li").filter({ hasText: "Dana" }).locator("summary").first().click();
+  await items.first().getByRole("button", { name: "I called them" }).click();
+  await page.getByRole("button", { name: "Yes, I called them" }).click();
+  await expect(page).toHaveURL(/\/inbox\?done=called/);
+  await expect(page.getByText("Marked as answered by phone.")).toBeVisible();
+  await expect(items.first()).not.toContainText("Dana");
+  const dana = items.filter({ hasText: "Dana" });
+  await expect(dana).not.toContainText("Complaint · Needs me");
+  await expect(dana).toContainText("Complaint · Replied");
+  await expect(dana.locator("details").first()).not.toHaveClass(/sa-inverted/);
+});
+
+test("Check 10 P3: a burst pipe from today says Emergency and comes first", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await seedThreads(owner.mailboxId!);
+  const at = new Date(Date.now() - 2 * 60 * 60_000);
+  const [t] = await testDb
+    .insert(schema.threads)
+    .values({
+      mailboxId: owner.mailboxId!,
+      gmailThreadId: `pipe-${owner.mailboxId}`,
+      inInbox: true,
+      category: "customer_question",
+      priority: "high",
+      needsOwner: true,
+      needsOwnerReason: "An emergency.",
+      summary: "Burst pipe in the basement, water everywhere.",
+      lastMessageAt: at,
+      extracted: { urgency: "emergency" },
+    })
+    .returning();
+  await testDb.insert(schema.messages).values({
+    threadId: t!.id,
+    mailboxId: owner.mailboxId!,
+    gmailMessageId: `pipe-m-${owner.mailboxId}`,
+    direction: "in",
+    fromName: "Kevin",
+    fromAddress: "kevin@example.com",
+    sentAt: at,
+  });
+  await signInAs(context, owner);
+  await page.goto("/inbox");
+  const first = page.locator("main li").first();
+  await expect(first).toContainText("Kevin");
+  await expect(first).toContainText("Emergency · Question · Needs me");
+  await expect(page.locator("main li").nth(1)).toContainText("Dana");
+});
+
+test("Check 10 P2: past the first 100, Show older emails pages on and Back to newest returns", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  const now = Date.now();
+  await testDb.insert(schema.threads).values(
+    Array.from({ length: 103 }, (_, i) => ({
+      mailboxId: owner.mailboxId!,
+      gmailThreadId: `old-${i}-${owner.mailboxId}`,
+      inInbox: true,
+      category: "scheduling",
+      summary: `Visit number ${i + 1}.`,
+      lastMessageAt: new Date(now - i * 60_000),
+    })),
+  );
+  await signInAs(context, owner);
+  await page.goto("/inbox");
+  await expect(page.locator("main li")).toHaveCount(100);
+  await expect(page.getByText("Searching the 100 emails on this page.")).toBeVisible();
+  await page.waitForLoadState("networkidle");
+  await page.getByLabel("Search your inbox").fill("Visit number 103.");
+  await expect(page.getByText("No emails match that.")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Show older emails" })).toBeVisible();
+  await page.getByLabel("Search your inbox").fill("");
+  await page.getByRole("link", { name: "Show older emails" }).click();
+  await expect(page).toHaveURL(/after_id=/);
+  await expect(page.locator("main li")).toHaveCount(3);
+  await expect(page.getByText("Visit number 103.")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Show older emails" })).toHaveCount(0);
+  await page.getByRole("link", { name: "Back to newest" }).click();
+  await expect(page).toHaveURL(/\/inbox$/);
+  await expect(page.locator("main li")).toHaveCount(100);
+});
+
+test("Check 10 P4 + P5: Draft ready goes to the draft; the reason shows on a closed card", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await seedThreads(owner.mailboxId!);
+  const [priya] = await testDb
+    .select()
+    .from(schema.threads)
+    .where(eq(schema.threads.gmailThreadId, `c-${owner.mailboxId}`));
+  await testDb.insert(schema.drafts).values({
+    threadId: priya!.id,
+    mailboxId: owner.mailboxId!,
+    kind: "reply",
+    gmailDraftId: `gd-${owner.mailboxId}`,
+    toAddress: "priya@example.com",
+    subject: "Re: Subject c",
+    body: "Hi Priya, happy to quote the water heater.",
+    originalBody: "Hi Priya, happy to quote the water heater.",
+    reason: "Quote request",
+    flags: [],
+    confidence: 80,
+    promptVersion: "draft.v7",
+  });
+  await signInAs(context, owner);
+  await page.goto("/inbox");
+  const row = (name: string) => page.locator("main li").filter({ hasText: name });
+
+  // P5: closed cards. The reason is on the needs-you card's face, not on a normal one.
+  await expect(
+    row("Dana")
+      .locator("summary")
+      .first()
+      .getByText("A complaint. You'll want to answer this one yourself."),
+  ).toBeVisible();
+  await expect(row("Marco").locator("summary").first()).toHaveText(/Marco/);
+  await expect(row("Marco").locator("summary").first()).not.toContainText(
+    "answer this one yourself",
+  );
+
+  // P4: Priya's card says a draft is ready and links to it.
+  await expect(row("Priya")).toContainText("Waiting on you · Draft ready");
+  await page.locator("main li").filter({ hasText: "Priya" }).locator("summary").first().click();
+  await expect(row("Priya").getByRole("button", { name: "Draft a reply" })).toHaveCount(0);
+  const see = row("Priya").getByRole("link", { name: "See the draft" });
+  await expect(see).toHaveAttribute("href", `/queue?t=${priya!.id}#t-${priya!.id}`);
+  // Marco has no draft: still offered.
+  await page.locator("main li").filter({ hasText: "Marco" }).locator("summary").first().click();
+  await expect(row("Marco").getByRole("button", { name: "Draft a reply" })).toBeVisible();
+  await see.click();
+  await expect(page).toHaveURL(/\/queue/);
+  await expect(page.locator(`#t-${priya!.id}`)).toBeVisible();
+});
+
+test("Check 10 P6: an open Inbox card opens Gmail and the customer's page", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await seedThreads(owner.mailboxId!);
+  await signInAs(context, owner);
+  await page.goto("/inbox");
+  const marco = page.locator("main li").filter({ hasText: "Marco" });
+  await page.locator("main li").filter({ hasText: "Marco" }).locator("summary").first().click();
+  const gmail = marco.getByRole("link", { name: "Open in Gmail" });
+  await expect(gmail).toHaveAttribute(
+    "href",
+    `https://mail.google.com/mail/?authuser=${encodeURIComponent(owner.email)}#all/a-${owner.mailboxId}`,
+  );
+  await expect(gmail).toHaveAttribute("target", "_blank");
+  const name = marco.getByRole("link", { name: "Marco" });
+  const href = await name.getAttribute("href");
+  expect(href).toMatch(/^\/customers\/[0-9a-f-]{36}$/);
+  expect(href).not.toContain("@");
+  await name.click();
+  await expect(page).toHaveURL(/\/customers\/[0-9a-f-]{36}$/);
+  await expect(page.locator("main")).toContainText("Marco");
+  await expect(page.locator("main")).toContainText("move rough-in to Thursday");
+});
+
+test("Check 10 P7: older unsorted mail folds into one line; the Not sorted chip lists it", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await seedThreads(owner.mailboxId!);
+  for (const [g, days, name] of [
+    ["u-old", 20, "Oldfield"],
+    ["u-new", 0, "Newman"],
+  ] as const) {
+    const at = new Date(Date.now() - days * 86_400_000 - 60_000);
+    const [t] = await testDb
+      .insert(schema.threads)
+      .values({
+        mailboxId: owner.mailboxId!,
+        gmailThreadId: `${g}-${owner.mailboxId}`,
+        inInbox: true,
+        subject: `Hello from ${name}`,
+        lastMessageAt: at,
+      })
+      .returning();
+    await testDb.insert(schema.messages).values({
+      threadId: t!.id,
+      mailboxId: owner.mailboxId!,
+      gmailMessageId: `${g}-m-${owner.mailboxId}`,
+      direction: "in",
+      fromName: name,
+      fromAddress: `${name.toLowerCase()}@example.com`,
+      sentAt: at,
+    });
+  }
+  await signInAs(context, owner);
+  await page.goto("/inbox");
+  const row = (name: string) => page.locator("main li").filter({ hasText: name });
+  await expect(row("Newman")).toContainText("Not sorted yet");
+  await expect(row("Oldfield")).toBeHidden();
+  const fold = page.getByText("1 older email, from before Squared Away started sorting");
+  await expect(fold).toBeVisible();
+  await fold.click();
+  await expect(row("Oldfield")).toBeVisible();
+  await expect(row("Oldfield")).toContainText("Not sorted");
+  await expect(row("Oldfield")).not.toContainText("Not sorted yet");
+
+  await page.getByRole("link", { name: "Not sorted" }).click();
+  await expect(page).toHaveURL(/c=unsorted/);
+  await expect(page.locator("main li")).toHaveCount(2);
+  await expect(row("Oldfield")).toBeVisible();
+});
+
+test("a chip row swiped before the page's script runs stays where the owner left it", async ({
+  page,
+  context,
+}) => {
+  // E2E hardening (2026-10-19): ChipRow scrolls the active chip into view as the page hydrates.
+  // On a slow phone that came after the owner had already swiped the row to "Scheduling", so the
+  // row jumped back and their tap landed between two other chips (inbox.spec.ts:59, on phones).
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await seedThreads(owner.mailboxId!);
+  await signInAs(context, owner);
+  await page.setViewportSize({ width: 375, height: 812 });
+  // The page's script is held back until the swipe is done.
+  let release!: () => void;
+  const held = new Promise<void>((r) => (release = r));
+  await page.route("**/_next/static/chunks/*.js", async (route) => {
+    await held;
+    await route.continue();
+  });
+  await page.goto("/inbox", { waitUntil: "domcontentloaded" });
+  const nav = page.getByRole("navigation", { name: "Filter" });
+  const chip = nav.getByRole("link", { name: "Scheduling" });
+  await chip.scrollIntoViewIfNeeded();
+  const swiped = await nav.evaluate((n) => n.scrollLeft);
+  expect(swiped).toBeGreaterThan(0);
+  release();
+  await page.waitForLoadState("networkidle");
+  expect(await nav.evaluate((n) => n.scrollLeft)).toBe(swiped);
+  await chip.click();
+  await expect(page).toHaveURL(/c=scheduling/);
+});
+
+test("Check 10 P9: chips wrap on a computer; on a phone the active chip is in view", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await seedThreads(owner.mailboxId!);
+  await signInAs(context, owner);
+  const nav = page.getByRole("navigation", { name: "Filter" });
+
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto("/inbox");
+  const box = (await nav.boundingBox())!;
+  for (const chip of await nav.getByRole("link").all()) {
+    const b = (await chip.boundingBox())!;
+    expect(b.x).toBeGreaterThanOrEqual(box.x - 1);
+    expect(b.x + b.width).toBeLessThanOrEqual(box.x + box.width + 1);
+  }
+  expect(await nav.evaluate((n) => n.scrollWidth <= n.clientWidth)).toBe(true);
+
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.goto("/inbox?c=complaint");
+  const active = nav.getByRole("link", { name: "Complaints" });
+  await expect(active).toHaveAttribute("aria-current", "page");
+  await expect(async () => {
+    const n = (await nav.boundingBox())!;
+    const a = (await active.boundingBox())!;
+    expect(a.x).toBeGreaterThanOrEqual(n.x);
+    expect(a.x + a.width).toBeLessThanOrEqual(n.x + n.width);
+  }).toPass();
+  await expect(page.locator("main li").first()).toContainText("Complaint · Needs me");
 });

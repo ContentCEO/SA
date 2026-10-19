@@ -1,7 +1,6 @@
 import "server-only";
 import { and, count, eq, gt, gte, inArray, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
 import {
-  BUSINESS_HOURS,
   LEAD_AT_RISK_HOURS,
   LEAD_AT_RISK_MAX_AGE_HOURS,
   LEAD_AT_RISK_PUSHES_PER_DAY,
@@ -11,7 +10,7 @@ import { db } from "@/db";
 import { activityLog, businessProfiles, mailboxes, threads, workspaces } from "@/db/schema";
 import { pushConfigured, sendPush, type PushSender } from "@/lib/web-push";
 import { mailboxRunning } from "./mailbox-plan";
-import { businessMinutesBetween, inBusinessHours } from "./business-hours-rules";
+import { businessMinutesBetween, inBusinessHours, workHoursOf } from "./business-hours-rules";
 import { unalerted } from "./leads-at-risk-rules";
 import { jobsAllowed } from "./lifecycle";
 import { STALE_SYNC_MS } from "./mailbox-health";
@@ -19,9 +18,9 @@ import {
   claimPushSlot,
   pushEndpointsByWorkspace,
   releasePushSlot,
-  removePushSubscription,
+  recordPushResult,
 } from "./push-alerts";
-import { inQuietHours } from "./sms-alerts";
+import { inQuietHours, secondsUntilQuiet } from "./sms-alerts";
 import { atLocalHour, usableTimeZone } from "./snooze-rules";
 import {
   asDate,
@@ -30,6 +29,7 @@ import {
   quoteRequestSql,
   waitingReplySql,
   waitingSinceSql,
+  crewSql,
 } from "./thread-sql";
 
 export { unalerted } from "./leads-at-risk-rules";
@@ -113,6 +113,8 @@ export function leadsAtRiskQuery(workspaceId: string, now: Date) {
         gt(threads.lastMessageAt, new Date(now.getTime() - LEAD_AT_RISK_MAX_AGE_HOURS * 3_600_000)),
         sql`${waitingSince} is not null`,
         sql`not ${noReplySql(waitingSender)}`,
+        // Check 41 P6: the owner's own crew is never a lead.
+        sql`not ${crewSql(workspaceId, waitingSender)}`,
         sql`not ${answeredInApp}`,
       ),
     );
@@ -126,9 +128,11 @@ export async function leadsAtRisk(
   workspaceId: string,
   now: Date,
   timeZone: string,
-  hours: BusinessHours = BUSINESS_HOURS,
+  given?: BusinessHours,
 ): Promise<LeadAtRisk[]> {
   const tz = usableTimeZone(timeZone);
+  // Check 15 P8: the owner's own working days and hours, unless the caller already has them.
+  const hours = given ?? (await workspaceHours(workspaceId));
   const rows = await leadsAtRiskQuery(workspaceId, now);
   const leads: LeadAtRisk[] = [];
   for (const r of rows) {
@@ -148,6 +152,19 @@ export async function leadsAtRisk(
   );
 }
 
+/** Check 15 P8: the hours the owner set on Settings → Your business (or the default). */
+export async function workspaceHours(workspaceId: string): Promise<BusinessHours> {
+  const [p] = await db()
+    .select({
+      workDays: businessProfiles.workDays,
+      workStartHour: businessProfiles.workStartHour,
+      workEndHour: businessProfiles.workEndHour,
+    })
+    .from(businessProfiles)
+    .where(eq(businessProfiles.workspaceId, workspaceId));
+  return workHoursOf(p);
+}
+
 /**
  * Every 15 minutes (the workspace-lifecycle job): one phone notification per owner when a
  * quote request has waited past the mark. Only inside business hours and outside quiet hours,
@@ -161,7 +178,6 @@ export async function sendLeadAtRiskPushes(
 ): Promise<{ sent: number; notConfigured?: true }> {
   const push = deps.push ?? sendPush;
   if (!deps.push && !pushConfigured()) return { sent: 0, notConfigured: true };
-  const hours = deps.hours ?? BUSINESS_HOURS;
   const byWorkspace = await pushEndpointsByWorkspace(deps.workspaceId);
   if (!byWorkspace.size) return { sent: 0 };
 
@@ -170,17 +186,22 @@ export async function sendLeadAtRiskPushes(
       workspace: workspaces,
       timeZone: businessProfiles.timeZone,
       lastPushAt: businessProfiles.pushLastSentAt,
+      workDays: businessProfiles.workDays,
+      workStartHour: businessProfiles.workStartHour,
+      workEndHour: businessProfiles.workEndHour,
     })
     .from(workspaces)
     .leftJoin(businessProfiles, eq(businessProfiles.workspaceId, workspaces.id))
     .where(inArray(workspaces.id, [...byWorkspace.keys()]));
 
   let sent = 0;
-  for (const { workspace: w, timeZone, lastPushAt } of rows) {
+  for (const { workspace: w, timeZone, lastPushAt, ...work } of rows) {
     // One owner's trouble never stops the others (A29); the log names no content (A3).
     try {
       if (!jobsAllowed(w, now)) continue;
       const tz = usableTimeZone(timeZone);
+      // Check 15 P8: each owner's own working days and hours (the default before they edit).
+      const hours = deps.hours ?? workHoursOf(work);
       if (!inBusinessHours(now, tz, hours) || inQuietHours(now, tz)) continue;
 
       const [today] = await db()
@@ -225,8 +246,9 @@ export async function sendLeadAtRiskPushes(
       let delivered = 0;
       for (const endpoint of byWorkspace.get(w.id) ?? []) {
         try {
-          const r = await push(endpoint);
-          if (r === "gone") await removePushSubscription(w.id, endpoint);
+          // Check 19 P8: the push service drops it rather than buzz after 9pm.
+          const r = await push(endpoint, { ttlSec: secondsUntilQuiet(now, tz) });
+          await recordPushResult(w.id, endpoint, r, now);
           if (r === "sent") delivered++;
         } catch (err) {
           console.error("lead_at_risk_push_failed", {

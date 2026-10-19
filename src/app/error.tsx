@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { Headline } from "@/components/brand/headline";
+import { HelpLine } from "@/components/app/help-line";
 import { Button } from "@/components/ui/button";
 
 /**
@@ -16,7 +17,12 @@ export default function ErrorPage({
   retry: () => void;
 }) {
   return (
-    <div className="mx-auto flex w-full max-w-xl flex-1 flex-col justify-center gap-6 px-4 py-12">
+    // Check 32 P12: a <main> (landmark and skip-link target) and how to reach us.
+    <main
+      id="main"
+      tabIndex={-1}
+      className="mx-auto flex w-full max-w-xl flex-1 flex-col justify-center gap-6 px-4 py-12 outline-none"
+    >
       <Headline serif="sorry about that," heavy="something broke." />
       <p className="text-lg">Something went wrong on our side.</p>
       <div className="flex flex-col gap-3 sm:flex-row">
@@ -30,6 +36,7 @@ export default function ErrorPage({
           Go to the homepage
         </Link>
       </div>
-    </div>
+      <HelpLine />
+    </main>
   );
 }

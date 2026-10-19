@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
 import { expect, test } from "@playwright/test";
 import * as schema from "../../src/db/schema";
+import { runHook } from "./fakes/client";
 import { seedOwner, signInAs, testDb } from "./support";
 
 const DAY = 86_400_000;
@@ -52,7 +54,7 @@ async function quote(
   }
 }
 
-test("quotes: stages, amounts, and one-tap Won", async ({ page, context }) => {
+test("quotes: stages, amounts, and one-tap Won", async ({ page, context, request }) => {
   const owner = await seedOwner({ mailbox: true, backfilled: true });
   await quote(owner.mailboxId!, {
     name: "Dana Ruiz",
@@ -68,6 +70,8 @@ test("quotes: stages, amounts, and one-tap Won", async ({ page, context }) => {
     reply: "Hi Sam, the vanity install is $1,200.",
     summary: "Sam wants a vanity installed.",
   });
+  // Check 29 P7: amounts are caught by the job after a sync, not on opening Quotes.
+  await runHook(request, { step: "quote-upkeep", mailboxId: owner.mailboxId! });
   await signInAs(context, owner);
 
   await page.goto("/queue");
@@ -83,23 +87,51 @@ test("quotes: stages, amounts, and one-tap Won", async ({ page, context }) => {
   await expect(sam).toContainText("Gone quiet");
   await expect(sam).toContainText("$1,200");
 
+  // Check 11 P7: only Won asks for a figure, prefilled with the one we found.
   await sam.getByText("Mark how it ended").click();
-  await sam.getByLabel("Job amount (optional)").fill("1350");
-  await sam.getByRole("button", { name: "Mark won" }).click();
+  await sam.getByText("Mark won", { exact: true }).click();
+  const charge = sam.getByLabel("What you'll charge (optional)");
+  await expect(charge).toHaveValue("1200");
+  // Check 1 P5: the amount box has the slate field edge, like every other field.
+  const slate = await page.evaluate(() =>
+    getComputedStyle(document.documentElement).getPropertyValue("--sa-k-slate").trim(),
+  );
+  expect(slate).toBe("#5e5d59");
+  await expect(charge).toHaveCSS("border-top-color", "rgb(94, 93, 89)");
+  await test.info().attach("quotes-won-form-375", {
+    body: await sam.screenshot(),
+    contentType: "image/png",
+  });
+  await charge.fill("1350");
+  await sam.getByRole("button", { name: "Save as won" }).click();
   await expect(page.getByRole("status").filter({ hasText: "Marked won" })).toBeVisible();
   await expect(page.getByRole("article", { name: "Quote for Sam Lee" })).toHaveCount(0);
 
   await page.getByRole("link", { name: /^Won \(1\)/ }).click();
-  await expect(page.getByRole("article", { name: "Quote for Sam Lee" })).toContainText("$1,350");
+  const samWon = page.getByRole("article", { name: "Quote for Sam Lee" });
+  await expect(samWon).toContainText("$1,350");
+  await expect(samWon).toContainText(/Won [A-Z][a-z]{2} \d{1,2}/);
   await expect(page.getByRole("region", { name: "Last 30 days" })).toContainText("$1,350");
+
+  // …and fix it after, without reopening.
+  await samWon.getByText("Change amount").click();
+  await samWon.getByLabel("What you'll charge (optional)").fill("1400");
+  await samWon.getByRole("button", { name: "Save amount" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Amount saved." })).toBeVisible();
+  await expect(page.getByRole("article", { name: "Quote for Sam Lee" })).toContainText("$1,400");
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+  );
+  expect(overflow).toBe(false);
 });
 
 test("quotes: no answer is our guess, one tap changes it, and Activity shows the close rate", async ({
   page,
   context,
+  request,
 }) => {
   const owner = await seedOwner({ mailbox: true, backfilled: true });
-  // Quoted 25 days ago, never heard back → we guess "no answer" when Quotes loads.
+  // Quoted 25 days ago, never heard back → the job after the next sync guesses "no answer".
   await quote(owner.mailboxId!, {
     name: "Kim Park",
     from: "kim@customer.com",
@@ -115,13 +147,16 @@ test("quotes: no answer is our guess, one tap changes it, and Activity shows the
     outAgo: 2,
     summary: "Lee wants a faucet swapped.",
   });
+  // Check 29 P7: the job after a sync makes the guess; opening Quotes writes nothing.
+  await runHook(request, { step: "quote-upkeep", mailboxId: owner.mailboxId! });
   await signInAs(context, owner);
 
   await page.goto("/quotes");
   await page.getByRole("link", { name: /^No answer \(1\)/ }).click();
   await expect(page).toHaveURL(/stage=no_answer/);
   const kim = page.getByRole("article", { name: "Quote for Kim Park" });
-  await expect(kim).toContainText("No answer (our guess)");
+  // Check 11 P7: a decided card says the day.
+  await expect(kim).toContainText(/No answer [A-Z][a-z]{2} \d{1,2} \(our guess\)/);
 
   // Our guess was wrong: one tap.
   await kim.getByRole("button", { name: "Mark won", exact: true }).click();
@@ -138,7 +173,7 @@ test("quotes: no answer is our guess, one tap changes it, and Activity shows the
   await page.getByRole("link", { name: /^Open \(1\)/ }).click();
   const lee = page.getByRole("article", { name: "Quote for Lee Chan" });
   await lee.getByText("Mark how it ended").click();
-  await lee.getByRole("button", { name: "No answer", exact: true }).click();
+  await lee.getByRole("button", { name: "Mark no answer", exact: true }).click();
   await expect(page.getByRole("status").filter({ hasText: "Marked no answer." })).toBeVisible();
 
   const overflow = await page.evaluate(
@@ -195,6 +230,190 @@ test("customers: list, search on the phone, and one customer's emails", async ({
   // The URL carries an opaque key, never the email address.
   expect(page.url()).not.toContain("tom@");
   expect(page.url()).toMatch(/\/customers\/[0-9a-f-]{36}$/);
+  // Check 7 P11: the back link is an icon and words, named just "All customers".
+  await expect(page.getByRole("link", { name: "All customers", exact: true })).toBeVisible();
+});
+
+test("customers: suppliers and towns are kept apart under their own links", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await quote(owner.mailboxId!, {
+    name: "Priya Shah",
+    from: "priya@customer.com",
+    inAgo: 2,
+    summary: "Priya wants a water heater swapped.",
+  });
+  for (const [name, from, category] of [
+    ["Supply House Branch 42", "branch42@supplyhouse.com", "supplier_vendor"],
+    ["Chelmsford Building Dept", "inspections@chelmsfordma.gov", "scheduling"],
+  ] as const) {
+    const gid = `k-${randomUUID().slice(0, 8)}`;
+    const [t] = await testDb
+      .insert(schema.threads)
+      .values({ mailboxId: owner.mailboxId!, gmailThreadId: gid, inInbox: true, category })
+      .returning();
+    await testDb.insert(schema.messages).values({
+      threadId: t!.id,
+      mailboxId: owner.mailboxId!,
+      gmailMessageId: `${gid}-in`,
+      direction: "in",
+      fromAddress: from,
+      fromName: name,
+      bodyText: "Hello",
+      sentAt: ago(1),
+    });
+  }
+  await signInAs(context, owner);
+
+  await page.goto("/customers");
+  await expect(page.getByText("Suppliers, towns and your crew are kept apart.")).toBeVisible();
+  await expect(page.getByRole("link", { name: /Priya Shah/ })).toBeVisible();
+  await expect(page.getByRole("link", { name: /Supply House/ })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: /Chelmsford/ })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Towns and inspectors (1)" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Your crew and subs (0)" })).toBeVisible();
+  const suppliers = page.getByRole("link", { name: "Suppliers (1)" });
+  expect((await suppliers.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  await suppliers.click();
+  await expect(page).toHaveURL(/\/customers\?group=suppliers$/);
+  await expect(page.getByRole("link", { name: /Supply House Branch 42/ })).toBeVisible();
+  await expect(page.getByRole("link", { name: /Priya Shah/ })).toHaveCount(0);
+});
+
+test("customers: 50 at a time, and search finds everyone (Check 13 P3)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  const ts = await testDb
+    .insert(schema.threads)
+    .values(
+      Array.from({ length: 60 }, (_, i) => ({
+        mailboxId: owner.mailboxId!,
+        gmailThreadId: `many-${randomUUID().slice(0, 8)}-${i}`,
+        inInbox: true,
+        category: "customer_question",
+        lastMessageAt: new Date(Date.now() - (i + 1) * 60_000),
+      })),
+    )
+    .returning({ id: schema.threads.id });
+  await testDb.insert(schema.messages).values(
+    ts.map((t, i) => ({
+      threadId: t.id,
+      mailboxId: owner.mailboxId!,
+      gmailMessageId: `many-${t.id}`,
+      direction: "in" as const,
+      fromAddress: `person${i + 1}@customer.com`,
+      fromName: `Person Number${String(i + 1).padStart(2, "0")}`,
+      bodyText: "Hi",
+      sentAt: new Date(Date.now() - (i + 1) * 60_000),
+    })),
+  );
+  await signInAs(context, owner);
+  await page.goto("/customers");
+  await expect(page.getByText("60 customers")).toBeVisible();
+  await expect(page.getByRole("link", { name: /Number01/ })).toBeVisible();
+  await expect(page.getByRole("link", { name: /Number55/ })).toHaveCount(0);
+  await page.getByLabel("Find a customer").fill("number55");
+  await expect(page.getByRole("link", { name: /Number55/ })).toBeVisible();
+  await page.getByLabel("Find a customer").fill("");
+  await expect(page.getByRole("link", { name: /Number55/ })).toHaveCount(0);
+  await page.getByRole("button", { name: "Show 50 more" }).click();
+  await expect(page.getByRole("link", { name: /Number55/ })).toBeVisible();
+  // Check 13 P8: how far back the list goes, and a reason when a search finds no one.
+  await expect(
+    page.getByText(/^From email since \w{3} \d{1,2}, \d{4}, 30 days before you connected Gmail\./),
+  ).toBeVisible();
+  await page.getByLabel("Find a customer").fill("zzzz nobody");
+  await expect(
+    page.getByText(
+      /^No one matches that\. They may have written from another address, or before \w{3} \d{1,2}, \d{4}\.$/,
+    ),
+  ).toBeVisible();
+});
+
+test("customers: the page shows what the row shows (Check 13 P5)", async ({ page, context }) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await quote(owner.mailboxId!, {
+    name: "Jose Alvarez",
+    from: "jose@customer.com",
+    inAgo: 9,
+    outAgo: 8,
+    reply: "Hi Jose, the deck is $2,100.",
+    summary: "Jose wants a deck.",
+  });
+  await testDb
+    .update(schema.threads)
+    .set({
+      quoteOutcome: "won",
+      quoteOutcomeSource: "owner",
+      quoteAmountCents: 210_000,
+      extracted: { address: "12 Elm St" },
+    })
+    .where(eq(schema.threads.summary, "Jose wants a deck."));
+  await quote(owner.mailboxId!, {
+    name: "Dana Ruiz",
+    from: "dana@customer.com",
+    inAgo: 1,
+    summary: "Dana wants a panel upgrade quote.",
+  });
+  await signInAs(context, owner);
+  await page.goto("/customers");
+  await expect(page.getByRole("link", { name: /Jose Alvarez/ })).toContainText("Won $2,100");
+  await page.getByRole("link", { name: /Jose Alvarez/ }).click();
+  await expect(page.getByText(/^Won \$2,100 · Wrote you/)).toBeVisible();
+  await expect(page.getByRole("region", { name: "Job addresses" })).toContainText("12 Elm St");
+  await page.goto("/customers");
+  await page.getByRole("link", { name: /Dana Ruiz/ }).click();
+  await expect(page.getByText(/^1 open quote · Wrote you/)).toBeVisible();
+  await expect(page.getByText("Waiting on you")).toBeVisible();
+});
+
+test("a Quotes card's name opens the customer's page (Check 13 P9)", async ({ page, context }) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await quote(owner.mailboxId!, {
+    name: "Rita Gomez",
+    from: "rita@customer.com",
+    inAgo: 1,
+    summary: "Rita wants a fence.",
+  });
+  await signInAs(context, owner);
+  await page.goto("/quotes");
+  const card = page.getByRole("article", { name: "Quote for Rita Gomez" });
+  const link = card.getByRole("link", { name: "Rita Gomez" });
+  expect((await link.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  await link.click();
+  await expect(page).toHaveURL(/\/customers\/[0-9a-f-]{36}$/);
+  expect(page.url()).not.toContain("@");
+  await expect(page.getByText("Rita wants a fence.")).toBeVisible();
+  await expect(page.getByText("Rita Gomez", { exact: true })).toBeVisible();
+});
+
+test("a junk email's id is not a customer page (Check 13 P2)", async ({ page, context }) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  const gid = `j-${randomUUID().slice(0, 8)}`;
+  const [t] = await testDb
+    .insert(schema.threads)
+    .values({ mailboxId: owner.mailboxId!, gmailThreadId: gid, inInbox: true, category: "noise" })
+    .returning();
+  const [m] = await testDb
+    .insert(schema.messages)
+    .values({
+      threadId: t!.id,
+      mailboxId: owner.mailboxId!,
+      gmailMessageId: `${gid}-in`,
+      direction: "in",
+      fromAddress: "deals@shop-sale.com",
+      fromName: "Deals",
+      bodyText: "Sale",
+      sentAt: ago(1),
+    })
+    .returning();
+  await signInAs(context, owner);
+  const res = await page.goto(`/customers/${m!.id}`);
+  expect(res?.status()).toBe(404);
 });
 
 test("another owner's customer link is a 404", async ({ page, context }) => {
@@ -205,4 +424,94 @@ test("another owner's customer link is a 404", async ({ page, context }) => {
   await signInAs(context, b);
   const res = await page.goto(`/customers/${m!.id}`);
   expect(res?.status()).toBe(404);
+});
+
+test("quotes: every filter chip shows without swiping, and Quoted filters to priced quotes", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await quote(owner.mailboxId!, {
+    name: "Ana Diaz",
+    from: "ana@customer.com",
+    inAgo: 2,
+    outAgo: 1,
+    reply: "Hi Ana, the panel is $2,400.",
+    summary: "Ana wants a panel.",
+  });
+  await quote(owner.mailboxId!, {
+    name: "Bo Kim",
+    from: "bo@customer.com",
+    inAgo: 1,
+    summary: "Bo wants a fan.",
+  });
+  await signInAs(context, owner);
+  await page.goto("/quotes");
+
+  const nav = page.getByRole("navigation", { name: "Quote filter" });
+  const viewport = page.viewportSize()!;
+  for (const label of [
+    "Open",
+    "Waiting on you",
+    "Quoted",
+    "Gone quiet",
+    "Won",
+    "Lost",
+    "No answer",
+  ]) {
+    const chip = nav.getByRole("link", { name: new RegExp(`^${label} \\(`) });
+    const box = (await chip.boundingBox())!;
+    expect(box.x, label).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width, label).toBeLessThanOrEqual(viewport.width);
+    expect(box.height, label).toBeGreaterThanOrEqual(44);
+  }
+  await expect(page.getByText("All time", { exact: true })).toBeVisible();
+  await expect(page.getByText("Quoted: you sent a price.")).toBeVisible();
+  await expect(page.getByRole("article", { name: "Quote for Bo Kim" })).toContainText(
+    /Last email .+ ago/,
+  );
+  // Nothing priced or won in an account like this: no big "$0".
+  const totals = page.getByRole("region", { name: "Last 30 days" });
+  await expect(totals).toContainText("None yet");
+  await expect(totals).not.toContainText("$0");
+
+  await nav.getByRole("link", { name: /^Quoted \(1\)/ }).click();
+  await expect(page).toHaveURL(/stage=talking/);
+  await expect(page.getByRole("article", { name: "Quote for Ana Diaz" })).toContainText("Quoted");
+  await expect(page.getByRole("article", { name: "Quote for Bo Kim" })).toHaveCount(0);
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+  );
+  expect(overflow).toBe(false);
+});
+
+/** Check 7 P9: sunlight shows a quote's time in full ink, not see-through grey. */
+test("sunlight: a quote's time is full ink", async ({ page, context }) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await quote(owner.mailboxId!, {
+    name: "Sam Lee",
+    from: "sam@customer.com",
+    inAgo: 9,
+    outAgo: 8,
+    reply: "Hi Sam, the vanity install is $1,200.",
+    summary: "Sam wants a vanity installed.",
+  });
+  await signInAs(context, owner);
+  await context.addCookies([
+    { name: "sa_contrast", value: "high", domain: "localhost", path: "/" },
+  ]);
+  await page.goto("/quotes");
+  const sam = page.getByRole("article", { name: "Quote for Sam Lee" });
+  await expect(sam).toBeVisible();
+  const colours = await sam.evaluate((card) => {
+    const time = Array.from(card.querySelectorAll("span")).find((s) =>
+      /ago|yesterday|today/i.test(s.textContent ?? ""),
+    )!;
+    const t = getComputedStyle(time);
+    return { time: t.color, opacity: t.opacity, card: getComputedStyle(card).color };
+  });
+  // Sunlight's ink (#111111) on this light card, at full strength.
+  expect(colours.time).toBe("rgb(17, 17, 17)");
+  expect(colours.card).toBe("rgb(17, 17, 17)");
+  expect(colours.opacity).toBe("1");
 });

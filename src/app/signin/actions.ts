@@ -10,7 +10,7 @@ import {
   TERMS_COOKIE_PATH,
   TERMS_VERSION,
 } from "@/config/legal";
-import { agreed, type AgreeState } from "@/server/terms-rules";
+import { agreed, type AgreeState, safeNextPath } from "@/server/terms-rules";
 
 /**
  * The Sign in with Google button (Davi, 2026-10-15). Refused without the "I agree" box, here on
@@ -31,6 +31,13 @@ export async function signInWithGoogleAction(
     path: TERMS_COOKIE_PATH,
     maxAge: TERMS_COOKIE_MAX_AGE_SECONDS,
   });
+  // Check 26 P4: asked to sign in again (to delete the account), back to that screen — a path
+  // on this site only (safeNextPath).
+  const next = formData.get("next");
+  if (typeof next === "string" && next) {
+    await signIn("google", { redirectTo: safeNextPath(next) });
+    return {};
+  }
   // /start sends Growth clients to the choice of inbox or Growth dashboard, everyone else to /queue.
   await signIn("google", { redirectTo: "/start" });
   return {};

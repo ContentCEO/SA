@@ -91,13 +91,16 @@ test("emergency first with Call now; a Thumbtack lead opens Thumbtack; Done clea
   const tollFree = await seedThread(
     mb,
     "tf",
-    { category: "quote_request", needsOwnerReason: "New customer asking about a big job." },
+    {
+      category: "quote_request",
+      needsOwnerReason: "Big job from someone who hasn't written in the mail we've read so far.",
+    },
     { fromAddress: "pat@x.com", fromName: "Pat Doe", bodyText: "Call us 800-555-1234" },
   );
   await signInAs(context, owner);
   await page.goto("/queue");
 
-  const lane = page.getByRole("region", { name: "Emergency" });
+  const lane = page.getByRole("region", { name: "Right now" });
   const sosCard = lane.locator(`#t-${sos.id}`);
   await expect(sosCard).toContainText("Emergency · Question");
   const call = sosCard.getByRole("link", { name: "Call Dana now" });

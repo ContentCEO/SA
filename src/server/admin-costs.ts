@@ -1,23 +1,31 @@
 import "server-only";
 import { and, eq, gte, sql, sum } from "drizzle-orm";
-import { utcDay } from "@/ai/usage";
-import { dailyAiCallCap } from "@/config/models";
+import { dailyAiCallCapSql, utcDay } from "@/ai/usage";
 import { formatDollars, type PlanId } from "@/config/pricing";
 import { db } from "@/db";
-import { appSettings, usage, users, workspaces } from "@/db/schema";
-import { sendEmail, type EmailSender } from "@/lib/email";
+import { appSettings, usage, users, workspaces, type Workspace } from "@/db/schema";
+import { effectiveStatus } from "./lifecycle";
+import { sendEmail, type EmailSender, emailErrorFields } from "@/lib/email";
+import { emailHtml } from "@/lib/email-layout";
 import { appUrl } from "@/lib/app-url";
 import { COST_ALERT_SHARE, costAlertDue, costLine } from "./admin-cost-rules";
+import { freeMonthRunning } from "./referral-rules";
 
 export type CostRow = {
   workspaceId: string;
   /** The owner's own business name / sign-in email — never anything from their customers. */
   label: string;
-  status: string;
+  status: Workspace["status"];
+  /** Davi's own house account (pays nothing). */
+  house: boolean;
   plan: PlanId | null;
+  /** Plan #47: a free referral month is running (revenue stays the billed price). */
+  freeMonth: boolean;
   costCents: number;
   revenueCents: number;
   marginCents: number;
+  feesCents: number;
+  marginAfterFeesCents: number;
   costShare: number | null;
   calls: number;
   busiestDayCalls: number;
@@ -45,27 +53,41 @@ export async function costRows(now: Date = new Date()): Promise<CostRow[]> {
       businessName: workspaces.businessName,
       email: users.email,
       status: workspaces.status,
+      evaluationEndsAt: workspaces.evaluationEndsAt,
+      setupPaidVia: workspaces.setupPaidVia,
       plan: workspaces.plan,
+      freePlan: workspaces.freePlan,
+      freePlanUntil: workspaces.freePlanUntil,
       calls: per.calls,
       cost: per.cost,
       busiest: per.busiest,
+      // Check 29 P5: each shop's own limit (per running inbox, up to the ceiling).
+      cap: dailyAiCallCapSql('"workspaces"."id"'),
     })
     .from(workspaces)
     .innerJoin(users, eq(users.id, workspaces.ownerUserId))
     .leftJoin(per, eq(per.workspaceId, workspaces.id));
-  const cap = dailyAiCallCap();
   return rows
     .map((r) => {
-      const input = { status: r.status, plan: r.plan, costCentiCents: r.cost ?? 0 };
+      // Check 16 P10: the same status /admin shows (an expired trial isn't "evaluating").
+      const status = effectiveStatus(r, now);
+      const input = {
+        status,
+        plan: r.plan,
+        costCentiCents: r.cost ?? 0,
+        setupPaidVia: r.setupPaidVia,
+      };
       return {
         workspaceId: r.workspaceId,
         label: r.businessName || r.email,
-        status: r.status,
+        status,
+        house: r.setupPaidVia === "house",
         plan: r.plan,
+        freeMonth: freeMonthRunning(r, now),
         ...costLine(input),
         calls: r.calls ?? 0,
         busiestDayCalls: r.busiest ?? 0,
-        cap,
+        cap: Number(r.cap),
         alert: costAlertDue(input),
       };
     })
@@ -94,23 +116,27 @@ export async function sendCostAlerts(
       const [seen] = await db().select().from(appSettings).where(eq(appSettings.key, key));
       if (seen) continue;
       const share = Math.round((r.costShare ?? 0) * 100);
-      const text = [
+      const lines = [
         `${r.label}: AI cost this month is ${formatDollars(r.costCents)}, ${share}% of their ${formatDollars(r.revenueCents)} plan (alert line: ${Math.round(COST_ALERT_SHARE * 100)}%).`,
         `Margin so far: ${formatDollars(r.marginCents)}. Busiest day: ${r.busiestDayCalls} of ${r.cap} calls.`,
-        `See ${appUrl("/admin/costs")}`,
-      ].join("\n\n");
+      ];
+      const text = [...lines, `See ${appUrl("/admin/costs")}`].join("\n\n");
+      // Check 18 P7: the one email shell (the text part is unchanged).
+      const html = emailHtml({
+        serif: "cost alert,",
+        heavy: `${share}% of plan.`,
+        lines,
+        preheader: `AI cost alert: ${share}% of plan`,
+        button: { label: "See costs", url: appUrl("/admin/costs") },
+        footer: "Squared Away sends this on its own. Nothing from anyone's email.",
+      });
       const result = await send({
         to,
         subject: `AI cost alert: ${r.label} at ${share}% of plan`,
         text,
-        html: text
-          .split("\n\n")
-          .map(
-            (p) =>
-              `<p>${p.replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[c]!)}</p>`,
-          )
-          .join(""),
+        html,
         idempotencyKey: `cost-${r.workspaceId}-${month}`,
+        replyTo: null,
       });
       // "already_sent": an earlier try this month got through but its marker didn't save.
       if (result === "not_configured") return { sent, failed };
@@ -123,7 +149,7 @@ export async function sendCostAlerts(
       failed++;
       console.error("cost_alert_failed", {
         workspaceId: r.workspaceId,
-        error: err instanceof Error ? err.name : "unknown",
+        ...emailErrorFields(err),
       });
     }
   }

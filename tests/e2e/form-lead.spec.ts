@@ -10,7 +10,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { eq } from "drizzle-orm";
 import * as schema from "../../src/db/schema";
-import { replySubject } from "../../src/mailbox/mime";
+import { formReplySubject } from "../../src/mailbox/mime";
 import { calls, registerScenario, routeGoogleConsent, runHook } from "./fakes/client";
 import { fakeCustomer, FORM_ROBOT } from "./fakes/outputs";
 import type { FakeCall } from "./fakes/server";
@@ -98,7 +98,7 @@ test("a website form lead is answered at the customer's own address, not the for
     for (const c of metadata) expect(c.metadataHeaders).toContain("Reply-To");
   });
 
-  const card = page.getByRole("article", { name: /^Draft reply to Dana Ruiz/ });
+  const card = page.getByRole("article", { name: /^Dana Ruiz.* · draft reply$/ });
   await test.step("The card names Dana and says the reply goes to her own address", async () => {
     await page.goto("/queue");
     await expect(card).toBeVisible();
@@ -126,7 +126,15 @@ test("a website form lead is answered at the customer's own address, not the for
     expect(addresses(mail.to)).not.toContain(FORM_ROBOT.email);
     expect(mail.cc).toBeNull();
     expect(mail.bcc).toBeNull();
-    expect(mail.subject).toBe(replySubject(customer.subject));
+    // Check 43 P5: the homeowner never saw the form robot's subject.
+    const [ws] = await testDb
+      .select({ businessName: schema.workspaces.businessName })
+      .from(schema.workspaces)
+      .where(eq(schema.workspaces.id, owner.workspaceId));
+    expect(mail.subject).toBe(formReplySubject(customer.subject, ws?.businessName));
+    expect(mail.subject).toMatch(/^Your request/);
+    // Check 43 P3: the owner's name in the From line (the Google name until they pick one).
+    expect(mail.from).toBe(`"Test Owner" <${owner.email}>`);
     expect(mail.inReplyTo).toBe(customer.messageIdHeader);
     expect(mail.threadId).toBe(customer.gmailThreadId);
   });

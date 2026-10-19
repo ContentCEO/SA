@@ -4,7 +4,7 @@ import { BW_BANDS, bandSide } from "./big-words-rules";
 /**
  * "Big words", the homepage switch's picture (GrowthSwitch renders it inside its aria-hidden,
  * inert stage): five charcoal bands slam in from alternate sides, the middle one first carrying
- * "The app" in huge serif; the words tick over to "One-on-one" in huge heavy sans, which inverts
+ * "Your inbox" in huge serif; the words tick over to "Your marketing" in huge heavy sans, which inverts
  * ("inversion means status"); the bands fly back out the way they came, outer ones first, onto the
  * opener. The quiet paths are the bare bands. Decorative only: spans, no role, nothing to tap.
  * Styles in src/styles/theme.css (the "Homepage switch" block); timings in big-words-rules.ts.

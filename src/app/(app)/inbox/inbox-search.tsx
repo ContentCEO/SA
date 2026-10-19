@@ -1,17 +1,37 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { matchesSearch } from "@/server/inbox-rules";
 
 /** One inbox row: its server-rendered `<li>`, the text a search looks through, and junk or not. */
-export type InboxSearchRow = { id: string; text: string; junk: boolean; node: React.ReactNode };
+export type InboxSearchRow = {
+  id: string;
+  text: string;
+  /** Folded on All: junk, or unsorted mail from before sorting started (Check 10 P7). */
+  group: "main" | "junk" | "older";
+  node: React.ReactNode;
+};
 
 /**
  * Inbox search and the folded junk line (outside review). Filters on the phone, so what's
  * typed never goes into a URL or a server log. Junk sits in one "N junk emails" line at the
  * end; while searching, matching junk shows in the list with everything else.
  */
-export function InboxSearch({ rows }: { rows: InboxSearchRow[] }) {
+export function InboxSearch({
+  rows,
+  junkCount,
+  olderCount,
+  olderHref,
+}: {
+  rows: InboxSearchRow[];
+  /** Check 10 P2: all folded junk (the line may hold only the newest few). */
+  junkCount?: number;
+  /** Check 10 P7: all older unsorted mail (the line may hold only the newest few). */
+  olderCount?: number;
+  /** Check 10 P2: the next page, when this one was full. */
+  olderHref?: string | null;
+}) {
   const [q, setQ] = useState("");
   const input = useRef<HTMLInputElement>(null);
   // Anything typed before the page finished loading (slow signal) still filters.
@@ -19,12 +39,23 @@ export function InboxSearch({ rows }: { rows: InboxSearchRow[] }) {
     if (input.current?.value) setQ(input.current.value);
   }, []);
   const query = q.trim();
-  const main = rows.filter((r) => !r.junk);
-  const junk = rows.filter((r) => r.junk);
+  const main = rows.filter((r) => r.group === "main");
+  const junk = rows.filter((r) => r.group === "junk");
+  const olderRows = rows.filter((r) => r.group === "older");
+  const olderTotal = Math.max(olderCount ?? 0, olderRows.length);
   const found = query ? rows.filter((r) => matchesSearch(r.text, query)) : null;
   const list = (items: InboxSearchRow[], className = "flex flex-col gap-3") => (
     <ul className={className}>{items.map((r) => r.node)}</ul>
   );
+  const junkTotal = Math.max(junkCount ?? 0, junk.length);
+  const older = olderHref ? (
+    <Link
+      href={olderHref}
+      className="inline-flex min-h-tap w-full items-center justify-center rounded-lg border-2 border-current px-4 font-semibold"
+    >
+      Show older emails
+    </Link>
+  ) : null;
 
   return (
     <div className="flex flex-col gap-3">
@@ -38,13 +69,20 @@ export function InboxSearch({ rows }: { rows: InboxSearchRow[] }) {
           className="min-h-tap rounded-lg border border-input bg-paper px-3 text-base font-normal"
         />
       </label>
+      {/* Check 10 P2: say what a search looks through. */}
+      <p className="text-sm text-muted-foreground">
+        Searching the {rows.length} email{rows.length === 1 ? "" : "s"} on this page.
+      </p>
       {found ? (
         found.length ? (
           list(found)
         ) : (
-          <p role="status" className="text-lg">
-            No emails match that.
-          </p>
+          <div className="flex flex-col gap-3">
+            <p role="status" className="text-lg">
+              No emails match that.
+            </p>
+            {older}
+          </div>
         )
       ) : (
         <>
@@ -52,11 +90,21 @@ export function InboxSearch({ rows }: { rows: InboxSearchRow[] }) {
           {junk.length ? (
             <details className="rounded-xl border">
               <summary className="flex min-h-tap cursor-pointer items-center px-4 font-semibold">
-                {junk.length} junk email{junk.length === 1 ? "" : "s"}
+                {junkTotal} junk email{junkTotal === 1 ? "" : "s"}
               </summary>
               {list(junk, "flex flex-col gap-3 px-3 pb-3")}
             </details>
           ) : null}
+          {olderRows.length ? (
+            <details className="rounded-xl border">
+              <summary className="flex min-h-tap cursor-pointer items-center px-4 font-semibold">
+                {olderTotal} older email{olderTotal === 1 ? "" : "s"}, from before Squared Away
+                started sorting
+              </summary>
+              {list(olderRows, "flex flex-col gap-3 px-3 pb-3")}
+            </details>
+          ) : null}
+          {older}
         </>
       )}
     </div>

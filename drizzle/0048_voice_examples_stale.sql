@@ -1,0 +1,1 @@
+ALTER TABLE "voice_profile" ADD COLUMN "examples_stale" boolean DEFAULT false NOT NULL;

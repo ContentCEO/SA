@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { eq } from "drizzle-orm";
 import * as schema from "../../src/db/schema";
+import { announced } from "./announcer";
 import { seedOwner, seedQueue, signInAs, testDb } from "./support";
 
 test("settings: follow-ups can be switched off and the wait changed", async ({ page, context }) => {
@@ -75,7 +76,65 @@ test("queue: a nudge is labelled as a follow-up", async ({ page, context }) => {
   await signInAs(context, owner);
 
   await page.goto("/queue");
-  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  const card = page.getByRole("article", { name: "Priya · draft reply" });
   await expect(card).toContainText("Follow-up · Quote request");
   await expect(card).toContainText("Gentle nudge.");
+});
+
+test("queue: a nudge's Discard says it ends the chasing, and it offers They said no (Check 21 P8)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  const { draft } = await seedQueue(owner.mailboxId!);
+  await testDb
+    .update(schema.drafts)
+    .set({ kind: "followup", reason: "No reply in 3 days to your panel quote." })
+    .where(eq(schema.drafts.id, draft.id));
+  await signInAs(context, owner);
+  await page.goto("/queue");
+  const card = page.getByRole("article", { name: "Priya · draft reply" });
+  const saidNo = card.getByRole("button", { name: "They said no" });
+  await expect(saidNo).toBeVisible();
+  expect((await saidNo.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  await expect(card.getByRole("button", { name: "Already paid" })).toHaveCount(0);
+  await card.getByRole("button", { name: "Discard", exact: true }).click();
+  await expect(card).toContainText(
+    "Discard this nudge? It's removed from Gmail too, and we won't nudge them again on this one unless you write to them.",
+  );
+});
+
+/** Check 32 P5: after a self-saving switch saves, focus is back on it and the result is read. */
+test("Space on the Follow-ups switch saves, keeps focus there and reads 'Saved.'", async ({
+  page,
+  context,
+}, info) => {
+  test.skip(info.project.name !== "desktop", "keyboard check");
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await signInAs(context, owner);
+  await page.goto("/settings/follow-ups");
+  await page.waitForLoadState("networkidle");
+  const toggle = () => page.getByRole("main").getByLabel("Nudge quotes and invoices that go quiet");
+  await toggle().focus();
+  await page.keyboard.press("Space");
+  await expect(page).toHaveURL(/\/settings\/follow-ups\?done=saved$/);
+  await expect(toggle()).not.toBeChecked();
+  await expect(toggle()).toBeFocused();
+  await expect.poll(async () => (await announced(page)).polite).toContain("Saved.");
+
+  // Turn it back (same screen, same notice): focus stays on the switch. E2E hardening
+  // (2026-10-19): this save lands on the same address, and the screen is rendered anew with a
+  // new switch. Checked before that, focus was still on the old one, so the check passed while
+  // a keyboard owner actually lost focus (and failed only when the save landed first). Wait for
+  // the router to commit the address again (the save has landed), then check.
+  await page.evaluate(() => {
+    const w = window as unknown as { navigation: EventTarget; saLanded?: boolean };
+    w.saLanded = false;
+    w.navigation.addEventListener("currententrychange", () => (w.saLanded = true), { once: true });
+  });
+  await page.keyboard.press("Space");
+  await expect(toggle()).toBeChecked();
+  await page.waitForFunction(() => (window as unknown as { saLanded: boolean }).saLanded);
+  await expect(toggle()).toBeFocused();
+  await expect.poll(async () => (await announced(page)).polite).toContain("Saved.");
 });

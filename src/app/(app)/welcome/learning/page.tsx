@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { AutoRefresh } from "@/components/app/auto-refresh";
 import { Headline } from "@/components/brand/headline";
@@ -6,12 +7,15 @@ import { cn } from "@/lib/utils";
 import { listMailboxes } from "@/server/mailboxes";
 import { describeVoice, getVoiceProfile } from "@/server/profile";
 import { requireOwner } from "@/server/session";
-import { syncSummary } from "@/server/sync";
 import { CLASSIFY_LOOKBACK_DAYS } from "@/server/classification";
 import { firstLookCounts } from "@/server/first-week";
 import { firstLookLines } from "@/server/first-week-rules";
 import { effectiveStatus } from "@/server/lifecycle";
 import { TRIAL_NO_SEND_LINE, TRIAL_SIDE_DOOR_LINE } from "@/server/trial-email-rules";
+import { syncSummary } from "@/server/sync";
+
+// Check 32 P6: every screen has its own title ("… · Squared Away" from the root template).
+export const metadata: Metadata = { title: "Reading your email" };
 
 function Step({ done, children }: { done: boolean; children: React.ReactNode }) {
   return (
@@ -35,7 +39,8 @@ export default async function WelcomeLearningPage() {
   const { workspace } = await requireOwner();
   const [box] = await listMailboxes(workspace.id);
   const voice = await getVoiceProfile(workspace.id);
-  const read = box?.backfillCompletedAt ? (await syncSummary(box.id)).messageCount : 0;
+  // Check 25 P6: the running count while the first read is going, not only once it's done.
+  const read = box ? (await syncSummary(box.id)).messageCount : 0;
   const voiceDone =
     voice?.status === "ready" || voice?.status === "not_enough_mail" || voice?.status === "failed";
   const allDone = Boolean(box?.backfillCompletedAt) && voiceDone;
@@ -54,15 +59,19 @@ export default async function WelcomeLearningPage() {
       {!allDone ? <AutoRefresh /> : null}
       <p className="text-sm font-semibold">Step 3 of 3</p>
       <Headline
-        serif={allDone ? "all set," : "a few minutes,"}
+        serif={allDone ? "all set," : "this can take a while,"}
         heavy={allDone ? "here's how you write." : "reading your email."}
       />
 
       <ul className="flex flex-col gap-3" aria-live="polite">
         <Step done={Boolean(box?.backfillCompletedAt)}>
           {box?.backfillCompletedAt
-            ? `Read ${read.toLocaleString("en-US")} emails from the last 30 days.`
-            : "Reading the last 30 days of email…"}
+            ? // Check 14 P2: no number once it's done. "Your last 30 days" below carries the
+              // only final count, so the screen can't show two different read figures.
+              "Read your last 30 days of email."
+            : read > 0
+              ? `Reading the last 30 days of email: ${read.toLocaleString("en-US")} so far…`
+              : "Reading the last 30 days of email…"}
         </Step>
         <Step done={voiceDone}>
           {voice?.status === "ready"
@@ -70,7 +79,7 @@ export default async function WelcomeLearningPage() {
             : voice?.status === "not_enough_mail"
               ? "Not enough sent mail to learn from yet — drafts will keep it short and plain until there is."
               : voice?.status === "failed"
-                ? "Couldn't learn your style this time. We'll try again, and you can set it by hand in Settings."
+                ? "Couldn't learn your style this time. We'll try again within the hour, and you can set it by hand in Settings."
                 : "Reading your sent mail to learn how you write…"}
         </Step>
       </ul>
@@ -89,10 +98,10 @@ export default async function WelcomeLearningPage() {
       ) : null}
 
       {voice?.status === "ready" ? (
-        <section className="sa-inverted flex flex-col gap-3 rounded-xl p-5">
+        <section className="flex flex-col gap-3 rounded-xl border-2 border-charcoal bg-card p-5">
           <p className="text-lg">{describeVoice(voice)}</p>
           {voice.phrasesUsed.length ? (
-            <p className="text-ash">
+            <p className="text-muted-foreground">
               You say things like “{voice.phrasesUsed.slice(0, 3).join("”, “")}”.
             </p>
           ) : null}

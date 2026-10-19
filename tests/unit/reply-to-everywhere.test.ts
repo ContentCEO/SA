@@ -237,7 +237,9 @@ describe("classification: first-time sender and VIP", () => {
     expect(calls[0]!.user).toContain("First time this sender has emailed the business: yes");
     const [after] = await database.select().from(threads).where(eq(threads.id, t.id));
     expect(after!.needsOwner).toBe(true);
-    expect(after!.needsOwnerReason).toBe("New customer asking about a big job.");
+    expect(after!.needsOwnerReason).toBe(
+      "Big job from someone who hasn't written in the mail we've read so far.",
+    );
 
     // The same person again through the form: not first-time any more.
     const again = await thread({ classifiedAt: null, category: null });

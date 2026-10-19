@@ -125,3 +125,34 @@ export function fromEditorText(text: string, original: string): string {
 export function editorGapsLeft(text: string, original: string): string[] {
   return [...new Set(findGaps(original).map(editorWord))].filter((w) => text.includes(w));
 }
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Check 23 P8: the values the owner typed into gaps on the card, when `current` is exactly
+ * `saved` with some of its gaps filled in (each filled gap a non-empty run of text holding no
+ * new gap, nothing else changed). Anything else — a changed word, a forged body — gives null,
+ * so only the owner's filled-in values can ride along with a quick change.
+ */
+export function filledGaps(saved: string, current: string): string[] | null {
+  if (saved === current) return [];
+  const gaps = findGaps(saved);
+  if (!gaps.length || current.length > saved.length + 2000) return null;
+  let pattern = "^";
+  let rest = saved;
+  for (const g of gaps) {
+    const at = rest.indexOf(g.token);
+    if (at < 0) return null;
+    pattern += `${escapeRe(rest.slice(0, at))}(${escapeRe(g.token)}|[^\\n{}]{1,200}?)`;
+    rest = rest.slice(at + g.token.length);
+  }
+  pattern += `${escapeRe(rest)}$`;
+  const m = new RegExp(pattern).exec(current);
+  if (!m) return null;
+  const values = m
+    .slice(1)
+    .filter((v, i) => v !== gaps[i]!.token)
+    .map((v) => v.trim());
+  if (!values.length || values.some((v) => !v || findGaps(v).length)) return null;
+  return values;
+}

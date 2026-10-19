@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { eq } from "drizzle-orm";
 import * as schema from "../../src/db/schema";
 import { seedOwner, signInAs, testDb } from "./support";
 
@@ -23,6 +24,12 @@ test("onboarding: business profile, then the learning screen", async ({ page, co
     .fill("Service calls, panel upgrades, EV chargers.");
   // Round 2 (FW): everything optional is folded away during setup.
   await page.getByText("More details, optional").click();
+  // Check 43 P4: Gmail's own signature never reaches these replies, and the form says so.
+  await expect(
+    page.getByText("Your Gmail signature isn't added to replies sent from Squared Away."),
+  ).toBeVisible();
+  // Check 43 P3: the name customers see in the From line.
+  await expect(page.getByLabel("Name customers see on your emails")).toBeVisible();
   await page
     .getByLabel("Things we should never promise")
     .fill("Same-day service\nA price over email");
@@ -67,7 +74,9 @@ test("settings shows the learned voice in plain words, and it can be corrected",
     page.getByText("You usually open with “Hey” and sign off “Thanks, Davi”.", { exact: false }),
   ).toBeVisible();
   await expect(
-    page.getByText("Drafts will never say “I hope this email finds you well”."),
+    page.getByText(
+      "Drafts try not to say “I hope this email finds you well” and flag it if they do.",
+    ),
   ).toBeVisible();
 
   await page.getByRole("link", { name: "Edit how I write" }).click();
@@ -113,4 +122,119 @@ test("settings: a bad review link is refused in plain words, with focus on the f
   await page.getByRole("button", { name: "Save business profile" }).click();
   await expect(page).toHaveURL(/\/settings\/business\?done=profile/);
   await expect(page.getByRole("status")).toContainText("Business profile saved.");
+});
+
+test("settings: a cleared money box is refused, and the saved amount stays (Check 15 P1)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await testDb
+    .update(schema.workspaces)
+    .set({ businessName: "Elm Electric", trade: "electrical" })
+    .where(eq(schema.workspaces.id, owner.workspaceId));
+  await testDb.insert(schema.businessProfiles).values({
+    workspaceId: owner.workspaceId,
+    services: "Service calls, panel upgrades.",
+    amountThresholdDollars: 4000,
+    completedAt: new Date(),
+  });
+  await signInAs(context, owner);
+
+  await page.goto("/settings/profile");
+  const amount = page.getByLabel("Send me anything that mentions more than");
+  await expect(amount).toHaveValue("4,000");
+  await amount.fill("");
+  await page.getByRole("button", { name: "Save business profile" }).click();
+  await expect(amount).toBeFocused();
+  await expect(page.getByText("Leaving it blank would send you every email")).toBeVisible();
+  const saved = async () =>
+    (
+      await testDb
+        .select({ a: schema.businessProfiles.amountThresholdDollars })
+        .from(schema.businessProfiles)
+        .where(eq(schema.businessProfiles.workspaceId, owner.workspaceId))
+    )[0]!.a;
+  expect(await saved()).toBe(4000);
+
+  await amount.fill("$2,500");
+  await page.getByRole("button", { name: "Save business profile" }).click();
+  await expect(page).toHaveURL(/\/settings\/business\?done=profile/);
+  expect(await saved()).toBe(2500);
+});
+
+test("the two edit screens have a way back at the top and a Cancel (Check 15 P3)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await signInAs(context, owner);
+
+  for (const [path, label, lands] of [
+    ["/settings/profile", "Your business", /\/settings\/business$/],
+    ["/settings/voice", "Your voice", /\/settings\/writing$/],
+  ] as const) {
+    await page.goto(path);
+    const back = page.getByRole("main").getByRole("link", { name: label, exact: true });
+    await expect(back).toBeVisible();
+    expect((await back.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    const cancel = page.getByRole("link", { name: "Cancel", exact: true });
+    await expect(cancel).toBeAttached();
+    expect((await cancel.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    await back.click();
+    await expect(page).toHaveURL(lands);
+    await page.goto(path);
+    await page.getByRole("link", { name: "Cancel", exact: true }).click();
+    await expect(page).toHaveURL(lands);
+  }
+});
+
+test("Your business shows the price list, and Change lands on its box (Check 15 P4)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await testDb
+    .update(schema.workspaces)
+    .set({ businessName: "Ruiz Street Plumbing" })
+    .where(eq(schema.workspaces.id, owner.workspaceId));
+  await testDb.insert(schema.businessProfiles).values({
+    workspaceId: owner.workspaceId,
+    services: "Drains and water heaters.",
+    pricingNotes: "Service call $129.\nDrain clearing from $189.",
+    leadTime: "About two weeks out.",
+    completedAt: new Date(),
+  });
+  await signInAs(context, owner);
+
+  await page.goto("/settings");
+  await expect(page.getByRole("link", { name: /^Your business/ })).toContainText(
+    "Price list: 2 lines",
+  );
+  await page.goto("/settings/business");
+  await expect(page.getByText("Service call $129.", { exact: false })).toBeVisible();
+  await expect(page.getByText("About two weeks out.")).toBeVisible();
+  await expect(page.getByText("Not set. Drafts won't say when you work.")).toBeVisible();
+  await page.getByRole("link", { name: "Change price list" }).click();
+  await expect(page).toHaveURL(/\/settings\/profile#pricingNotes$/);
+  await expect(page.getByLabel("Your price list")).toBeFocused();
+});
+
+test("the main trade can't be ticked again as an extra one (Check 15 P11)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await signInAs(context, owner);
+  await page.goto("/settings/profile");
+  const extras = page.getByRole("group", { name: /Do you do other trades too/ });
+  await page.getByLabel("What's your trade?").selectOption("plumbing");
+  await expect(extras.getByRole("checkbox", { name: "Plumbing" })).toHaveCount(0);
+  await expect(extras.getByRole("checkbox", { name: "Electrical" })).toBeVisible();
+  await expect(
+    page.getByText("Leaks, water heaters, drain clearing.", { exact: false }),
+  ).toBeVisible();
+  await page.getByLabel("What's your trade?").selectOption("electrical");
+  await expect(extras.getByRole("checkbox", { name: "Electrical" })).toHaveCount(0);
+  await expect(extras.getByRole("checkbox", { name: "Plumbing" })).toBeVisible();
 });

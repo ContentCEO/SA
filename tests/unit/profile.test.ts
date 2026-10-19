@@ -3,19 +3,26 @@ import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import { setModelTransportForTests } from "@/ai/client";
 import type { Database } from "@/db";
-import { messages, threads, workspaces } from "@/db/schema";
+import { messages, threads, voiceProfiles, workspaces } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { classifyPending } from "@/server/classification";
 import { saveConnectedMailbox } from "@/server/mailboxes";
 import {
+  AMOUNT_BLANK_MESSAGE,
+  AMOUNT_MESSAGE,
   businessProfileInput,
+  digestSettingsInput,
+  followupSettingsInput,
   crewAddressesSchema,
   describeVoice,
   getBusinessProfile,
   MAX_CREW_ADDRESSES,
   REVIEW_URL_MESSAGE,
   saveBusinessProfile,
+  saveVoiceEdits,
+  voiceEditInput,
 } from "@/server/profile";
+import { workspaceContext } from "@/server/drafts";
 import { profileDefaults } from "@/server/profile-defaults";
 import { hicExpiryLine, licenseFacts } from "@/config/licenses";
 import { MA_DEPOSIT_SETTINGS_LINE } from "@/config/ma-rules";
@@ -59,13 +66,148 @@ describe("business profile form", () => {
     const msgs = r.error!.issues.map((i) => i.message);
     expect(msgs).toContain("What's the business called?");
     expect(msgs).toContain("Tell us what work you do.");
-    expect(msgs).toContain("Each VIP line should be one email address.");
+    expect(msgs).toContain("This line isn't an email address: “not an email”.");
   });
 
   it("rejects a non-number threshold", () => {
     expect(
       businessProfileInput.safeParse({ ...valid, amountThresholdDollars: "lots" }).success,
     ).toBe(false);
+  });
+});
+
+describe("the money box (Check 15 P1)", () => {
+  const amountIssues = (amountThresholdDollars: string) => {
+    const r = businessProfileInput.safeParse({ ...valid, amountThresholdDollars });
+    expect(r.success, amountThresholdDollars).toBe(false);
+    return r
+      .error!.issues.filter((i) => i.path[0] === "amountThresholdDollars")
+      .map((i) => i.message);
+  };
+  const amountOf = (amountThresholdDollars: string) =>
+    businessProfileInput.parse({ ...valid, amountThresholdDollars }).amountThresholdDollars;
+
+  it("refuses a blank box (it would save $0) with a message saying why", () => {
+    expect(amountIssues("")).toEqual([AMOUNT_BLANK_MESSAGE]);
+    expect(amountIssues("  ")).toEqual([AMOUNT_BLANK_MESSAGE]);
+    expect(amountIssues("$")).toEqual([AMOUNT_BLANK_MESSAGE]);
+    const missing: Partial<typeof valid> = { ...valid };
+    delete missing.amountThresholdDollars;
+    expect(businessProfileInput.safeParse(missing).success).toBe(false);
+  });
+
+  it("reads money the way people type it", () => {
+    expect(amountOf("2,500")).toBe(2500);
+    expect(amountOf("$2,500")).toBe(2500);
+    expect(amountOf(" $ 2500 ")).toBe(2500);
+    expect(amountOf("1,250,000")).toBe(1_250_000);
+    expect(amountOf("0")).toBe(0); // typed on purpose, not a blank box
+  });
+
+  it("refuses decimals, negatives, words, odd commas and huge numbers in plain words", () => {
+    expect(amountIssues("2500.50")).toEqual(["Whole dollars, please."]);
+    expect(amountIssues("-5")).toEqual([AMOUNT_MESSAGE]);
+    expect(amountIssues("abc")).toEqual([AMOUNT_MESSAGE]);
+    expect(amountIssues("25,00")).toEqual([AMOUNT_MESSAGE]);
+    expect(amountIssues("20000000")).toEqual([
+      "That's more than we can check. Try a smaller amount.",
+    ]);
+  });
+});
+
+describe("plain words for every Settings form error (Check 15 P2)", () => {
+  const voiceValid = {
+    greetingStyle: "Hey",
+    signoffStyle: "Thanks, Mike",
+    formality: "casual",
+    avgLengthWords: "60",
+    phrasesUsed: "",
+    phrasesAvoided: "",
+    summary: "",
+  };
+  const zodWording = (m: string) =>
+    /^(Too big|Too small|Invalid)/.test(m) || m.includes("expected");
+  const bad: Array<
+    [string, { safeParse: (v: unknown) => { error?: { issues: { message: string }[] } } }, unknown]
+  > = [
+    ["business name too long", businessProfileInput, { ...valid, businessName: "x".repeat(121) }],
+    ["business name missing", businessProfileInput, { ...valid, businessName: undefined }],
+    ["services too long", businessProfileInput, { ...valid, services: "x".repeat(2001) }],
+    ["services empty", businessProfileInput, { ...valid, services: "" }],
+    ["wrong trade", businessProfileInput, { ...valid, trade: "astronaut" }],
+    ["wrong extra trade", businessProfileInput, { ...valid, extraTrades: "astronaut" }],
+    [
+      "too many extra trades",
+      businessProfileInput,
+      { ...valid, extraTrades: "plumbing,hvac,roofing" },
+    ],
+    ["long area", businessProfileInput, { ...valid, serviceArea: "x".repeat(2001) }],
+    ["long hours", businessProfileInput, { ...valid, hours: "x".repeat(501) }],
+    ["long promise line", businessProfileInput, { ...valid, doNotPromise: "x".repeat(201) }],
+    ["wrong state", businessProfileInput, { ...valid, state: "ZZ" }],
+    ["long license", businessProfileInput, { ...valid, hicNumber: "x".repeat(200) }],
+    ["bad license date", businessProfileInput, { ...valid, hicExpiresOn: "soon" }],
+    ["NaN amount", businessProfileInput, { ...valid, amountThresholdDollars: "abc" }],
+    ["decimal amount", businessProfileInput, { ...valid, amountThresholdDollars: "1.5" }],
+    ["huge amount", businessProfileInput, { ...valid, amountThresholdDollars: "99999999" }],
+    ["greeting too long", voiceEditInput, { ...voiceValid, greetingStyle: "x".repeat(120) }],
+    ["sign-off too long", voiceEditInput, { ...voiceValid, signoffStyle: "x".repeat(120) }],
+    ["blank word count", voiceEditInput, { ...voiceValid, avgLengthWords: "" }],
+    ["NaN word count", voiceEditInput, { ...voiceValid, avgLengthWords: "abc" }],
+    ["decimal word count", voiceEditInput, { ...voiceValid, avgLengthWords: "60.5" }],
+    ["small word count", voiceEditInput, { ...voiceValid, avgLengthWords: "5" }],
+    ["big word count", voiceEditInput, { ...voiceValid, avgLengthWords: "500" }],
+    ["wrong formality", voiceEditInput, { ...voiceValid, formality: "shouty" }],
+    ["summary too long", voiceEditInput, { ...voiceValid, summary: "x".repeat(601) }],
+    ["long phrase", voiceEditInput, { ...voiceValid, phrasesUsed: "x".repeat(121) }],
+    ["wrong follow-up days", followupSettingsInput, { days: "6" }],
+    ["NaN follow-up days", followupSettingsInput, { days: "abc" }],
+    ["wrong follow-up switch", followupSettingsInput, { enabled: "yes", days: "3" }],
+    ["wrong digest hour", digestSettingsInput, { hour: "3" }],
+    ["NaN digest hour", digestSettingsInput, { hour: "abc" }],
+    ["wrong digest switch", digestSettingsInput, { enabled: "yes", hour: "7" }],
+    ["wrong time zone", digestSettingsInput, { hour: "7", timeZone: "Mars/Base" }],
+    ["crew line", crewAddressesSchema, "not an email"],
+  ];
+
+  it.each(bad)("%s: refused in plain words", (_name, schema, input) => {
+    const r = schema.safeParse(input);
+    expect(r.error, _name).toBeDefined();
+    for (const { message } of r.error!.issues) expect(zodWording(message), message).toBe(false);
+  });
+
+  it("the voice form's messages", () => {
+    const msg = (input: Record<string, unknown>) =>
+      voiceEditInput.safeParse({ ...voiceValid, ...input }).error!.issues[0]!.message;
+    expect(msg({ greetingStyle: "x".repeat(120) })).toBe("Keep this under 100 characters.");
+    expect(msg({ avgLengthWords: "" })).toBe("Type a number of words, like 60.");
+    expect(msg({ avgLengthWords: "abc" })).toBe("Type a number of words, like 60.");
+    expect(msg({ avgLengthWords: "60.5" })).toBe("A whole number, like 60.");
+    expect(msg({ avgLengthWords: "5" })).toBe("At least 10 words.");
+    expect(msg({ avgLengthWords: "500" })).toBe("Up to 400 words.");
+    expect(msg({ formality: "shouty" })).toBe("Pick how formal you are.");
+    expect(msg({ summary: "x".repeat(601) })).toBe("Keep this under 600 characters.");
+    expect(
+      businessProfileInput.safeParse({ ...valid, businessName: "x".repeat(121) }).error!.issues[0]!
+        .message,
+    ).toBe("Keep the name under 120 characters.");
+  });
+
+  it("“People who always need you” takes addresses pasted from Gmail", () => {
+    const vip = (vipSenders: string) =>
+      businessProfileInput.parse({ ...valid, vipSenders }).vipSenders;
+    expect(vip("Sue Smith <sue@example.com>")).toEqual(["sue@example.com"]);
+    expect(vip("a@x.com, b@y.com")).toEqual(["a@x.com", "b@y.com"]);
+    expect(vip("a@x.com; B@Y.com\nSmith, Sue <Sue@Example.com>")).toEqual([
+      "a@x.com",
+      "b@y.com",
+      "sue@example.com",
+    ]);
+    const r = businessProfileInput.safeParse({ ...valid, vipSenders: "ok@x.com\nSue Smith" });
+    expect(r.error!.issues.map((i) => i.message)).toEqual([
+      "This line isn't an email address: “Sue Smith”.",
+    ]);
+    for (const i of r.error!.issues) expect(i.message).not.toMatch(/VIP/);
   });
 });
 
@@ -130,6 +272,62 @@ describe("review link (plan #29)", () => {
   it("caps the length", () => {
     const long = `https://g.page/r/${"a".repeat(500)}`;
     expect(reviewIssues(long)).toEqual(["Keep this under 500 characters."]);
+  });
+});
+
+describe("no greeting or no sign-off (Check 24 P11)", () => {
+  const base = {
+    greetingStyle: "",
+    signoffStyle: "",
+    formality: "casual",
+    avgLengthWords: "40",
+    phrasesUsed: "",
+    phrasesAvoided: "",
+    summary: "",
+  };
+  it("an empty box saves null, and the old “How do you usually open?” error is gone", () => {
+    const r = voiceEditInput.safeParse(base);
+    expect(r.success).toBe(true);
+    expect(r.data).toMatchObject({ greetingStyle: null, signoffStyle: null });
+    expect(JSON.stringify(r)).not.toContain("How do you usually open?");
+  });
+  it("“I don't use one” wins over a typed box", () => {
+    const r = voiceEditInput.parse({
+      ...base,
+      greetingStyle: "Hey",
+      noGreeting: "on",
+      signoffStyle: "– D",
+      noSignoff: "on",
+    });
+    expect(r).toMatchObject({ greetingStyle: null, signoffStyle: null });
+    expect(r).not.toHaveProperty("noGreeting");
+    expect(voiceEditInput.parse({ ...base, signoffStyle: " – D " }).signoffStyle).toBe("– D");
+  });
+  it("describeVoice says so", () => {
+    expect(
+      describeVoice({
+        greetingStyle: null,
+        signoffStyle: null,
+        avgLengthWords: null,
+        formality: null,
+      }),
+    ).toBe("You usually jump straight in. You don't sign off.");
+    expect(
+      describeVoice({
+        greetingStyle: null,
+        signoffStyle: "– D",
+        avgLengthWords: null,
+        formality: null,
+      }),
+    ).toBe("You usually jump straight in. You usually sign off “– D”.");
+    expect(
+      describeVoice({
+        greetingStyle: "Hey",
+        signoffStyle: null,
+        avgLengthWords: null,
+        formality: null,
+      }),
+    ).toBe("You usually open with “Hey”. You don't sign off.");
   });
 });
 
@@ -203,6 +401,23 @@ describe("profile drives classification", () => {
     );
     expect(rows.t1!.needsOwner).toBe(true); // VIP
     expect(rows.t2!.needsOwner).toBe(false); // $4,000 is under the owner's $5,000
+  });
+
+  it("a blank money box never reaches the saved profile as $0 (Check 15 P1)", async () => {
+    const { workspace } = await ensureUserAndWorkspace({ email: "owner@shop.com" });
+    await saveBusinessProfile(workspace.id, businessProfileInput.parse(valid));
+    // The action only saves what parses; a cleared box doesn't.
+    for (const blank of ["", "   ", "$"]) {
+      expect(
+        businessProfileInput.safeParse({ ...valid, amountThresholdDollars: blank }).success,
+      ).toBe(false);
+    }
+    expect((await getBusinessProfile(workspace.id))!.amountThresholdDollars).toBe(5000);
+    await saveBusinessProfile(
+      workspace.id,
+      businessProfileInput.parse({ ...valid, amountThresholdDollars: "$2,500" }),
+    );
+    expect((await getBusinessProfile(workspace.id))!.amountThresholdDollars).toBe(2500);
   });
 
   it("saves the review link, shows it in the form defaults, and clears it when emptied", async () => {
@@ -346,5 +561,51 @@ describe("crew addresses rule (Check 50 P3, not in a form yet)", () => {
     const many = Array.from({ length: MAX_CREW_ADDRESSES + 1 }, (_, i) => `c${i}@shop.com`);
     expect(crewAddressesSchema.safeParse(many.join("\n")).success).toBe(false);
     expect(crewAddressesSchema.safeParse(many.slice(1).join("\n")).success).toBe(true);
+  });
+});
+
+describe("sample replies go stale when the owner changes the voice (Check 24 P8)", () => {
+  let database: Database;
+  beforeEach(async () => {
+    database = await createTestDb();
+  });
+
+  it("an edit to formality empties the samples drafts get; saving the same values doesn't", async () => {
+    const { workspace } = await ensureUserAndWorkspace({ email: "owner@shop.com" });
+    await database.insert(voiceProfiles).values({
+      workspaceId: workspace.id,
+      status: "ready",
+      greetingStyle: "Hey",
+      signoffStyle: "Thanks, Sam",
+      formality: "casual",
+      avgLengthWords: 40,
+      examples: ["Hey [name], sure thing. Thanks, Sam"],
+    });
+    const form = (formality: string) =>
+      voiceEditInput.parse({
+        greetingStyle: "Hey",
+        signoffStyle: "Thanks, Sam",
+        formality,
+        avgLengthWords: "40",
+        phrasesUsed: "",
+        phrasesAvoided: "",
+        summary: "",
+      });
+    const ctx = () => workspaceContext(workspace.id, { businessName: "Shop", trade: "carpentry" });
+
+    await saveVoiceEdits(workspace.id, form("casual"));
+    let [v] = await database.select().from(voiceProfiles);
+    expect(v!.examplesStale).toBe(false);
+    expect((await ctx()).voice?.examples).toHaveLength(1);
+
+    await saveVoiceEdits(workspace.id, form("formal"));
+    [v] = await database.select().from(voiceProfiles);
+    expect(v!.examplesStale).toBe(true);
+    expect((await ctx()).voice).toMatchObject({ formality: "formal", examples: [] });
+
+    // Changing it back doesn't make the old samples fresh again (they stay unused until rewritten).
+    await saveVoiceEdits(workspace.id, form("casual"));
+    [v] = await database.select().from(voiceProfiles);
+    expect(v!.examplesStale).toBe(true);
   });
 });

@@ -76,6 +76,14 @@ export const LEAD_SOURCES: readonly LeadSource[] = [
     domains: ["networx.com"],
     site: { key: "networx", name: "Networx", openUrl: "https://www.networx.com/" },
   },
+  // Check 40 P4: roofing lead marketplaces and instant-quote widgets. Counted under their label
+  // and never drafted to (a reply reaches the robot, not the homeowner). `site: null` until a
+  // real sample shows where the owner answers them.
+  // TODO(Check 40 P4): confirm each sending domain from a real email; GAF and Owens Corning
+  // contractor-finder domains are left out until one is seen.
+  { label: "Modernize", domains: ["modernize.com"], site: null },
+  { label: "eLocal", domains: ["elocal.com"], site: null },
+  { label: "Instant quote on your website", domains: ["roofle.com", "roofr.com"], site: null },
 ];
 
 /**
@@ -93,6 +101,14 @@ export const OPEN_SITE_HOSTS: readonly string[] = [
   "www.bark.com",
   "www.networx.com",
 ];
+
+/**
+ * Check 13 P2: the local part of a lead platform's per-customer relay address
+ * (reply+8x2k@messages.thumbtack.com): a reply there reaches one person. Anything else at a
+ * platform (leads@angi.com, pro@homeadvisor.com) is the platform itself. Works in JavaScript
+ * and in Postgres (`customerRobotSql`).
+ */
+export const LEAD_RELAY_LOCAL_PATTERN = "(^reply[+._-]|[+])";
 
 /** Everything else: the customer wrote to the owner themselves. */
 export const DIRECT_EMAIL = "Direct email";

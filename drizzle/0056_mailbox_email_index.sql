@@ -1,0 +1,1 @@
+CREATE INDEX "mailboxes_email_lower_idx" ON "mailboxes" USING btree (lower("email"));

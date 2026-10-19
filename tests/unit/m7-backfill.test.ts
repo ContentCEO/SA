@@ -185,6 +185,8 @@ describe("M7 one-shot backfill (run from new code by the 15-minute job)", () => 
     const src = readFileSync("src/jobs/functions.ts", "utf8");
     const job = src.slice(src.indexOf("export const workspaceLifecycle"));
     const body = job.slice(0, job.indexOf("\n);"));
-    expect(body).toMatch(/step\.run\(\s*"m7-backfill",\s*\(\)\s*=>\s*runM7Backfill\(\)\s*\)/);
+    // Check 25 P4: one check inside the grouped "housekeeping" step.
+    expect(body).toMatch(/step\.run\("housekeeping"/);
+    expect(body).toMatch(/"m7-backfill":\s*\(\)\s*=>\s*runM7Backfill\(\)/);
   });
 });

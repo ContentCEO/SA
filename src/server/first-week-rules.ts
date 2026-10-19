@@ -92,7 +92,10 @@ export function firstLookLines(c: FirstLookCounts, sortDays: number): string[] {
   ];
 }
 
-/** FW D2: "found money", only when there is some. Null = no offer. */
+/**
+ * FW D2: "found money", only when there is some. Null = no offer. Check 14 P8: the counts are
+ * the true totals; past the one-tap cap the offer says how many it will draft.
+ */
 export function foundMoneyLine(c: Pick<FirstLookCounts, "unansweredQuotes" | "quietQuotes">) {
   const total = c.unansweredQuotes + c.quietQuotes;
   if (!total) return null;
@@ -104,10 +107,16 @@ export function foundMoneyLine(c: Pick<FirstLookCounts, "unansweredQuotes" | "qu
       ? `${n(c.quietQuotes, "quote you sent", "quotes you sent")} never got a follow-up`
       : null,
   ].filter(Boolean);
-  return `${bits.join(", and ")}. Want drafts? You check each one before anything goes out.`;
+  const over = c.unansweredQuotes > FOUND_MONEY_MAX || c.quietQuotes > FOUND_MONEY_MAX;
+  const ask = !over
+    ? "Want drafts?"
+    : c.unansweredQuotes && c.quietQuotes
+      ? `Draft up to ${FOUND_MONEY_MAX} of each, newest first?`
+      : `Draft the newest ${FOUND_MONEY_MAX}?`;
+  return `${bits.join(", and ")}. ${ask} You check each one before anything goes out.`;
 }
 
-/** At most this many drafts from one "Draft them" tap (FW D2). */
+/** At most this many drafts of each kind from one "Draft them" tap (FW D2). */
 export const FOUND_MONEY_MAX = 10;
 
 /** FW F2: the trial's last day — the banner changes inside this window. */
@@ -121,7 +130,8 @@ export function isLastDay(msLeft: number): boolean {
 export function trialSoFarLine(c: { sorted: number; drafted: number }): string | null {
   if (!c.sorted && !c.drafted) return null;
   const bits = [
-    c.sorted ? `sorted ${n(c.sorted, "email", "emails")}` : null,
+    // Check 14 P11: it counts conversations (threads), not emails.
+    c.sorted ? `sorted ${n(c.sorted, "conversation", "conversations")}` : null,
     c.drafted ? `written ${n(c.drafted, "draft", "drafts")}` : null,
   ].filter(Boolean);
   return `So far it has ${bits.join(" and ")} for you.`;

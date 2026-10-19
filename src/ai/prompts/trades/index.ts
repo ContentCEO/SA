@@ -8,6 +8,7 @@ import { painting } from "./painting";
 import { plumbing } from "./plumbing";
 import { remodeling } from "./remodeling";
 import { roofing } from "./roofing";
+import { snow } from "./snow";
 import type { TradePrompt } from "./types";
 
 /** Every trade must have a prompt file — the Record type makes a missing one a compile error. */
@@ -20,6 +21,7 @@ export const tradePrompts: Record<Trade, TradePrompt> = {
   painting,
   landscaping,
   remodeling,
+  snow,
   other,
 };
 

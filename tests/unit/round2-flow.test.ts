@@ -217,13 +217,15 @@ describe("supplier bills (TW A2)", () => {
       sentAt: minsAgo(40),
     });
     const inv = (direction: "owed_to_business" | "owed_by_business") => {
-      const m = classification({ category: "invoice_payment" });
-      m.extracted = {
-        ...m.extracted,
-        invoice: { invoice_number: "42", amount: 900, due_date: null, status: "unpaid" },
-        invoice_direction: direction,
-      };
-      return m;
+      const m = classification();
+      return classification({
+        category: "invoice_payment",
+        extracted: {
+          ...m.extracted,
+          invoice: { invoice_number: "42", amount: 900, due_date: null, status: "unpaid" },
+          invoice_direction: direction,
+        },
+      });
     };
     // Newest first: the customer's email, then the supplier's.
     setModelTransportForTests(

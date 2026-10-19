@@ -1,15 +1,19 @@
 import "server-only";
 import { cookies } from "next/headers";
+import { CONTRAST_COOKIE, HAND_COOKIE, OFFLINE_COOKIE } from "@/lib/device-cookies";
 
 /**
  * Per-device preferences (plan #9 left hand, #37 sunlight mode). Cookies, not
  * the account: a phone and a desk computer can differ, and the server renders
  * the right layout first time with no flash.
  */
-export const HAND_COOKIE = "sa_hand";
-export const CONTRAST_COOKIE = "sa_contrast";
-export const OFFLINE_COOKIE = "sa_offline";
-export const DEVICE_COOKIE_MAX_AGE = 60 * 60 * 24 * 400; // the browser maximum
+
+export {
+  CONTRAST_COOKIE,
+  DEVICE_COOKIE_MAX_AGE,
+  HAND_COOKIE,
+  OFFLINE_COOKIE,
+} from "@/lib/device-cookies";
 
 export type DevicePrefs = { leftHanded: boolean; sunlight: boolean; offline: boolean };
 

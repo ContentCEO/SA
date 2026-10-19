@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { Button } from "@/components/ui/button";
+import { UNDO_WINDOW_SECONDS } from "@/config/drafting";
 import { undoSendAction } from "./actions";
 
 function UndoButton({ label }: { label: string }) {
@@ -14,6 +15,14 @@ function UndoButton({ label }: { label: string }) {
     </Button>
   );
 }
+
+/**
+ * Check 32 P7: what a screen reader hears about the undo window — one sentence that never
+ * changes while the seconds tick (the visible count is hidden from it), then one line when the
+ * time is up.
+ */
+export const UNDO_SPOKEN = `You have ${UNDO_WINDOW_SECONDS} seconds to undo.`;
+export const UNDO_TIME_UP = "Time's up. Sending now.";
 
 /**
  * Plan #7: the undo window. Counts down to the send time; Undo puts the
@@ -46,17 +55,28 @@ export function UndoSend({ draftIds, sendAt }: { draftIds: string[]; sendAt: str
     return () => clearInterval(poll);
   }, [left, router]);
 
-  if (left === 0) return <p className="font-semibold">Sending now…</p>;
   const many = draftIds.length > 1;
   return (
-    <form action={undoSendAction} className="flex flex-col gap-2">
-      {draftIds.map((id) => (
-        <input key={id} type="hidden" name="draftId" value={id} />
-      ))}
-      <p className="font-semibold" aria-live="off">
-        Sending in {left} second{left === 1 ? "" : "s"}.
+    <div className="flex flex-col gap-2">
+      {/* One region, said once at the start and once at the end — never per second. */}
+      <p role="status" className="sr-only">
+        {left === 0 ? UNDO_TIME_UP : UNDO_SPOKEN}
       </p>
-      <UndoButton label={many ? `Undo all ${draftIds.length}` : "Undo"} />
-    </form>
+      {left === 0 ? (
+        <p className="font-semibold" aria-hidden>
+          Sending now…
+        </p>
+      ) : (
+        <form action={undoSendAction} className="flex flex-col gap-2">
+          {draftIds.map((id) => (
+            <input key={id} type="hidden" name="draftId" value={id} />
+          ))}
+          <p className="font-semibold" aria-hidden>
+            Sending in {left} second{left === 1 ? "" : "s"}.
+          </p>
+          <UndoButton label={many ? `Undo all ${draftIds.length}` : "Undo"} />
+        </form>
+      )}
+    </div>
   );
 }

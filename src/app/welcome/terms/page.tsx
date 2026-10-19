@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { noticeText } from "@/lib/notice-text";
 import { cookies } from "next/headers";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -16,6 +17,9 @@ import { OFFLINE_COOKIE } from "@/lib/device-prefs";
 import { phoneHref } from "@/lib/phone-href";
 import { listMailboxes } from "@/server/mailboxes";
 import { requireSignedIn } from "@/server/session";
+import { Markdown } from "@/lib/markdown";
+import { legalChangesSince } from "@/server/legal-changes";
+import { changesMarkdown } from "@/server/legal-changes-rules";
 import { termsOf } from "@/server/terms";
 import {
   hasCurrentTerms,
@@ -29,8 +33,9 @@ import {
   disconnectMailboxFromTermsAction,
   openPortalFromTermsAction,
 } from "./actions";
+import { SkipLink } from "@/components/app/skip-link";
 
-export const metadata: Metadata = { title: "Our terms · Squared Away" };
+export const metadata: Metadata = { title: "Our terms" };
 
 const done: Record<string, string> = {
   disconnected: "Gmail disconnected. We've removed our access at Google.",
@@ -40,6 +45,8 @@ const errors: Record<string, string> = {
   busy: "That's a lot in a short time, so we've paused it for a bit. Try again in a few minutes.",
   delete_billing:
     "We couldn't cancel your plan, so nothing was deleted. Try again, or call us and we'll do it.",
+  // Check 26 P4.
+  confirm: "Type DELETE to confirm.",
   unknown: "That didn't work. Refresh and try again.",
 };
 
@@ -56,22 +63,37 @@ export default async function TermsAgreementPage(props: PageProps<"/welcome/term
   const terms = (await termsOf(userId)) ?? { termsVersion: null };
   if (hasCurrentTerms(terms)) redirect(back);
   const copy = termsScreenCopy(terms);
+  // Check 27 P3: someone who agreed to an older version is told what changed since.
+  const changed = await legalChangesSince(terms.termsVersion);
   const mailboxes = await listMailboxes(workspace.id);
-  const doneMsg = typeof doneKey === "string" ? done[doneKey] : undefined;
-  const errorMsg = typeof errorKey === "string" ? errors[errorKey] : undefined;
+  const doneMsg = noticeText(done, doneKey);
+  const errorMsg = noticeText(errors, errorKey);
 
   return (
     <div className="mx-auto flex w-full max-w-xl flex-1 flex-col px-4 py-6">
+      <SkipLink />
       <header>
         <Link href="/" className="inline-flex min-h-tap items-center">
           <Wordmark />
         </Link>
       </header>
-      <main className="flex flex-1 flex-col justify-center gap-6 py-12">
+      <main
+        id="main"
+        tabIndex={-1}
+        className="flex flex-1 flex-col justify-center gap-6 py-12 outline-none"
+      >
         <Headline serif={copy.serif} heavy={copy.heavy} />
         {errorMsg ? <Notice strong>{errorMsg}</Notice> : null}
         {doneMsg ? <Notice>{doneMsg}</Notice> : null}
         <p className="text-lg">{copy.lead}</p>
+        {changed.length > 0 ? (
+          <section aria-labelledby="what-changed" className="flex flex-col gap-3">
+            <h2 id="what-changed" className="text-xl font-black">
+              What changed
+            </h2>
+            <Markdown source={changesMarkdown(changed)} />
+          </section>
+        ) : null}
         <TermsForm
           action={agreeToTermsAction}
           submitLabel="Agree and continue"

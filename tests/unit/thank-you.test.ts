@@ -283,7 +283,7 @@ describe("Say thanks on a paid invoice", () => {
     expect(await thankYouAllowed(workspaceId, t, NOW)).toEqual({ why: null, withReview: false });
   });
 
-  it("not offered and refused before any model call: unpaid, not owed, receipts, robots, suppliers, injection, municipal", async () => {
+  it("not offered and refused before any model call: unpaid, not owed, receipts, robots, suppliers, injection, municipal, utility", async () => {
     await profile();
     const cases = [
       await paidInvoice({ invoicePaidAt: null, invoicePaidSource: null }, "a@customer.com"),
@@ -293,6 +293,8 @@ describe("Say thanks on a paid invoice", () => {
       await paidInvoice({ category: "supplier_vendor" }, "d@customer.com"),
       await paidInvoice({ extracted: { injection: true } }, "e@customer.com"),
       await paidInvoice({ extracted: { municipal: true } }, "f@customer.com"),
+      // Integrator, merge C: the electric company (Check 37 P3) like a town office.
+      await paidInvoice({ extracted: { utility: true } }, "g@customer.com"),
     ];
     const offers = await threadOffers(workspaceId, cases, NOW);
     const calls = model(thanksPlain);

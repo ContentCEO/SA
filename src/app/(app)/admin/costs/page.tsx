@@ -4,6 +4,8 @@ import { Headline } from "@/components/brand/headline";
 import { formatDollars, pricing } from "@/config/pricing";
 import { COST_ALERT_SHARE } from "@/server/admin-cost-rules";
 import { costRows } from "@/server/admin-costs";
+import { statusLabel } from "@/server/admin-rules";
+import { STRIPE_FEES } from "@/config/fees";
 import { requireAdmin } from "@/server/session";
 import { cn } from "@/lib/utils";
 
@@ -22,8 +24,12 @@ export default async function AdminCostsPage() {
   await requireAdmin();
   const rows = await costRows();
   const total = rows.reduce(
-    (t, r) => ({ cost: t.cost + r.costCents, revenue: t.revenue + r.revenueCents }),
-    { cost: 0, revenue: 0 },
+    (t, r) => ({
+      cost: t.cost + r.costCents,
+      revenue: t.revenue + r.revenueCents,
+      fees: t.fees + r.feesCents,
+    }),
+    { cost: 0, revenue: 0, fees: 0 },
   );
 
   return (
@@ -31,14 +37,18 @@ export default async function AdminCostsPage() {
       <Headline serif="this month," heavy="AI costs." />
       <p>
         AI cost is an estimate from token counts. Revenue is the monthly plan for paying accounts
-        (setup fees not counted). You get an email when an account passes{" "}
+        (setup fees and your own test account not counted). &ldquo;After Stripe&rdquo; takes off
+        Stripe&apos;s card and billing fees ({(STRIPE_FEES.cardPercent * 100).toFixed(1)}% +{" "}
+        {STRIPE_FEES.cardFixedCents}¢, plus {(STRIPE_FEES.billingPercent * 100).toFixed(1)}%; sales
+        tax fees not counted). You get an email when an account passes{" "}
         {Math.round(COST_ALERT_SHARE * 100)}% of its plan price.
       </p>
-      <dl className="grid grid-cols-3 gap-2 rounded-xl border bg-card p-4">
+      <dl className="grid grid-cols-2 gap-2 rounded-xl border bg-card p-4">
         {[
-          ["AI cost", formatDollars(total.cost)],
           ["Plans", formatDollars(total.revenue)],
-          ["Margin", money(total.revenue - total.cost)],
+          ["After Stripe", formatDollars(total.revenue - total.fees)],
+          ["AI cost", formatDollars(total.cost)],
+          ["Keeps", money(total.revenue - total.fees - total.cost)],
         ].map(([k, v]) => (
           <div key={k}>
             <dt className="text-sm text-muted-foreground">{k}</dt>
@@ -61,14 +71,22 @@ export default async function AdminCostsPage() {
               <div className="flex items-baseline justify-between gap-2">
                 <span className="truncate font-black">{r.label}</span>
                 <span className="shrink-0 text-sm font-semibold">
-                  {r.plan ? pricing.plans[r.plan].name : "No plan"} · {r.status.replace("_", " ")}
+                  {r.plan ? pricing.plans[r.plan].name : "No plan"}
+                  {r.freeMonth ? " · free month" : ""} · {statusLabel[r.status]}
                 </span>
               </div>
-              <p>
-                AI {formatDollars(r.costCents)} · plan {formatDollars(r.revenueCents)} · margin{" "}
-                <span className="font-black">{money(r.marginCents)}</span>
-                {r.costShare !== null ? ` · ${Math.round(r.costShare * 100)}% of plan` : ""}
-              </p>
+              {r.house ? (
+                <p>Your test account · AI {formatDollars(r.costCents)}</p>
+              ) : r.revenueCents ? (
+                <p>
+                  plan {formatDollars(r.revenueCents)} · after Stripe{" "}
+                  {formatDollars(r.revenueCents - r.feesCents)} · AI {formatDollars(r.costCents)} ·
+                  keeps <span className="font-black">{money(r.marginAfterFeesCents)}</span>
+                  {r.costShare !== null ? ` · AI is ${Math.round(r.costShare * 100)}% of plan` : ""}
+                </p>
+              ) : (
+                <p>Not paying yet · AI {formatDollars(r.costCents)}</p>
+              )}
               <p className="text-sm">
                 {r.calls} AI calls this month · busiest day {r.busiestDayCalls} of {r.cap}
               </p>

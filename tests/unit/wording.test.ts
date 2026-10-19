@@ -109,6 +109,23 @@ describe("never-say list (#23)", () => {
     expect(r.confidenceCap).toBeLessThanOrEqual(0.2);
   });
 
+  it("saving reports how many lines were skipped, as counts only (Check 15 P5)", async () => {
+    const long = "x".repeat(81);
+    expect(
+      await saveNeverSay(workspaceId, "No worries\n\nx\nno worries\nPer my last email"),
+    ).toEqual({
+      saved: 2,
+      skipped: 1,
+    });
+    expect(await saveNeverSay(workspaceId, `${long}\nKind regards`)).toEqual({
+      saved: 1,
+      skipped: 1,
+    });
+    const many = Array.from({ length: NEVER_SAY_MAX + 3 }, (_, i) => `Phrase ${i}`).join("\n");
+    expect(await saveNeverSay(workspaceId, many)).toEqual({ saved: NEVER_SAY_MAX, skipped: 3 });
+    expect(await saveNeverSay(workspaceId, "Cheers")).toEqual({ saved: 1, skipped: 0 });
+  });
+
   it("adding from the editor: needs a selection, de-dupes", async () => {
     await expect(addNeverSay(workspaceId, " ")).rejects.toBeInstanceOf(NeverSayError);
     await addNeverSay(workspaceId, "no worries");

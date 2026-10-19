@@ -8,6 +8,7 @@ import { decryptSecret } from "@/lib/crypto";
 import { GMAIL_STATE_COOKIE } from "@/mailbox/gmail/oauth-state";
 import { ALL_CONNECT_SCOPES, GMAIL_SCOPES } from "@/mailbox/gmail/scopes";
 import { ensureUserAndWorkspace } from "@/server/accounts";
+import { signOutEverywhere } from "@/server/sign-out-everywhere";
 import { saveConnectedMailbox } from "@/server/mailboxes";
 import { recordTermsAcceptance } from "@/server/terms";
 import { createTestDb } from "../support/db";
@@ -20,7 +21,7 @@ import { createTestDb } from "../support/db";
  */
 
 const req = vi.hoisted(() => ({
-  session: null as { user: { id: string } } | null,
+  session: null as { user: { id: string; sv?: number } } | null,
   cookies: new Map<string, string>(),
 }));
 
@@ -47,6 +48,9 @@ const GMAIL_SEND = "https://www.googleapis.com/auth/gmail.send";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo";
 const REVOKE_URL = "https://oauth2.googleapis.com/revoke";
+const PROFILE_URL = "https://gmail.googleapis.com/gmail/v1/users/me/profile";
+/** Check 47 P1: whether the Google account has Gmail at all. */
+let hasGmail: boolean;
 
 let database: Database;
 let workspaceId: string;
@@ -62,9 +66,10 @@ beforeEach(async () => {
   const { user, workspace } = await ensureUserAndWorkspace({ email: "owner@shop.com" });
   await recordTermsAcceptance(user.id);
   workspaceId = workspace.id;
-  req.session = { user: { id: user.id } };
+  req.session = { user: { id: user.id, sv: 0 } };
   req.cookies = new Map([[GMAIL_STATE_COOKIE, "state-123"]]);
   google = [];
+  hasGmail = true;
   vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     google.push({ url, body: String(init?.body ?? "") });
@@ -73,6 +78,19 @@ beforeEach(async () => {
     if (url === TOKEN_URL)
       return json({ access_token: "at-new", refresh_token: "rt-new", scope: granted.join(" ") });
     if (url === USERINFO_URL) return json({ email: "owner@shop.com", email_verified: true });
+    if (url === PROFILE_URL)
+      return hasGmail
+        ? json({ emailAddress: "owner@shop.com", historyId: "1" })
+        : new Response(
+            JSON.stringify({
+              error: {
+                code: 400,
+                message: "Mail service not enabled",
+                errors: [{ reason: "failedPrecondition" }],
+              },
+            }),
+            { status: 400, headers: { "content-type": "application/json" } },
+          );
     if (url === REVOKE_URL) return new Response(null, { status: 200 });
     return new Response(null, { status: 404 });
   });
@@ -92,6 +110,16 @@ async function callback() {
 
 const statusOf = async () =>
   (await database.select().from(workspaces).where(eq(workspaces.id, workspaceId)))[0]!.status;
+
+describe("Check 26 P3: a sign-in ended by 'Sign out everywhere'", () => {
+  it("GUARDRAIL: saves nothing and asks Google nothing", async () => {
+    granted = ALL_CONNECT_SCOPES;
+    await signOutEverywhere(workspaceId, "owner");
+    expect(await callback()).toBe("/");
+    expect(await database.select().from(mailboxes)).toEqual([]);
+    expect(google).toEqual([]);
+  });
+});
 
 describe("Gmail connect callback: the two scopes", () => {
   for (const missing of [GMAIL_SCOPES.compose, GMAIL_SCOPES.readonly]) {
@@ -141,8 +169,92 @@ describe("Gmail connect callback: the two scopes", () => {
       expect(row?.status).toBe("active");
       expect(row?.scopes).toBe(granted.join(" "));
       expect(decryptSecret(row!.encryptedRefreshToken)).toBe("rt-new");
-      expect(google.map((c) => c.url)).toEqual([TOKEN_URL, USERINFO_URL]);
+      expect(google.map((c) => c.url)).toEqual([TOKEN_URL, PROFILE_URL, USERINFO_URL]);
       expect(await statusOf()).toBe("evaluating");
     }
+  });
+});
+
+describe("Gmail connect callback: a Google account without Gmail (Check 47 P1)", () => {
+  it("GUARDRAIL: redirects to no_gmail, saves nothing, and the trial clock doesn't start", async () => {
+    granted = ALL_CONNECT_SCOPES;
+    hasGmail = false;
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await callback()).toBe("/connect?error=no_gmail");
+    expect(await database.select().from(mailboxes)).toEqual([]);
+    const [w] = await database.select().from(workspaces).where(eq(workspaces.id, workspaceId));
+    expect(w!.status).toBe("invited");
+    expect(w!.evaluationEndsAt).toBeNull();
+    expect(google.map((c) => c.url)).toEqual([TOKEN_URL, PROFILE_URL, REVOKE_URL]);
+    expect(google[2]!.body).toBe("token=rt-new");
+    // Content-free: the kind of failure only.
+    expect(errors.mock.calls).toEqual([["gmail_connect_no_mailbox", { name: "NoGmailError" }]]);
+    errors.mockRestore();
+  });
+});
+
+describe("Gmail connect callback: a Gmail already in another account (Check 25 P7)", () => {
+  it("GUARDRAIL: redirects to in_use and saves nothing; the other account's token is not revoked", async () => {
+    const other = await ensureUserAndWorkspace({ email: "spouse@shop.com" });
+    await saveConnectedMailbox(other.workspace, {
+      email: "owner@shop.com",
+      refreshToken: "rt-theirs",
+      grantedScopes: ALL_CONNECT_SCOPES,
+    });
+    granted = ALL_CONNECT_SCOPES;
+    expect(await callback()).toBe("/connect?error=in_use");
+    const rows = await database.select().from(mailboxes);
+    expect(rows.map((r) => r.workspaceId)).toEqual([other.workspace.id]);
+    expect(decryptSecret(rows[0]!.encryptedRefreshToken)).toBe("rt-theirs");
+    expect(google.map((c) => c.url)).not.toContain(REVOKE_URL);
+    expect(await statusOf()).toBe("invited");
+  });
+});
+
+describe("Gmail connect callback: the Gmail the owner meant (Check 42 P3)", () => {
+  const ws = async () =>
+    (await database.select().from(workspaces).where(eq(workspaces.id, workspaceId)))[0]!;
+
+  it("Connect another Gmail that comes back as the one already connected: says so, saves nothing", async () => {
+    const first = await saveConnectedMailbox(await ws(), {
+      email: "owner@shop.com",
+      refreshToken: "rt-old",
+      grantedScopes: ALL_CONNECT_SCOPES,
+    });
+    granted = ALL_CONNECT_SCOPES;
+    req.cookies.set(GMAIL_STATE_COOKIE, "state-123~add~");
+    expect(await callback()).toBe(`/connect?error=already_connected&mailbox=${first.id}`);
+    const rows = await database.select().from(mailboxes);
+    expect(rows).toHaveLength(1);
+    expect(decryptSecret(rows[0]!.encryptedRefreshToken)).toBe("rt-old");
+    expect(google.map((c) => c.url)).not.toContain(REVOKE_URL);
+  });
+
+  it("Reconnect that comes back as a different address: not saved as new, says which card it was", async () => {
+    const [w] = await database.select().from(workspaces).where(eq(workspaces.id, workspaceId));
+    await database.update(workspaces).set({ plan: "crew" }).where(eq(workspaces.id, workspaceId));
+    const mike = await saveConnectedMailbox(
+      { ...w!, plan: "crew" },
+      { email: "mike@shop.com", refreshToken: "rt-mike", grantedScopes: ALL_CONNECT_SCOPES },
+    );
+    granted = ALL_CONNECT_SCOPES; // userinfo answers owner@shop.com
+    req.cookies.set(GMAIL_STATE_COOKIE, `state-123~reconnect~${mike.id}`);
+    expect(await callback()).toBe(`/connect?error=wrong_account&mailbox=${mike.id}`);
+    expect((await database.select().from(mailboxes)).map((m) => m.email)).toEqual([
+      "mike@shop.com",
+    ]);
+  });
+
+  it("Reconnect that comes back as the right address saves the new token", async () => {
+    const box = await saveConnectedMailbox(await ws(), {
+      email: "owner@shop.com",
+      refreshToken: "rt-old",
+      grantedScopes: ALL_CONNECT_SCOPES,
+    });
+    granted = ALL_CONNECT_SCOPES;
+    req.cookies.set(GMAIL_STATE_COOKIE, `state-123~reconnect~${box.id}`);
+    await callback();
+    const [row] = await database.select().from(mailboxes);
+    expect(decryptSecret(row!.encryptedRefreshToken)).toBe("rt-new");
   });
 });

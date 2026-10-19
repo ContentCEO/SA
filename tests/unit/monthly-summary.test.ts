@@ -1,3 +1,4 @@
+import { stopLinkFor } from "@/server/trial-email-links";
 import { randomBytes, randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -145,6 +146,22 @@ describe("buildMonthlySummary (pure)", () => {
       expect(e.text).toContain(l);
       expect(e.html).toContain(l);
     }
+  });
+
+  it("Check 18 P6: the closing line changes only when a category is on autopilot", () => {
+    const plain = buildMonthlySummary(STATS, "October", URLS);
+    expect(plain.text).toContain(
+      "Nothing is sent without your okay. This comes with your morning summary",
+    );
+    expect(plain.text).not.toContain("autopilot");
+    const on = buildMonthlySummary(STATS, "October", URLS, { autopilotOn: true });
+    expect(on.text).toContain(
+      "Nothing is sent without your okay, except the kinds of email you put on autopilot. This comes with your morning summary",
+    );
+    expect(on.html).toContain("except the kinds of email you put on autopilot. This comes with");
+    expect(on.html).not.toContain("Nothing is sent without your okay.");
+    // Still counts only.
+    expect(on.text).not.toMatch(/@|SECRET/);
   });
 
   it("singulars, and lines with nothing to say are left out", () => {
@@ -564,6 +581,9 @@ describe("sendMonthlySummaries", () => {
   }
 
   it("sends once per month with its own idempotency key, logs it and marks the month", async () => {
+    // Check 18 P9: the one-click unsubscribe headers need a signing secret.
+    const secretBefore = process.env.AUTH_SECRET;
+    process.env.AUTH_SECRET = "test-secret-at-least-16-chars";
     await seedOctober();
     // 6:30am on Nov 1: before the owner's hour.
     expect(await sendMonthlySummaries(T("2026-11-01T11:30:00Z"), { send: sender })).toMatchObject({
@@ -582,6 +602,13 @@ describe("sendMonthlySummaries", () => {
     expect(e.to).toBe("owner@shop.com");
     expect(e.idempotencyKey).toBe(`monthly-${workspaceId}-2026-10`);
     expect(e.subject).toBe("Your October in numbers");
+    // Check 18 P9: Gmail's own Unsubscribe turns off the morning email this follows.
+    expect(e.headers).toEqual({
+      "List-Unsubscribe": `<${stopLinkFor(workspaceId, "digest")}>`,
+      "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+    });
+    if (secretBefore === undefined) delete process.env.AUTH_SECRET;
+    else process.env.AUTH_SECRET = secretBefore;
     expect(e.text).toContain("2 quote requests.");
     expect(e.text).toContain("Busiest: EV chargers (1), Panel upgrades (1).");
     expect(e.text).toContain("Where they came from: Direct email (1), Thumbtack (1).");

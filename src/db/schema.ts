@@ -2,7 +2,7 @@
  * Drizzle schema. Tables are added milestone by milestone; migrations are
  * generated into /drizzle with `pnpm db:generate` and checked in.
  */
-import { sql } from "drizzle-orm";
+import { type SQLWrapper, sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
   boolean,
@@ -13,6 +13,7 @@ import {
   jsonb,
   pgEnum,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -24,7 +25,19 @@ import { TRADES, type Trade } from "../config/trades";
 import type { LostReason } from "../server/quote-rules";
 import type { ReplyToHeader } from "../server/reply-address-rules";
 
+export type TimeZoneSource = "default" | "browser" | "owner";
+
 export const tradeEnum = pgEnum("trade", TRADES);
+
+/**
+ * Check 30 P4: the customer's reply address of an email: the stored usable Reply-To, else the
+ * sender, lowercased and trimmed. The one source of this expression: `messageReplyAddress` /
+ * `replyAddressSql` (src/server/thread-sql.ts) build it here, and so will the messages index
+ * `messages_mailbox_reply_address_idx` when it returns (see the messages table), so the planner
+ * can match it.
+ */
+export const replyAddressExpr = (replyToHeader: SQLWrapper, fromAddress: SQLWrapper) =>
+  sql<string | null>`lower(trim(coalesce(${replyToHeader}->>'address', ${fromAddress})))`;
 
 export const workspaceStatusEnum = pgEnum("workspace_status", [
   "invited",
@@ -43,6 +56,10 @@ export const mailboxProviderEnum = pgEnum("mailbox_provider", ["gmail"]);
 
 export const mailboxStatusEnum = pgEnum("mailbox_status", ["active", "reconnect_needed", "paused"]);
 
+/** Why a mailbox is `paused` (plan #47 offer A): more inboxes than the plan includes. */
+export const MAILBOX_PAUSED_REASONS = ["over_plan"] as const;
+export type MailboxPausedReason = (typeof MAILBOX_PAUSED_REASONS)[number];
+
 export const actorEnum = pgEnum("actor", ["squared_away", "owner"]);
 
 const createdAt = () => timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
@@ -59,6 +76,12 @@ export const users = pgTable("users", {
    */
   termsAcceptedAt: timestamp("terms_accepted_at", { withTimezone: true }),
   termsVersion: text("terms_version"),
+  /**
+   * Check 26 P3: every sign-in carries the version it was made at (the JWT's `sv`). "Sign out of
+   * every phone and computer" (or Davi's admin move) adds one, and every older sign-in stops
+   * working on its next request.
+   */
+  sessionVersion: integer("session_version").notNull().default(0),
 });
 
 /** Sign-in is invite-only. Davi adds rows here (script now, /admin in Milestone 6). */
@@ -97,6 +120,8 @@ export const waitlist = pgTable("waitlist", {
   name: text("name").notNull(),
   phone: text("phone"),
   trade: tradeEnum("trade"),
+  /** Check 41 P4: what "Another trade" means, as they typed it (max 60). Never from Gmail. */
+  tradeOther: text("trade_other"),
   teamSize: text("team_size"),
   note: text("note"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -110,6 +135,12 @@ export const waitlist = pgTable("waitlist", {
   referrerHost: text("referrer_host"),
   /** When the "You're on the list" email went to them (one per address, ever). */
   confirmationSentAt: timestamp("confirmation_sent_at", { withTimezone: true }),
+  /**
+   * Check 47 P3: who hosts their email domain — 'google' | 'microsoft' | 'other' | 'unknown'
+   * (src/server/mail-host-rules.ts), from the domain's MX records at sign-up. Only Google
+   * addresses can connect today. Null on rows from before this column.
+   */
+  mailHost: text("mail_host"),
 });
 
 export const workspaces = pgTable(
@@ -121,6 +152,8 @@ export const workspaces = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
     businessName: text("business_name"),
     trade: tradeEnum("trade"),
+    /** Check 41 P4: the owner's own words for "Something else" (max 60); the drafter's "Trade:". */
+    tradeOther: text("trade_other"),
     /**
      * Round 2 (TW A4): up to two more trades the shop does besides `trade` ("plumbing and
      * heating"). Values from TRADES, checked in code (`cleanExtraTrades`); never the main one.
@@ -154,6 +187,19 @@ export const workspaces = pgTable(
       (): AnyPgColumn => workspaces.id,
       { onDelete: "set null" },
     ),
+    /**
+     * Plan #47 offer A: the plan given free during a running referral month, and when that month
+     * ends. Set when a reward goes `running`, cleared when it is `done`. Features read the higher
+     * of this and `plan` only while `free_plan_until` is in the future (`effectivePlan`), so they
+     * drop at the end even if no job runs.
+     */
+    freePlan: planEnum("free_plan"),
+    freePlanUntil: timestamp("free_plan_until", { withTimezone: true }),
+    /**
+     * When Stripe will end the subscription (`cancel_at`, or the period end when it is set to
+     * cancel then), from a fresh read. Only the status lines read it. Null = renews.
+     */
+    stripeCancelAt: timestamp("stripe_cancel_at", { withTimezone: true }),
     /**
      * Trial emails (Davi, 2026-10-16): the owner tapped "Stop these emails" (or switched them
      * off in Settings). Null = they go. Only the trial emails read it; the morning email has
@@ -198,7 +244,23 @@ export const mailboxes = pgTable(
     accessAlertsSent: integer("access_alerts_sent").notNull().default(0),
     /** Last sync problem as a short code (access_lost / rate_limited / sync_failed) — never text. */
     lastSyncErrorCode: text("last_sync_error_code"),
+    /**
+     * Check 42 P4: Gmail's "send mail as" addresses (office@, info@), lowercased, verified or the
+     * primary only. Addresses only, refreshed at connect and daily; never logged. Empty = not read
+     * yet (replies go from `email`).
+     */
+    sendAs: text("send_as")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
     lastSyncErrorAt: timestamp("last_sync_error_at", { withTimezone: true }),
+    /**
+     * Unused since the referral merge (2026-10-17). Plan #47's branch paused over-plan inboxes
+     * with `status = 'paused'` + this reason; the decisions package's `plan_paused_at` (below)
+     * does the same job everywhere, so the referral code now uses that. The column stays only
+     * because its migration (0044) is kept byte-identical; nothing reads or writes it.
+     */
+    pausedReason: text("paused_reason").$type<MailboxPausedReason>(),
     /**
      * Davi, 2026-10-16: the plan covers fewer Gmail addresses than are connected, so this one is
      * paused — nothing is read, sorted, drafted, sent, alerted or learned from it; its data is
@@ -207,11 +269,33 @@ export const mailboxes = pgTable(
      * a plan pause are told apart (a paused address can need reconnecting too).
      */
     planPausedAt: timestamp("plan_paused_at", { withTimezone: true }),
+    /**
+     * Check 25 P1: Gmail itself said "slow down until …". Every Gmail call for this inbox stops
+     * before any fetch until then, so all its jobs wait together.
+     */
+    gmailCoolUntil: timestamp("gmail_cool_until", { withTimezone: true }),
+    /**
+     * Check 25 P3: Gmail's history expired, so the gap is re-read from this time, one page per
+     * step. Null = no re-read under way. `resync_page_token` is where the next page starts.
+     */
+    resyncSince: timestamp("resync_since", { withTimezone: true }),
+    resyncPageToken: text("resync_page_token"),
+    /**
+     * Check 25 P5: a first read that stopped part-way (a run cap, a failure) resumes here —
+     * the next page's token, pages stored so far, and the fixed window start (`after:`).
+     * Cleared when the read finishes and on a reconnect (which starts a fresh read).
+     */
+    backfillPageToken: text("backfill_page_token"),
+    backfillPagesDone: integer("backfill_pages_done").notNull().default(0),
+    backfillSince: timestamp("backfill_since", { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [
     uniqueIndex("mailboxes_workspace_email_uq").on(t.workspaceId, sql`lower(${t.email})`),
     index("mailboxes_workspace_idx").on(t.workspaceId),
+    // Check 25 P7: one Gmail in one account (checked in saveConnectedMailbox). Not unique yet:
+    // production may already hold a duplicate; check before making it unique.
+    index("mailboxes_email_lower_idx").on(sql`lower(${t.email})`),
   ],
 );
 
@@ -244,12 +328,24 @@ export const threads = pgTable(
     needsOwnerReason: text("needs_owner_reason"),
     /** The owner said "This one needs me". Classification never clears it. */
     needsOwnerManual: boolean("needs_owner_manual").notNull().default(false),
+    /**
+     * Check 10 P1: when needs_owner last turned true (the email that raised it, or the owner's
+     * own mark). Any owner answer after this (a Gmail reply, an app send, "I called them") lets
+     * go of the flag. Null on older rows: reads fall back to classified_at.
+     */
+    needsOwnerSince: timestamp("needs_owner_since", { withTimezone: true }),
     /** Plan #6: hidden from the queue until then; comes back on top. */
     snoozedUntil: timestamp("snoozed_until", { withTimezone: true }),
     /** One-sentence summary from classification. Kept after bodies are purged. */
     summary: text("summary"),
     /** Structured facts pulled from the latest inbound message (service, address, dates, amounts). */
     extracted: jsonb("extracted").$type<Record<string, unknown>>(),
+    /**
+     * Check 30 P6: the classify prompt version that wrote `extracted` ("classify.v5"), set on
+     * every classification. Null = written before this column. Read with `readExtracted`
+     * (src/server/extracted.ts), which picks the shape by it.
+     */
+    classifiedPromptVersion: text("classified_prompt_version"),
     classifiedAt: timestamp("classified_at", { withTimezone: true }),
     awaitingReplySince: timestamp("awaiting_reply_since", { withTimezone: true }),
     followupCount: integer("followup_count").notNull().default(0),
@@ -257,10 +353,27 @@ export const threads = pgTable(
     quoteOutcome: text("quote_outcome"),
     quoteOutcomeAt: timestamp("quote_outcome_at", { withTimezone: true }),
     /**
-     * What the job was quoted at, in cents: taken from the owner's own reply (largest $ figure,
+     * What the job was quoted at, in cents: taken from the owner's own reply (the price in it, `readOwnerAmount`,
      * captured before bodies are purged) or typed by the owner. Kept after the purge.
      */
     quoteAmountCents: integer("quote_amount_cents"),
+    /**
+     * Check 11 P2: how the amount was read from the owner's reply — 'total' (a figure marked as
+     * the price, or the only one) or 'picked' (the last of several: the card says "Check
+     * amount", and it stays out of price memory). Null for a typed amount or older rows.
+     */
+    quoteAmountNote: text("quote_amount_note").$type<"total" | "picked">(),
+    /**
+     * Check 11 P3: where the amount came from — 'reply' (read from the owner's email, so a
+     * corrected price replaces it while the quote is open) or 'owner' (typed on Quotes, never
+     * replaced). Null on rows from before the column.
+     */
+    quoteAmountFrom: text("quote_amount_from").$type<"reply" | "owner">(),
+    /**
+     * Check 11 P3: when the price went out — the sent time of the owner email the amount came
+     * from, or when the owner typed it. Quotes' "Priced" total counts by this.
+     */
+    quoteAmountAt: timestamp("quote_amount_at", { withTimezone: true }),
     /**
      * Who set quote_outcome: the owner ("owner") or our guess ("auto"). The owner always wins.
      * Rows set before this column existed (outcome set, source null) are the owner's.
@@ -280,6 +393,24 @@ export const threads = pgTable(
      * "Needs you", and the scorecard counts it. A later customer email starts things over.
      */
     handledOfflineAt: timestamp("handled_offline_at", { withTimezone: true }),
+    /**
+     * Check 11 P8: the owner said "Not a quote". Off Quotes (and Customers' open quotes) until
+     * "Put back", or until the owner marks an outcome after this time.
+     */
+    quoteDismissedAt: timestamp("quote_dismissed_at", { withTimezone: true }),
+    /**
+     * Check 21 P2: the customer asked us to wait ("after the holidays"): no nudge before this
+     * instant (the start of that day in the owner's zone). Set from the classifier's
+     * `wait_until` and replaced at every new customer email (cleared when it has none).
+     */
+    nudgeAfter: timestamp("nudge_after", { withTimezone: true }),
+    /**
+     * Check 21 P4: the newest email the owner sent that reads as an invoice (owner-invoice-rules,
+     * found in code at sync). With `extracted.invoice_thread`, it makes the thread chased like an
+     * invoice even when the customer's last email was sorted as scheduling, and lets a fresh
+     * invoice email with no customer reply on it be chased.
+     */
+    ownerInvoiceAt: timestamp("owner_invoice_at", { withTimezone: true }),
     /**
      * Leads package (B2 / B3): where the lead came from, decided in code from the sender
      * (`channelOf`, src/server/channel-rules.ts): a phone service key ("google_voice"),
@@ -332,6 +463,8 @@ export const threads = pgTable(
   (t) => [
     uniqueIndex("threads_mailbox_gmail_uq").on(t.mailboxId, t.gmailThreadId),
     index("threads_mailbox_last_idx").on(t.mailboxId, t.lastMessageAt),
+    // Check 30 P4: /admin's "last sorted" (max classified_at per shop).
+    index("threads_mailbox_classified_idx").on(t.mailboxId, t.classifiedAt),
   ],
 );
 
@@ -380,12 +513,25 @@ export const messages = pgTable(
      * needs no answer. Check 21 P1 uses this column and adds no migration.
      */
     ackOnly: boolean("ack_only").notNull().default(false),
+    /**
+     * Check 40 P2: how many photos / PDFs / other files came with the email (full reads only).
+     * Counts only: no file name or content is ever stored.
+     */
+    attachmentImages: integer("attachment_images").notNull().default(0),
+    attachmentPdfs: integer("attachment_pdfs").notNull().default(0),
+    attachmentOther: integer("attachment_other").notNull().default(0),
     createdAt: createdAt(),
   },
   (t) => [
     uniqueIndex("messages_mailbox_gmail_uq").on(t.mailboxId, t.gmailMessageId),
     index("messages_thread_sent_idx").on(t.threadId, t.sentAt),
     index("messages_retention_idx").on(t.sentAt),
+    // Check 29 P6: classification's first-time-sender count (same address, earlier email).
+    index("messages_mailbox_from_sent_idx").on(t.mailboxId, t.fromAddress, t.sentAt),
+    // Check 30 P4's `messages_mailbox_reply_address_idx` (mailbox_id, replyAddressExpr, where
+    // direction = 'in') is left out for now: main's `notesForThreads` has no tie-break, and with
+    // this index the planner hands it same-second emails in reply-address order, so the CI job
+    // `old-code-new-schema` fails. It can return once main carries the tie-break (this PR).
   ],
 );
 
@@ -403,7 +549,13 @@ export const activityLog = pgTable(
     detail: jsonb("detail").$type<Record<string, unknown>>().notNull().default({}),
     createdAt: createdAt(),
   },
-  (t) => [index("activity_workspace_created_idx").on(t.workspaceId, t.createdAt)],
+  (t) => [
+    index("activity_workspace_created_idx").on(t.workspaceId, t.createdAt),
+    // Check 30 P4: /admin's "last morning email" reads only these rows.
+    index("activity_digest_sent_idx")
+      .on(t.workspaceId, t.createdAt)
+      .where(sql`action = 'digest_sent'`),
+  ],
 );
 
 export const draftStatusEnum = pgEnum("draft_status", [
@@ -455,6 +607,11 @@ export const drafts = pgTable(
     gmailDraftId: text("gmail_draft_id"),
     gmailMessageId: text("gmail_message_id"),
     toAddress: text("to_address").notNull(),
+    /**
+     * Check 42 P4: the address this reply goes out from (a send-as alias the customer wrote to),
+     * kept so every rewrite and the send use the same one. Null (older drafts) = the mailbox's.
+     */
+    fromAddress: text("from_address"),
     subject: text("subject").notNull(),
     /** Current text (after any owner edits). Purged with other bodies after the retention window. */
     body: text("body"),
@@ -485,6 +642,11 @@ export const drafts = pgTable(
      */
     autoSendClaimedAt: timestamp("auto_send_claimed_at", { withTimezone: true }),
     /**
+     * Check 20 P7: why autopilot didn't start or finish a countdown on this reply, as
+     * content-free codes (`src/server/autopilot-reasons.ts`). Null = never refused.
+     */
+    autopilotSkip: jsonb("autopilot_skip").$type<string[]>(),
+    /**
      * Plan #7 undo send: the owner tapped Send reply; it goes at this time unless
      * they tap Undo. The draft stays `pending` meanwhile (so it still holds the
      * thread's one live slot) but is out of the queue. Null = not sending.
@@ -502,6 +664,12 @@ export const drafts = pgTable(
      */
     opening: text("opening"),
     /**
+     * Check 43 P8: the language the customer's newest email was in ("en" | "es" | "pt", decided
+     * in code; null = couldn't tell) and the one this reply was written for. Codes only.
+     */
+    customerLanguage: text("customer_language"),
+    replyLanguage: text("reply_language"),
+    /**
      * Check 14 P1: how a sent draft left. app = the owner's tap here, autopilot = autopilot,
      * gmail = our draft sent from Gmail (same or edited text), own_words = closed because the
      * owner wrote their own reply in Gmail (status stays `sent` so caps hold, but it never counts
@@ -512,6 +680,11 @@ export const drafts = pgTable(
   },
   (t) => [
     index("drafts_mailbox_status_idx").on(t.mailboxId, t.status),
+    // Check 30 P1 + Check 29 P6: drafts by thread, any status (deleting a thread or a mailbox
+    // looks drafts up by thread_id; so do the draft jobs' "newest draft on this thread").
+    index("drafts_thread_created_idx").on(t.threadId, t.createdAt),
+    // Check 30 P1: deleting a message sets drafts.reply_to_message_id to null (FK lookup).
+    index("drafts_reply_to_message_idx").on(t.replyToMessageId),
     // At most one live draft per thread.
     uniqueIndex("drafts_one_pending_per_thread")
       .on(t.threadId)
@@ -541,6 +714,11 @@ export const businessProfiles = pgTable("business_profile", {
   paymentTerms: text("payment_terms"),
   policies: text("policies"),
   signature: text("signature"),
+  /**
+   * Check 43 P3: "Name customers see on your emails" (max 80), put in the From line of every
+   * reply. Empty = the owner's Google account name, else the business name (`senderNameFor`).
+   */
+  fromName: text("from_name"),
   /** Plan #29: where happy customers leave a review (https only). Added to a draft only on a tap. */
   reviewUrl: text("review_url"),
   doNotPromise: jsonb("do_not_promise").$type<string[]>().notNull().default([]),
@@ -549,6 +727,11 @@ export const businessProfiles = pgTable("business_profile", {
   neverSay: jsonb("never_say").$type<string[]>().notNull().default([]),
   /** The owner hid the getting-started checklist (only offered once every step is done). */
   onboardingDismissedAt: timestamp("onboarding_dismissed_at", { withTimezone: true }),
+  /**
+   * Check 9 P13: when every getting-started step was first all done (cleared if a step
+   * un-does). The finished list folds to one line, and hides itself 3 days after this.
+   */
+  onboardingDoneAt: timestamp("onboarding_done_at", { withTimezone: true }),
   /** Round 2 (FW D1/D2): the owner hid the "your last 30 days" card on the queue. */
   firstLookHiddenAt: timestamp("first_look_hidden_at", { withTimezone: true }),
   /**
@@ -561,10 +744,34 @@ export const businessProfiles = pgTable("business_profile", {
   /** Nudge quiet quotes and invoices after this many days without a reply. */
   followupsEnabled: boolean("followups_enabled").notNull().default(true),
   followupDays: integer("followup_days").notNull().default(3),
+  /**
+   * Check 38 P4: for quotes over the money limit, wait this many days instead (7, 10, 14 or 21).
+   * Null = the same as `followup_days`.
+   */
+  bigQuoteDays: integer("big_quote_days"),
   /** Morning digest: on/off, the owner's local hour, their time zone, last local date sent. */
   digestEnabled: boolean("digest_enabled").notNull().default(true),
   digestHour: integer("digest_hour").notNull().default(7),
   timeZone: text("time_zone").notNull().default("America/New_York"),
+  /**
+   * Check 45 P1 / 44 P5: where time_zone came from — 'default' (never set: the schema default),
+   * 'browser' (setup, or the first signed-in page load while still 'default') or 'owner' (picked
+   * on Settings → Morning email). A browser never replaces an 'owner' zone.
+   */
+  timeZoneSource: text("time_zone_source").$type<TimeZoneSource>().notNull().default("default"),
+  /**
+   * Check 15 P8: the hours the "a lead is waiting" alerts count (ISO weekdays, local hours,
+   * end exclusive; 24 = midnight). Defaults are the old fixed schedule (Mon–Sat 7am–6pm), so
+   * nothing changes until the owner edits. The free-text `hours` is what drafts say.
+   */
+  workDays: integer("work_days").array().notNull().default([1, 2, 3, 4, 5, 6]),
+  workStartHour: integer("work_start_hour").notNull().default(7),
+  workEndHour: integer("work_end_hour").notNull().default(18),
+  /**
+   * Check 43 P8: the languages the owner answers customers in. English always; "es" / "pt"
+   * only when switched on (the owner can read a reply in it before sending).
+   */
+  replyLanguages: text("reply_languages").array().notNull().default(["en"]),
   digestLastSentOn: text("digest_last_sent_on"),
   /** Text alerts to the owner's own phone (E.164, e.g. +15085551234). Off until they opt in. */
   alertPhone: text("alert_phone"),
@@ -573,6 +780,8 @@ export const businessProfiles = pgTable("business_profile", {
   /** sha256 of the 6-digit code + its expiry; cleared once used. */
   smsCodeHash: text("sms_code_hash"),
   smsCodeExpiresAt: timestamp("sms_code_expires_at", { withTimezone: true }),
+  /** Check 19 P9: wrong guesses at the current code; the fifth throws the code away. */
+  smsCodeTries: integer("sms_code_tries").notNull().default(0),
   smsAlertsEnabled: boolean("sms_alerts_enabled").notNull().default(false),
   /** Newest classification already covered by a text, and when the last text went out. */
   smsAlertCursor: timestamp("sms_alert_cursor", { withTimezone: true }),
@@ -586,6 +795,12 @@ export const businessProfiles = pgTable("business_profile", {
   pushLastSentAt: timestamp("push_last_sent_at", { withTimezone: true }),
   pushAlertCursor: timestamp("push_alert_cursor", { withTimezone: true }),
   smsLastSentAt: timestamp("sms_last_sent_at", { withTimezone: true }),
+  /**
+   * Check 19 P6: why texts switched themselves off — 'opted_out' (the owner replied STOP,
+   * Twilio 21610) or 'not_mobile' (30006, the number can't take texts). Cleared when the
+   * owner turns texts on again or starts a new number.
+   */
+  smsStoppedReason: text("sms_stopped_reason"),
   /** Plan #35: the owner's local month ('YYYY-MM') last summarized (sent, or skipped as empty). */
   monthlySummaryLastSentFor: text("monthly_summary_last_sent_for"),
   /**
@@ -648,6 +863,35 @@ export const voiceProfiles = pgTable("voice_profile", {
   learnedFromCount: integer("learned_from_count").notNull().default(0),
   learnedAt: timestamp("learned_at", { withTimezone: true }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  /**
+   * Check 24 P1: how the newest learn went (learning | ready | not_enough_mail | failed | capped |
+   * reconnect_needed), apart from `status`, which stays "ready" while a voice is stored.
+   */
+  lastAttempt: text("last_attempt"),
+  lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }),
+  /** Check 29 P2: times the 15-minute backstop restarted a learn stuck at "learning". */
+  restartCount: integer("restart_count").notNull().default(0),
+  /** Check 24 P6: the inbox the stored voice was learned from ("Learned from mike@…"). */
+  // No foreign key on purpose: the voice belongs to the account and stays when that Gmail is
+  // disconnected (verification-doc / data-lifecycle tests); the screen just stops naming it.
+  learnedFromMailboxId: uuid("learned_from_mailbox_id"),
+  /**
+   * Check 24 P8: greeting, sign-off, formality or length changed since the sample replies were
+   * written, so drafts get no samples until new ones are written.
+   */
+  examplesStale: boolean("examples_stale").notNull().default(false),
+  /** Check 24 P12: the UTC day of the backstop's retries of a failed first learn, and how many. */
+  retryDay: text("retry_day"),
+  retriesThatDay: integer("retries_that_day").notNull().default(0),
+  /**
+   * Check 24 P9: who signs the sent mail — first names and a share ("most" / "some" / "few")
+   * only, scrubbed. More than one name means someone else answers mail from this Gmail; the
+   * owner's own sign-off is kept and Settings says so.
+   */
+  writers: jsonb("writers")
+    .$type<{ name: string; share: "most" | "some" | "few" }[]>()
+    .notNull()
+    .default([]),
 });
 
 /**
@@ -760,6 +1004,8 @@ export const customerNotes = pgTable(
   },
   (t) => [
     uniqueIndex("customer_notes_workspace_address_uq").on(t.workspaceId, t.address),
+    // Check 30 P1: Disconnect deletes a mailbox's notes (FK lookup by mailbox_id).
+    index("customer_notes_mailbox_idx").on(t.mailboxId),
     check("customer_notes_body_len", sql`char_length(${t.body}) between 1 and 200`),
   ],
 );
@@ -824,8 +1070,46 @@ export const pushSubscriptions = pgTable(
       .references(() => workspaces.id, { onDelete: "cascade" }),
     endpoint: text("endpoint").notNull(),
     createdAt: createdAt(),
+    /**
+     * Check 19 P5: pushes this phone's push service refused in a row (any non-2xx but 404/410,
+     * 403 included), and when the run started. Reset by a delivered push; a row failing for
+     * 7 days is deleted.
+     */
+    failCount: integer("fail_count").notNull().default(0),
+    firstFailedAt: timestamp("first_failed_at", { withTimezone: true }),
   },
-  (t) => [uniqueIndex("push_subscriptions_endpoint_uq").on(t.endpoint)],
+  (t) => [
+    uniqueIndex("push_subscriptions_endpoint_uq").on(t.endpoint),
+    // Check 30 P1: every push and account delete looks a shop's phones up by workspace.
+    index("push_subscriptions_workspace_idx").on(t.workspaceId),
+  ],
+);
+
+/**
+ * Check 19 P6: what Twilio said about each text we sent the owner (status callbacks). No body
+ * and no phone number: the message's id, which kind it was, its status and Twilio's error
+ * code. Purged after 30 days.
+ */
+export const smsDeliveries = pgTable(
+  "sms_deliveries",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    messageSid: text("message_sid").notNull(),
+    /** 'code' | 'alert'. */
+    kind: text("kind").notNull(),
+    /** Twilio's MessageStatus: queued, sent, delivered, undelivered, failed … */
+    status: text("status").notNull().default("queued"),
+    errorCode: integer("error_code"),
+    createdAt: createdAt(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("sms_deliveries_message_sid_uq").on(t.messageSid),
+    index("sms_deliveries_workspace_created_idx").on(t.workspaceId, t.createdAt),
+  ],
 );
 
 /** App-wide settings Davi's admin tools write (e.g. the Stripe webhook secret, encrypted). */
@@ -846,11 +1130,68 @@ export const rateLimits = pgTable("rate_limits", {
   count: integer("count").notNull(),
 });
 
+/**
+ * Check 25 P1: Gmail quota units used per mailbox per minute (Google allows 6,000 a minute per
+ * user; we stop at 5,400). One atomic upsert per request, shared by every job for the inbox.
+ * Counts only. Purged daily.
+ */
+export const gmailUnits = pgTable(
+  "gmail_units",
+  {
+    mailboxId: uuid("mailbox_id")
+      .notNull()
+      .references(() => mailboxes.id, { onDelete: "cascade" }),
+    minute: timestamp("minute", { withTimezone: true }).notNull(),
+    units: integer("units").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.mailboxId, t.minute] })],
+);
+
+/**
+ * Check 25 P4: background job runs and steps per function per UTC day (Inngest bills both).
+ * Counts only, from an Inngest middleware; /admin shows the month's total.
+ */
+export const jobRuns = pgTable(
+  "job_runs",
+  {
+    functionId: text("function_id").notNull(),
+    day: date("day").notNull(),
+    runs: integer("runs").notNull().default(0),
+    steps: integer("steps").notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.functionId, t.day] })],
+);
+
 export const stripeEvents = pgTable("stripe_events", {
   id: text("id").primaryKey(),
   type: text("type").notNull(),
   receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * Check 17 P8: refunds and card disputes made in Stripe, recorded and shown on /admin. Never moves
+ * an account on its own (Davi decides what a refund means). No card details, no email text: the
+ * Stripe object id (refund or dispute), the amount and dates. Idempotent on (id, kind). Outlives
+ * a deleted account (workspace_id SET NULL), like Stripe's own payment records.
+ */
+export const stripeMoneyEvents = pgTable(
+  "stripe_money_events",
+  {
+    id: text("id").notNull(),
+    workspaceId: uuid("workspace_id").references(() => workspaces.id, { onDelete: "set null" }),
+    kind: text("kind").$type<"refund" | "dispute_opened" | "dispute_closed">().notNull(),
+    amountCents: integer("amount_cents").notNull(),
+    /** The charge's invoice had the setup fee's price on it. */
+    includesSetup: boolean("includes_setup").notNull().default(false),
+    evidenceDueBy: timestamp("evidence_due_by", { withTimezone: true }),
+    outcome: text("outcome").$type<"won" | "lost">(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.id, t.kind] }),
+    index("stripe_money_events_workspace_idx").on(t.workspaceId),
+  ],
+);
 
 /**
  * Plan #15 price memory: what the owner quoted for a kind of job, one row per quote thread.
@@ -885,12 +1226,48 @@ export type PriceHistory = typeof priceHistory.$inferSelect;
 export const REFERRAL_SIDES = ["referrer", "referred"] as const;
 export type ReferralSide = (typeof REFERRAL_SIDES)[number];
 /**
- * pending = waiting to be added in Stripe (e.g. no Stripe customer yet); applied = added;
- * failed = Stripe refused it for good (shown in /admin, never retried); skipped = the referral
- * was settled with nothing to pay (the feature was off or had no amount when it went active).
+ * Plan #47 offer A (Davi, 2026-10-15): the referrer's next month free, one plan up.
+ * pending = earned, waiting to be booked on the referrer's subscription (no plan yet, account
+ * off, another free month first, or Stripe busy); scheduled = the coupon is on the subscription
+ * and makes the next renewal's plan line free; running = the free month itself
+ * ([starts_at, ends_at), `workspaces.free_plan` set); done = it ended and the plan effects ran;
+ * failed = Stripe used it early or refused the coupon (/admin, by hand); skipped = settled with
+ * nothing to give (`skip_reason`). applied = legacy (the old balance credit; never written now).
  */
-export const REFERRAL_CREDIT_STATUSES = ["pending", "applied", "failed", "skipped"] as const;
+export const REFERRAL_CREDIT_STATUSES = [
+  "pending",
+  "scheduled",
+  "running",
+  "done",
+  "failed",
+  "skipped",
+  "applied",
+] as const;
 export type ReferralCreditStatus = (typeof REFERRAL_CREDIT_STATUSES)[number];
+
+/** What a reward row gives. `balance_credit` = legacy rows only. */
+export const REFERRAL_REWARD_KINDS = ["balance_credit", "free_month_up"] as const;
+export type ReferralRewardKind = (typeof REFERRAL_REWARD_KINDS)[number];
+
+/** Why a referral was settled with nothing to give. */
+export const REFERRAL_SKIP_REASONS = ["off", "self", "same_domain", "house"] as const;
+export type ReferralSkipReason = (typeof REFERRAL_SKIP_REASONS)[number];
+
+/** The latest thing /admin should look at on a reward row (a fixed code, never text). */
+export const REFERRAL_ADMIN_FLAGS = [
+  "renewed_without_discount",
+  "discount_removed",
+  "plan_changed_in_free_month",
+  "charged_for_free_days",
+  "invoice_not_final",
+  "discount_lingered",
+  "unknown_price",
+  "not_fully_free",
+  "free_day_charges_removed",
+  "second_month_given",
+  "free_invoice_lost_discount",
+] as const;
+export type ReferralAdminFlag = (typeof REFERRAL_ADMIN_FLAGS)[number];
 
 /**
  * Plan #47 referral credits. Each referral is settled once, the first time the referred
@@ -920,11 +1297,61 @@ export const referralCredits = pgTable(
     lastErrorCode: text("last_error_code"),
     createdAt: createdAt(),
     appliedAt: timestamp("applied_at", { withTimezone: true }),
+    // --- Plan #47 offer A: a free month, one plan up (0032; every column nullable or defaulted).
+    /** `free_month_up` for everything new code writes; legacy rows keep the default. */
+    reward: text("reward").$type<ReferralRewardKind>().notNull().default("balance_credit"),
+    /** 'live' / 'test': the Stripe key's mode when it settled. A test reward never goes live. */
+    stripeMode: text("stripe_mode").$type<"live" | "test">(),
+    skipReason: text("skip_reason").$type<ReferralSkipReason>(),
+    /** What it went on in Stripe, and the invoice that used it. Ids only. */
+    stripeSubscriptionId: text("stripe_subscription_id"),
+    stripeCouponId: text("stripe_coupon_id"),
+    stripeDiscountId: text("stripe_discount_id"),
+    stripeInvoiceId: text("stripe_invoice_id"),
+    /** `Discount.start` (Stripe's clock, so Test Clocks work). */
+    attachedAt: timestamp("attached_at", { withTimezone: true }),
+    /** When the invoice that used it was seen finalized (null while running = provisional). */
+    invoiceFinalAt: timestamp("invoice_final_at", { withTimezone: true }),
+    /** A 2-minute lease for attach / detach / strip / Keep / Go back. */
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    /** Bumped on each Keep / Go back claim: part of that tap's Stripe idempotency key. */
+    planChangeSeq: integer("plan_change_seq").notNull().default(0),
+    /** What the free month's plan line billed: the plan, its price id and unit amount. */
+    paidPlan: planEnum("paid_plan"),
+    paidPriceId: text("paid_price_id"),
+    paidPriceCents: integer("paid_price_cents"),
+    /** `planAbove(paid_plan)`. */
+    freePlan: planEnum("free_plan"),
+    /** The expected start while scheduled; the plan line's period once running. */
+    startsAt: timestamp("starts_at", { withTimezone: true }),
+    endsAt: timestamp("ends_at", { withTimezone: true }),
+    /** The owner's "Keep" tap, and the price they confirmed. */
+    keptAt: timestamp("kept_at", { withTimezone: true }),
+    keptPriceCents: integer("kept_price_cents"),
+    /** When `done` ran. */
+    endedAt: timestamp("ended_at", { withTimezone: true }),
+    /**
+     * When the Stripe follow-up after `done` (strip our coupon if it stayed on, sweep or flag
+     * charges for free days) fully went through. Null on a done row = the sweep tries again (0045).
+     */
+    afterEndCheckedAt: timestamp("after_end_checked_at", { withTimezone: true }),
+    /** The subscription's billing mode (`flexible` / `classic`), for /admin. */
+    billingMode: text("billing_mode"),
+    /** The latest thing /admin should look at, and when it was raised. */
+    adminFlag: text("admin_flag").$type<ReferralAdminFlag>(),
+    flaggedAt: timestamp("flagged_at", { withTimezone: true }),
   },
   (t) => [
     // Once per referral, ever.
     uniqueIndex("referral_credits_email_side_uq").on(t.referredEmailSha256, t.side),
     index("referral_credits_status_idx").on(t.status),
+    // One free month at a time: at most one booked and one running per workspace.
+    uniqueIndex("referral_credits_one_scheduled_uq")
+      .on(t.beneficiaryWorkspaceId)
+      .where(sql`status = 'scheduled'`),
+    uniqueIndex("referral_credits_one_running_uq")
+      .on(t.beneficiaryWorkspaceId)
+      .where(sql`status = 'running'`),
   ],
 );
 export type ReferralCredit = typeof referralCredits.$inferSelect;

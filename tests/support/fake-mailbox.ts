@@ -1,11 +1,23 @@
+import { GMAIL_UNITS, type GmailMethod } from "@/mailbox/gmail/quota";
 import {
   HistoryExpiredError,
   MailboxAuthError,
+  type LabelChange,
   type MailboxReader,
   type MailMessage,
 } from "@/mailbox/connector";
 
 type Stored = MailMessage & { historyId: number };
+
+/** One record of Gmail's history, typed like the real API's (Check 25 P2 / P8). */
+export type HistoryRecord = {
+  historyId: number;
+  type: "messageAdded" | "labelAdded" | "labelRemoved" | "messageDeleted";
+  id: string;
+  threadId: string;
+  /** messageAdded: the message's labels; labelAdded / labelRemoved: the labels changed. */
+  labelIds: string[];
+};
 
 /**
  * In-memory stand-in for a Gmail mailbox. Bodies are only handed out when
@@ -18,9 +30,27 @@ export class FakeMailbox {
   oldestHistory = 0;
   revoked = false;
   bodyFetches: string[] = [];
+  /** Metadata reads (no body), by id. */
+  metaFetches: string[] = [];
   /** Metadata reads that asked for only some headers (the Reply-To backfill / lazy read). */
   headerRequests: { id: string; headers: readonly string[] }[] = [];
   calls = 0;
+  /** Gmail's history log, as typed records. */
+  log: HistoryRecord[] = [];
+  /**
+   * Check 25 P8: Google's quota units, per minute of a fake clock. Each call costs what the
+   * real method costs (GMAIL_UNITS); `clock` says which minute it falls in (tests move it).
+   */
+  clock: () => Date = () => new Date();
+  unitsByMinute = new Map<number, number>();
+  /** The busiest minute's units. */
+  peakUnitsPerMinute() {
+    return Math.max(0, ...this.unitsByMinute.values());
+  }
+  private spend(method: GmailMethod) {
+    const minute = Math.floor(this.clock().getTime() / 60_000);
+    this.unitsByMinute.set(minute, (this.unitsByMinute.get(minute) ?? 0) + GMAIL_UNITS[method]);
+  }
 
   add(m: Partial<MailMessage> & { id: string; threadId: string; daysAgo?: number; now?: Date }) {
     const now = m.now ?? new Date("2026-09-28T12:00:00Z");
@@ -38,7 +68,15 @@ export class FakeMailbox {
         messageId: `<${m.id}@mail.example.com>`,
       },
       bodyText: m.bodyText ?? `body of ${m.id}`,
+      ...(m.attachments ? { attachments: m.attachments } : {}),
       historyId: this.history,
+    });
+    this.log.push({
+      historyId: this.history,
+      type: "messageAdded",
+      id: m.id,
+      threadId: m.threadId,
+      labelIds: m.labelIds ?? ["INBOX"],
     });
   }
 
@@ -49,30 +87,78 @@ export class FakeMailbox {
   relabel(id: string, labelIds: string[], daysAgo?: number) {
     const m = this.messages.find((x) => x.providerMessageId === id)!;
     this.history += 1;
+    const added = labelIds.filter((l) => !m.labelIds.includes(l));
+    const removed = m.labelIds.filter((l) => !labelIds.includes(l));
+    const ref = { historyId: this.history, id, threadId: m.providerThreadId };
+    if (added.length) this.log.push({ ...ref, type: "labelAdded", labelIds: added });
+    if (removed.length) this.log.push({ ...ref, type: "labelRemoved", labelIds: removed });
     m.labelIds = labelIds;
     m.historyId = this.history;
     if (daysAgo !== undefined)
       m.internalDate = new Date("2026-09-28T12:00:00Z").getTime() - daysAgo * 86_400_000;
   }
 
+  /** What the owner does in Gmail (Check 25 P2). */
+  archive(id: string) {
+    const m = this.find(id);
+    this.relabel(
+      id,
+      m.labelIds.filter((l) => l !== "INBOX"),
+    );
+  }
+  trash(id: string) {
+    const m = this.find(id);
+    this.relabel(id, [...m.labelIds.filter((l) => l !== "INBOX"), "TRASH"]);
+  }
+  spam(id: string) {
+    const m = this.find(id);
+    this.relabel(id, [...m.labelIds.filter((l) => l !== "INBOX"), "SPAM"]);
+  }
+  notSpam(id: string) {
+    const m = this.find(id);
+    this.relabel(id, [...m.labelIds.filter((l) => l !== "SPAM"), "INBOX"]);
+  }
+  /** Deleted for good (emptied from Trash). */
+  remove(id: string) {
+    const m = this.find(id);
+    this.history += 1;
+    this.messages = this.messages.filter((x) => x.providerMessageId !== id);
+    this.log.push({
+      historyId: this.history,
+      type: "messageDeleted",
+      id,
+      threadId: m.providerThreadId,
+      labelIds: [],
+    });
+  }
+  private find(id: string) {
+    const m = this.messages.find((x) => x.providerMessageId === id);
+    if (!m) throw new Error(`no message ${id}`);
+    return m;
+  }
+
   reader(pageSize = 2): MailboxReader {
-    const guard = () => {
+    const guard = (method: GmailMethod) => {
       this.calls++;
+      this.spend(method);
       if (this.revoked) throw new MailboxAuthError();
     };
     return {
       getProfile: async () => {
-        guard();
+        guard("getProfile");
         return { emailAddress: "owner@shop.com", historyId: String(this.history) };
       },
-      listMessages: async ({ query, pageToken, maxResults }) => {
-        guard();
-        const days = Number(/newer_than:(\d+)d/.exec(query)?.[1] ?? 9999);
-        const cutoff = new Date("2026-09-28T12:00:00Z").getTime() - days * 86_400_000;
-        const sentOnly = query.includes("in:sent");
+      listMessages: async ({ newerThanDays, after, inbox, sentOnly, pageToken, maxResults }) => {
+        guard("messages.list");
+        const cutoff = after
+          ? Math.floor(after.getTime() / 1000) * 1000 // Gmail's after: is in whole seconds
+          : new Date("2026-09-28T12:00:00Z").getTime() - (newerThanDays ?? 9999) * 86_400_000;
+        // Like Gmail: inbox only / everything but; Spam and Trash are never listed.
         const all = this.messages
           .filter((m) => m.internalDate >= cutoff)
+          .filter((m) => !m.labelIds.includes("SPAM") && !m.labelIds.includes("TRASH"))
           .filter((m) => !sentOnly || m.labelIds.includes("SENT"))
+          .filter((m) => inbox === undefined || m.labelIds.includes("INBOX") === inbox)
           .map((m) => ({ id: m.providerMessageId, threadId: m.providerThreadId }));
         const start = Number(pageToken ?? 0);
         const next = start + (maxResults ?? pageSize);
@@ -82,11 +168,12 @@ export class FakeMailbox {
         };
       },
       getMessage: async (id, { withBody, headers }) => {
-        guard();
+        guard("messages.get");
         if (!withBody && headers) this.headerRequests.push({ id, headers });
         const m = this.messages.find((x) => x.providerMessageId === id);
         if (!m) return null;
         if (withBody) this.bodyFetches.push(id);
+        else this.metaFetches.push(id);
         // Like the real client: the default metadata list includes Reply-To; a subset only
         // returns what it named.
         const asked = !withBody && headers ? headers.map((h) => h.toLowerCase()) : null;
@@ -101,19 +188,42 @@ export class FakeMailbox {
             ? { replyTo: replyToRead ? m.headers.replyTo : undefined, replyToRead }
             : { ...m.headers, replyToRead },
         };
-        return withBody ? { ...copy, bodyText: m.bodyText } : copy;
+        return withBody
+          ? {
+              ...copy,
+              bodyText: m.bodyText,
+              ...(m.attachments ? { attachments: m.attachments } : {}),
+            }
+          : copy;
       },
       listHistory: async ({ startHistoryId }) => {
-        guard();
+        guard("history.list");
         const start = Number(startHistoryId);
         if (start < this.oldestHistory) throw new HistoryExpiredError();
-        const added = this.messages
-          .filter((m) => m.historyId > start)
-          .map((m) => ({ id: m.providerMessageId, threadId: m.providerThreadId }));
-        return { added, historyId: String(this.history) };
+        // Like the real client: new messages (with their labels) and SENT label adds count as
+        // added; every label change and permanent delete is reported as such.
+        const recent = this.log.filter((h) => h.historyId > start);
+        const added = recent.flatMap((h) =>
+          h.type === "messageAdded"
+            ? [{ id: h.id, threadId: h.threadId, labelIds: h.labelIds }]
+            : h.type === "labelAdded" && h.labelIds.includes("SENT")
+              ? [{ id: h.id, threadId: h.threadId }]
+              : [],
+        );
+        const labelChanges = recent.flatMap((h): LabelChange[] =>
+          h.type === "labelAdded"
+            ? [{ id: h.id, threadId: h.threadId, added: h.labelIds, removed: [] }]
+            : h.type === "labelRemoved"
+              ? [{ id: h.id, threadId: h.threadId, added: [], removed: h.labelIds }]
+              : [],
+        );
+        const deleted = recent
+          .filter((h) => h.type === "messageDeleted")
+          .map((h) => ({ id: h.id, threadId: h.threadId }));
+        return { added, labelChanges, deleted, historyId: String(this.history) };
       },
       watch: async () => {
-        guard();
+        guard("watch");
         return { historyId: String(this.history), expiration: Date.now() + 7 * 86_400_000 };
       },
     };

@@ -45,6 +45,12 @@ describe("admin health", () => {
     expect(await systemHealth(NOW)).toMatchObject({ workingMailboxes: 1, jobsLookStopped: false });
   });
 
+  it("waits 25 minutes, past the push-on poll skip (15 minutes + one poll)", async () => {
+    expect(JOBS_STALE_AFTER_MS).toBe(25 * 60_000);
+    await mailbox(new Date(NOW.getTime() - 21 * 60_000));
+    expect((await systemHealth(NOW)).jobsLookStopped).toBe(false);
+  });
+
   it("warns when no working mailbox has synced for a while", async () => {
     await mailbox(new Date(NOW.getTime() - JOBS_STALE_AFTER_MS - 60_000));
     expect((await systemHealth(NOW)).jobsLookStopped).toBe(true);

@@ -1,13 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { Button } from "@/components/ui/button";
+import { deleteConfirmed } from "@/server/account-deletion-rules";
 
-function ConfirmButton() {
+function ConfirmButton({ ready }: { ready: boolean }) {
   const { pending } = useFormStatus();
   return (
-    <Button type="submit" disabled={pending}>
+    <Button type="submit" disabled={pending || !ready}>
       {pending ? "Deleting…" : "Yes, delete everything"}
     </Button>
   );
@@ -26,6 +27,8 @@ export function DeleteAccountButton({
   action: (formData: FormData) => Promise<void>;
 }) {
   const [confirming, setConfirming] = useState(false);
+  const [typed, setTyped] = useState("");
+  const fieldId = useId();
 
   if (!confirming) {
     return (
@@ -51,9 +54,34 @@ export function DeleteAccountButton({
         </li>
         <li>Your Gmail itself isn&apos;t touched — drafts already in Gmail stay yours.</li>
       </ul>
+      {/* Check 26 P4: the server checks the word too (and a fresh sign-in); this only keeps the
+          button off until it's typed. */}
+      <div className="flex flex-col gap-1">
+        <label htmlFor={fieldId} className="font-semibold">
+          Type DELETE to confirm
+        </label>
+        <input
+          id={fieldId}
+          name="confirm"
+          value={typed}
+          onChange={(e) => setTyped(e.target.value)}
+          autoComplete="off"
+          autoCapitalize="characters"
+          autoCorrect="off"
+          spellCheck={false}
+          className="min-h-tap w-full rounded-lg border-2 border-input bg-paper px-3 text-lg text-charcoal"
+        />
+      </div>
       <div className="flex flex-col gap-2 sm:flex-row">
-        <ConfirmButton />
-        <Button type="button" variant="ghost" onClick={() => setConfirming(false)}>
+        <ConfirmButton ready={deleteConfirmed(typed)} />
+        <Button
+          type="button"
+          variant="ghost"
+          onClick={() => {
+            setConfirming(false);
+            setTyped("");
+          }}
+        >
           Keep my account
         </Button>
       </div>

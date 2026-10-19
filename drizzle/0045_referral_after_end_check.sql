@@ -1,0 +1,1 @@
+ALTER TABLE "referral_credits" ADD COLUMN "after_end_checked_at" timestamp with time zone;

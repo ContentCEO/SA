@@ -759,6 +759,7 @@ describe("GUARDRAIL: never to complaint threads (server-side)", () => {
     expect(await reviewAllowed(workspaceId, other, NOW)).toBe("complaint");
     // A quote whose customer disputed something isn't asked "did you go another way?" either.
     process.env.FEATURE_CLOSING_QUESTION = "on";
+    // (The legal reason's older wording, Check 10 P10: stored rows keep it and still count.)
     const quiet = await quietQuote({ needsOwnerReason: "Mentions something legal." });
     expect(await closingQuestionAllowed(workspaceId, quiet, NOW)).toBe("complaint");
     // The next email gives it the sticky mark.

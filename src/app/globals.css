@@ -44,6 +44,24 @@
   input[type="radio"] {
     accent-color: var(--primary);
   }
+  /* Check 1 P5: no light-blue autofill (Chrome's :-webkit-autofill) and no Android tap flash;
+     the :active and focus-visible styles already show a tap. Fields stay paper and charcoal,
+     or charcoal and off-white on an inverted panel. */
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+  input:-webkit-autofill,
+  textarea:-webkit-autofill,
+  select:-webkit-autofill {
+    -webkit-box-shadow: 0 0 0 1000px var(--sa-paper) inset;
+    -webkit-text-fill-color: var(--foreground);
+    caret-color: var(--foreground);
+  }
+  .sa-inverted input:-webkit-autofill,
+  .sa-inverted textarea:-webkit-autofill,
+  .sa-inverted select:-webkit-autofill {
+    -webkit-box-shadow: 0 0 0 1000px var(--sa-charcoal) inset;
+  }
 }
 
 /* A switch that saves itself (AutoSaveForm) needs no Save button once the script runs.

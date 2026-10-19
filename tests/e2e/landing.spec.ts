@@ -124,7 +124,7 @@ test.describe("waitlist form", () => {
     await form.getByLabel("Your name").fill("Bot");
     await form.getByLabel(/Business email/).fill(email);
     // Two forms on the page now (the app waitlist and Growth): use this form's hidden field.
-    await form.locator('input[name="website"]').fill("http://spam.example", { force: true });
+    await form.locator('input[name="sa_hp"]').fill("http://spam.example", { force: true });
     await form.getByRole("button", { name: "Join the waitlist" }).click();
     await expect(form.getByText("You're on the list. Davi will be in touch.")).toBeVisible();
     expect(
@@ -210,7 +210,7 @@ test.describe("waitlist referral link", () => {
   test.use({ extraHTTPHeaders: { "x-forwarded-for": "198.51.100.12" } });
 
   test("waitlist: a referral link does nothing while referrals are off (#47)", async ({ page }) => {
-    // The e2e server runs without FEATURE_REFERRALS and REFERRAL_CREDIT_CENTS is null.
+    // The e2e server runs without FEATURE_REFERRALS (the switch is the only control).
     const email = unique();
     await page.goto("/?ref=AbCdEf123_-x#waitlist");
     const form = page.getByRole("region", { name: "Join the waitlist" });

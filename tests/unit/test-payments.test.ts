@@ -9,6 +9,7 @@ import {
   appSettings,
   drafts,
   mailboxes,
+  referralCredits,
   rules,
   threads,
   users,
@@ -43,6 +44,8 @@ import {
   testPaymentsResetNotice,
 } from "@/server/test-payment-rules";
 import { applyAdminMove } from "@/server/workspace-lifecycle";
+import { runReferralRewards } from "@/server/referrals";
+import { setReferralConfigForTests } from "@/server/referral-rules";
 import { createDraftForThread } from "@/server/drafts";
 import { saveConnectedMailbox } from "@/server/mailboxes";
 import { listSyncableMailboxes } from "@/server/sync";
@@ -64,7 +67,8 @@ const ADMIN = "davi@shop.com";
 // that user agreed to the current terms (beforeEach makes Davi's user row, agreed).
 const session = vi.hoisted(() => ({ email: null as string | null, id: "" }));
 vi.mock("@/auth", () => ({
-  auth: async () => (session.email ? { user: { id: session.id, email: session.email } } : null),
+  auth: async () =>
+    session.email ? { user: { id: session.id, email: session.email, sv: 0 } } : null,
 }));
 class Redirected extends Error {
   constructor(readonly url: string) {
@@ -439,7 +443,7 @@ describe("resetting", () => {
   it("Davi 2026-10-16 'let it be usable': a past-due test account works again everywhere but Send", async () => {
     const id = await testPaid("past_due");
     const box = await saveConnectedMailbox(
-      { id, plan: "crew" },
+      { id, plan: "crew", freePlan: null, freePlanUntil: null },
       { email: "pastdue@shop.com", refreshToken: "rt", grantedScopes: [] },
     );
     await database
@@ -511,7 +515,11 @@ describe("resetting", () => {
     expect([await stripeFacts(half), await stripeFacts(flaky)]).toEqual(before);
     expect((await row(fine)).setupPaidVia).toBeNull();
     // Counts only in the log, never Stripe's words.
-    expect(logged).toHaveBeenCalledWith("test_payments_reset", { reset: 1, unchecked: 2 });
+    expect(logged).toHaveBeenCalledWith("test_payments_reset", {
+      reset: 1,
+      unchecked: 2,
+      rewardsCleared: 0,
+    });
     expect(JSON.stringify(logged.mock.calls)).not.toMatch(/owner@|cus_|sub_/);
 
     // Stripe answers on the next tap: the rest is reset, the done one isn't touched twice.
@@ -558,6 +566,127 @@ describe("resetting", () => {
     expect(await resetTestPayments(NOW)).toEqual({ reset: 0, unchecked: 0 });
     expect(calls).toEqual([]); // nothing left to ask about
     expect(await resetRows(id)).toHaveLength(1);
+  });
+
+  it("plan #47: free months earned in test mode go (a running one stops); live ones stay", async () => {
+    const referrer = await account({
+      status: "active",
+      plan: "solo",
+      setupPaidVia: "stripe",
+      setupPaidAt: PAID_AT,
+      stripeCustomerId: "cus_live_ref",
+      stripeSubscriptionId: "sub_live_ref",
+      freePlan: "crew",
+      freePlanUntil: new Date(NOW.getTime() + 86_400_000),
+    });
+    stripeKnows.set("cus_live_ref", "live");
+    stripeKnows.set("sub_live_ref", "live");
+    await database.insert(rules).values({
+      workspaceId: referrer,
+      category: "scheduling",
+      mode: "autopilot",
+    });
+    const base = {
+      beneficiaryWorkspaceId: referrer,
+      side: "referrer" as const,
+      amountCents: 0,
+      reward: "free_month_up" as const,
+    };
+    await database.insert(referralCredits).values([
+      {
+        ...base,
+        referredEmailSha256: "t1",
+        status: "running",
+        stripeMode: "test",
+        freePlan: "crew",
+      },
+      { ...base, referredEmailSha256: "t2", status: "pending", stripeMode: "test" },
+      { ...base, referredEmailSha256: "l1", status: "pending", stripeMode: "live" },
+    ]);
+    await database.insert(appSettings).values([
+      { key: "stripe_portal_no_plan_change:test", value: '{"id":"bpc_t","defaultUpdated":1}' },
+      { key: "stripe_portal_no_plan_change:live", value: '{"id":"bpc_l","defaultUpdated":1}' },
+    ]);
+    await resetTestPayments(NOW);
+    // The test key's cached billing-page settings go; the live key's stay.
+    const portals = await database.select({ key: appSettings.key }).from(appSettings);
+    expect(portals.map((p) => p.key)).not.toContain("stripe_portal_no_plan_change:test");
+    expect(portals.map((p) => p.key)).toContain("stripe_portal_no_plan_change:live");
+    const left = await database.select().from(referralCredits);
+    expect(left.map((r) => r.referredEmailSha256)).toEqual(["l1"]);
+    const w = await row(referrer);
+    expect(w).toMatchObject({ freePlan: null, freePlanUntil: null, plan: "solo" });
+    // The month's end effects ran with it: Solo has no autopilot.
+    const [rule] = await database.select().from(rules).where(eq(rules.workspaceId, referrer));
+    expect(rule!.mode).toBe("draft");
+  });
+
+  it("plan #47: a test reward stays while its referred account couldn't be reset (never re-settled live)", async () => {
+    const referrer = await account({
+      status: "active",
+      plan: "solo",
+      setupPaidVia: "stripe",
+      stripeCustomerId: "cus_live_ref2",
+      stripeSubscriptionId: "sub_live_ref2",
+    });
+    stripeKnows.set("cus_live_ref2", "live");
+    stripeKnows.set("sub_live_ref2", "live");
+    // Two referred owners on another domain (so no same-domain skip), both paid with a test card.
+    const referred = async (email: string, customer: string) => {
+      const { workspace } = await ensureUserAndWorkspace({ email });
+      await database
+        .update(workspaces)
+        .set({
+          status: "active",
+          plan: "solo",
+          setupPaidVia: "stripe",
+          setupPaidAt: PAID_AT,
+          stripeCustomerId: customer,
+          stripeSubscriptionId: null,
+          referredByWorkspaceId: referrer,
+        })
+        .where(eq(workspaces.id, workspace.id));
+      return workspace.id;
+    };
+    const flaky = await referred("dana@customer-one.com", "cus_flaky_ref");
+    const reset = await referred("mike@customer-two.com", "cus_test_ref");
+    stripeKnows.set("cus_flaky_ref", "error");
+    const base = {
+      beneficiaryWorkspaceId: referrer,
+      side: "referrer" as const,
+      amountCents: 0,
+      reward: "free_month_up" as const,
+      status: "pending" as const,
+      stripeMode: "test" as const,
+    };
+    await database.insert(referralCredits).values([
+      { ...base, referredWorkspaceId: flaky, referredEmailSha256: "flaky" },
+      { ...base, referredWorkspaceId: reset, referredEmailSha256: "reset" },
+    ]);
+
+    expect(await resetTestPayments(NOW)).toEqual({ reset: 1, unchecked: 1 });
+    // Only the reset account's reward went; the unchecked one keeps its fingerprint row.
+    const left = await database.select().from(referralCredits);
+    expect(left.map((r) => [r.referredWorkspaceId, r.stripeMode])).toEqual([[flaky, "test"]]);
+
+    // With referrals on, the sweep finds nothing to settle again on the live key.
+    vi.stubEnv("FEATURE_REFERRALS", "1");
+    setReferralConfigForTests({ reward: "free_month_one_plan_up" });
+    try {
+      await runReferralRewards(new Date(NOW.getTime() + 15 * 60_000));
+    } finally {
+      setReferralConfigForTests(undefined);
+    }
+    const after = await database.select().from(referralCredits);
+    expect(after.filter((r) => r.stripeMode === "live")).toEqual([]);
+    expect(after.filter((r) => r.referredWorkspaceId === flaky)).toHaveLength(1);
+
+    // Once Stripe answers and the account is reset, its test reward goes too.
+    stripeKnows.delete("cus_flaky_ref");
+    expect(await resetTestPayments(NOW)).toEqual({ reset: 1, unchecked: 0 });
+    expect(
+      (await database.select().from(referralCredits)).filter((r) => r.stripeMode === "test"),
+    ).toEqual([]);
   });
 
   it("stops any autopilot countdown on a reset account", async () => {

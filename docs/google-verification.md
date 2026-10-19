@@ -8,8 +8,9 @@ then; while the app's publishing status is still **Testing**, only test users ad
 connect at all. This document is the plain-language answer we give Google, and it has to match what
 the code does. Code references are included so a reviewer (or we) can check.
 
-**What goes to Google:** the sections "Two separate consent steps", "Scopes", "Google API Services:
-Limited Use" and "Data handling" are the answer pasted into Google's verification form; the demo
+**What goes to Google:** the sections "Two separate consent steps", "Scopes", "Scope justifications",
+"Google API Services: Limited Use" and "Data handling" are the answer pasted into Google's
+verification form; the demo
 video is recorded from "Demo video script" and only its link is sent; the reviewer's sign-in comes
 from "Reviewer test account". "Before submitting" and "Keep this file honest" are for Davi only and
 are **never** pasted into Google's form.
@@ -21,6 +22,8 @@ are **never** pasted into Google's form.
    (`src/app/(app)/connect/page.tsx`). Only then do we ask for Gmail access: `openid email profile`
    plus the two Gmail scopes below, with `access_type=offline`, `prompt=consent` and
    `include_granted_scopes=true` (`src/mailbox/gmail/connector.ts`, `src/mailbox/gmail/scopes.ts`).
+   Adding a second Gmail address uses `prompt=consent select_account`, so Google shows its account
+   chooser; the scopes are the same.
 
 If the owner unticks either Gmail permission on Google's consent screen, we revoke what was granted
 and save nothing, and we explain why both are needed.
@@ -33,13 +36,29 @@ and save nothing, and we explain why both are needed.
 | `gmail.readonly`             | Read incoming business email so we can sort it (quote request, customer question, scheduling, invoice/payment, complaint, supplier, noise) and draft a reply: the mailbox profile, the message list, single messages, the change history and Gmail's `watch` notifications. Read up to 200 **sent** emails from the last year to learn how the owner writes. Before autopilot sends, look up which draft ids sit on that one conversation (we ask Google for message ids and labels only, so no headers, preview or text come back), so an owner's half-written reply in Gmail stops it.                   | We never delete, archive, move or label mail. We have no permission to.                                                                                                                      |
 | `gmail.compose`              | Create reply drafts **in the owner's own Gmail Drafts folder**, threaded to the right conversation, so the owner can read and edit them in Gmail too; read back, update or delete a draft we created; send a draft the owner approved (Send reply) or one autopilot sends (`drafts.send`); and, only during the three-day trial, send the owner a **practice copy** of a draft as a new message to their own address (`messages.send`), marked "[Practice]", never threaded and never to anyone else (checked on the finished email before Google sees it). Google authorizes both sends under this scope. | We don't touch drafts we didn't create. Nothing is sent without the owner's tap, except by autopilot the owner switched on for that kind of email; a practice copy never reaches a customer. |
 
-For reading, `gmail.readonly` is the narrowest scope (no change rights at all); for creating,
+For reading, `gmail.readonly` is the narrowest scope that includes message text (no change rights
+at all; `gmail.metadata` is smaller but returns headers only, and sorting and drafting need the
+words); for creating,
 updating and sending our own drafts, and the trial's practice copies, `gmail.compose` is: Google's
 API reference authorizes both `drafts.send` and `messages.send` under it. We don't request
 `gmail.send`: it covers only `messages.send`, not `drafts.send`, which every customer reply uses,
 so it would add nothing `gmail.compose` doesn't already allow. We deliberately do **not** request
 `gmail.modify` or full `https://mail.google.com/` access either. A test
 (`tests/unit/gmail-connector.test.ts`) fails if any of the three is added.
+
+## Scope justifications (one per scope, pasted into Google's form)
+
+Google asks how each restricted scope is used and why a more limited scope isn't enough. One
+paragraph each, under 1,000 characters, written for the form. The Gmail endpoints named are the
+only ones the app calls (`src/mailbox/gmail/api.ts`; a test checks the list).
+
+**gmail.readonly**
+
+`gmail.readonly` is the core feature: in the background, as mail arrives (users.history.list after users.watch; users.messages.list and users.getProfile for the first 30 days), the app reads each new inbox email's text (users.messages.get) so an AI can sort it (quote, question, invoice, complaint, noise) and draft a reply for the owner's queue; it times follow-ups from who wrote last; it reads up to 200 sent emails once to learn the owner's writing style (nothing stored); users.settings.sendAs.list tells the owner's addresses from customers'; users.threads.get (ids and labels only) finds a half-written Gmail reply before an autopilot send. Narrower scopes fail: gmail.metadata returns headers only, and sorting, drafting and style learning need the text; gmail.addons.current.message.readonly works only while the owner has one email open in Gmail, so nothing runs in the background: no queue, follow-up or morning summary. We never modify, label, archive or delete mail.
+
+**gmail.compose**
+
+`gmail.compose` creates each AI-written reply as a real draft in the owner's own Gmail Drafts folder, threaded to the customer's conversation (users.drafts.create), so the owner can also read or edit it in Gmail; reads it back and updates or deletes only drafts we created (users.drafts.get, users.drafts.update, users.drafts.delete) when the owner edits or discards, or the customer writes again; sends the draft only after the owner taps Send reply, or by autopilot the owner switched on for one kind of email (users.drafts.send); and, during the three-day trial, sends the owner a practice copy as a new message to their own address only (users.messages.send). Narrower scopes fail: gmail.send allows no drafts at all, and drafts.send does not accept it, so the owner could not see and approve the exact text in Gmail before it goes; gmail.addons.current.action.compose creates drafts only inside an open add-on card, not from our server after sorting. We never touch drafts we did not create.
 
 ## Google API Services: Limited Use
 
@@ -53,8 +72,12 @@ In practice:
 - It is transferred only as needed to provide those features (to Anthropic, to sort and write), to
   comply with the law, or, if the business is merged or sold, only after asking for the owner's
   explicit permission first.
-- It is never used for advertising, never sold, and never used to train AI models (Anthropic
-  doesn't use API data for training). It is never used for Squared Away Growth.
+- It is never used for advertising and never sold. We don't use data we receive from Google
+  Workspace APIs, including Gmail, whether raw, combined, anonymized or derived from it, to
+  develop, improve or train generalized or non-personalized AI or machine-learning models, and
+  our AI provider (Anthropic) doesn't either. The writing-style description we make from an
+  owner's sent mail is used only for that owner's own drafts. It is never used for Squared Away
+  Growth.
 - People don't read it, unless the owner asks us to (for example for support), it is needed for
   security or to investigate abuse, or the law requires it.
 
@@ -245,7 +268,12 @@ option B, the separate demo account after its test-card payment):
    verified this app" screen: that is expected in the verification video. With the app In
    production (launch checklist step 0c), tap **Advanced**, then the "Go to … (unsafe)" link.
    (Only while the app is still in Testing does a test user see a **Continue** button there
-   instead.) Then, on the permissions screen, pause here. Show the app name and the two Gmail
+   instead.) The explainer screen in step 3 says the same thing in the app's words, from
+   `GOOGLE_APP_STATE` (`src/config/google-app.ts`): in Testing, "Google will show a screen saying
+   it hasn't verified Squared Away yet. That's expected while we're in early access. Tap
+   Continue."; once published but not yet verified, "Tap Advanced, then the link that starts with
+   Go to."; and nothing at all once Google has verified the app. Set the value before filming so
+   the screen and the video agree. Then, on the permissions screen, pause here. Show the app name and the two Gmail
    permissions, in Google's words "View your email messages and settings" (`gmail.readonly`) and
    "Manage drafts and send emails" (`gmail.compose`), and click into the address bar so the
    `client_id=` in the URL is readable. Tap Allow (Continue).
@@ -398,6 +426,21 @@ production Stripe is still in test mode.
   your behalf". Only then send the practice copy and the real reply.
 - Verify the production domain in Google Search Console, add it under Google Auth Platform →
   Branding → Authorized domains, and point the homepage, privacy policy and terms links there.
+- **Publish the branding before filming** (launch checklist step 0b, then 0d). Google has a
+  separate brand check: Branding → **Verify Branding**, wait for "Ready to publish" (an automatic
+  check, usually minutes; a manual review takes 2–3 business days), then **Publish branding**
+  within 7 days, or it has to be verified again. Until it is published Google's consent screen
+  shows the app's domain, not its name, and the demo video must show the consent screen with the
+  app name on it, so don't record until the screen says "Squared Away" (start Connect Gmail on
+  the domain and look).
+- **Clean the live client first** (launch checklist step 0e, its first sub-step, only after the old
+  address forwards to the domain in step 5.9): the production Google project has **exactly one
+  OAuth client**, and its Authorized redirect URIs and JavaScript origins list only
+  `https://<your domain>/api/auth/callback/google` and `https://<your domain>/api/gmail/callback`;
+  no `vercel.app` address and no `localhost`. Google verifies every domain on the client, and a
+  `vercel.app` address can't be proved in Search Console. Previews and local testing use the
+  separate "sa preview" Google project (launch checklist step 2), which is never submitted; with
+  one client there is one consent screen to film.
 - Switch Audience → Publishing status to **In production** before real owners connect: in Testing,
   Google's refresh tokens for Gmail scopes expire after 7 days (every owner would have to reconnect
   weekly) and only hand-added test users (at most 100) can connect. Access given while the app was

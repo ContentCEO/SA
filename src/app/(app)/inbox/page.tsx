@@ -1,24 +1,35 @@
+import type { Metadata } from "next";
 import Link from "next/link";
+import { noticeText } from "@/lib/notice-text";
 import { Headline } from "@/components/brand/headline";
+import { UpdatedAt } from "@/components/app/updated-at";
+import { updatedTime } from "@/lib/refresh-rules";
+import { usableTimeZone } from "@/server/snooze-rules";
 import { OfferButtons } from "@/components/app/offer-buttons";
-import { PermitCard } from "@/components/app/permit-card";
-import { Button } from "@/components/ui/button";
+import { PermitCard, permitSummaryLine, TownCaution } from "@/components/app/permit-card";
+import { bouncedLine } from "@/server/auto-reply-rules";
+import { AttachmentLine } from "@/components/app/attachment-line";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { CATEGORIES } from "@/ai/prompts/classify.v4";
 import { categoryLabels, categoryTag, isCategory } from "@/config/categories";
+import { gmailThreadLink } from "@/lib/gmail-link";
 import { relativeTime } from "@/lib/relative-time";
 import { cn } from "@/lib/utils";
-import { listInboxThreads, type InboxFilter, type InboxRow } from "@/server/inbox";
+import { z } from "zod";
+import { inboxPage, type InboxCursor, type InboxFilter, type InboxRow } from "@/server/inbox";
 import { listMailboxes } from "@/server/mailboxes";
 import { isReadOnly } from "@/server/lifecycle";
 import { threadOffers, type ThreadOffers } from "@/server/offers";
 import { priceMemoryFor, type PriceMemoryItem } from "@/server/price-memory";
 import { getBusinessProfile } from "@/server/profile";
 import { requireOwner } from "@/server/session";
-import { isFoldableJunk, searchText } from "@/server/inbox-rules";
+import { kindWord, searchText, urgencyWord } from "@/server/inbox-rules";
 import { draftReplyAction } from "../queue/actions";
 import { channelKind, channelName, openSiteUrl } from "@/server/channel-rules";
+import { ChipRow } from "./chip-row";
 import { InboxSearch } from "./inbox-search";
-import { markNeedsOwnerAction } from "./actions";
+import { markNeedsOwnerAction, takeOffListAction } from "./actions";
+import { CalledThem } from "../queue/called-them";
 import { Notice } from "@/components/app/notice";
 import { NoteLine } from "@/components/app/note-line";
 import { ResortSheet, SenderRuleSheet } from "@/components/app/sender-sheets";
@@ -26,12 +37,22 @@ import { CONTROL_DONE, CONTROL_ERRORS } from "@/config/control-messages";
 import { notesForThreads } from "@/server/customer-notes";
 import { companyChoice } from "@/server/owner-sender-rule-rules";
 
+// Check 32 P6: every screen has its own title ("… · Squared Away" from the root template).
+export const metadata: Metadata = { title: "Inbox" };
+
 const INBOX_ERRORS: Record<string, string> = {
   ...CONTROL_ERRORS,
   busy: "That's a lot in a short time, so we've paused it for a bit. Try again in a few minutes.",
   readonly:
     "Your account is read-only right now, so nothing was changed. The note at the top says why.",
   unknown: "That didn't work. Refresh and try again.",
+};
+
+const INBOX_DONE: Record<string, string> = {
+  ...CONTROL_DONE,
+  called:
+    "Marked as answered by phone. No draft and no nudge for that one unless they write again.",
+  off_list: "Taken off your list. It comes back if they write again and it needs you.",
 };
 
 /** Inbox rows keep "Ask for a review" (a finished job); "Say thanks" is Money's (2026-10-16). */
@@ -45,6 +66,26 @@ function parseFilter(v: string | string[] | undefined): InboxFilter {
   return { kind: "all" };
 }
 
+/** Check 10 P2: ?before=<ISO time>&after_id=<thread uuid>; bad values are ignored. */
+function parseCursor(params: Record<string, string | string[] | undefined>): InboxCursor | null {
+  const id = z.string().uuid().safeParse(params.after_id);
+  if (!id.success) return null;
+  const before = z.string().datetime({ offset: true }).safeParse(params.before);
+  return { afterId: id.data, before: before.success ? new Date(before.data) : null };
+}
+
+/** The Inbox URL for a chip, optionally at an older page. Ids and times only. */
+function inboxHref(key: string, cursor?: InboxCursor | null) {
+  const q = new URLSearchParams();
+  if (key !== "all") q.set("c", key);
+  if (cursor) {
+    if (cursor.before) q.set("before", cursor.before.toISOString());
+    q.set("after_id", cursor.afterId);
+  }
+  const s = q.toString();
+  return s ? `/inbox?${s}` : "/inbox";
+}
+
 function filterKey(f: InboxFilter) {
   return f.kind === "category" ? f.category : f.kind;
 }
@@ -53,6 +94,8 @@ const chips: { key: string; label: string }[] = [
   { key: "all", label: "All" },
   { key: "needs_me", label: "Needs me" },
   ...CATEGORIES.map((c) => ({ key: c, label: categoryLabels[c] })),
+  // Check 10 P7: only shown when there's unsorted mail (or it's the open filter).
+  { key: "unsorted", label: "Not sorted" },
 ];
 
 function Details({ row }: { row: InboxRow }) {
@@ -65,7 +108,8 @@ function Details({ row }: { row: InboxRow }) {
       invoice_number: string | null;
       amount: number | null;
       due_date: string | null;
-      status: "unpaid" | "paid" | "partly_paid" | "unknown";
+      paid?: number;
+      status: "unpaid" | "paid" | "partly_paid" | "said_sent" | "unknown";
     } | null;
   };
   const inv = x.invoice;
@@ -73,6 +117,8 @@ function Details({ row }: { row: InboxRow }) {
     unpaid: "Unpaid",
     paid: "Paid",
     partly_paid: "Partly paid",
+    // Check 12 P3: a promise, not a payment.
+    said_sent: "They say it's on the way",
     unknown: null,
   };
   const facts = [
@@ -88,8 +134,10 @@ function Details({ row }: { row: InboxRow }) {
           [
             inv.invoice_number ? `#${inv.invoice_number}` : null,
             inv.amount !== null ? `$${inv.amount.toLocaleString("en-US")}` : null,
+            // Check 12 P2: what was paid toward it so far.
+            inv.paid ? `$${inv.paid.toLocaleString("en-US")} paid so far` : null,
             inv.due_date ? `due ${inv.due_date}` : null,
-            invoiceWords[inv.status],
+            invoiceWords[inv.status] ?? null,
           ]
             .filter(Boolean)
             .join(" · "),
@@ -107,6 +155,23 @@ function Details({ row }: { row: InboxRow }) {
       ))}
     </dl>
   );
+}
+
+/** Check 10 P8: the extracted facts a card shows, for the search on the phone. */
+function searchFacts(extracted: Record<string, unknown> | null) {
+  const x = (extracted ?? {}) as {
+    service_requested?: unknown;
+    address?: unknown;
+    invoice?: { invoice_number?: unknown } | null;
+    permit?: { permit_number?: unknown } | null;
+  };
+  const str = (v: unknown) => (typeof v === "string" ? v : null);
+  return {
+    serviceRequested: str(x.service_requested),
+    address: str(x.address),
+    invoiceNumber: str(x.invoice?.invoice_number),
+    permitNumber: str(x.permit?.permit_number),
+  };
 }
 
 /** Plan #15: the owner's past prices for similar jobs, as text. Only they see it. */
@@ -127,79 +192,114 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
   const readOnly = isReadOnly(workspace);
   const params = await props.searchParams;
   const filter = parseFilter(params.c);
-  const [rows, boxes] = await Promise.all([
-    listInboxThreads(workspace.id, filter),
+  const cursor = parseCursor(params);
+  const [page, boxes, profile] = await Promise.all([
+    inboxPage(workspace.id, filter, { cursor }),
     listMailboxes(workspace.id),
+    getBusinessProfile(workspace.id),
   ]);
+  // Check 10 P2 / P7: the page's real rows, then the newest folded junk and older unsorted
+  // mail (All, first page only).
+  const junkIds = new Set(page.junk.rows.map((r) => r.id));
+  const olderIds = new Set(page.older.rows.map((r) => r.id));
+  const rows = [...page.rows, ...page.junk.rows, ...page.older.rows];
   const active = filterKey(filter);
-  // "Ask for a review" / the closing question, only where the server's rules allow (#29 #26).
-  // Read-only accounts get none.
-  const offers = await threadOffers(
-    workspace.id,
-    rows.map((r) => r.id),
-  );
-  const timeZone = (await getBusinessProfile(workspace.id))?.timeZone ?? "America/New_York";
-  const pastPrices = await priceMemoryFor(
-    workspace.id,
-    rows.filter((r) => r.category === "quote_request").map((r) => r.id),
-    { timeZone },
-  );
-
-  // Ideas G7 / H3: the customer of each row (their newest email that isn't a side
-  // conversation), its private note, and the email id the sheets post.
-  const customerOf = await notesForThreads(
-    workspace.id,
-    rows.map((r) => r.id),
-  );
+  const olderHref = page.next ? inboxHref(active, page.next) : null;
+  const timeZone = profile?.timeZone ?? "America/New_York";
+  const ids = rows.map((r) => r.id);
+  // Check 29 P7: one more wait, for everything that needs the rows.
+  const [offers, pastPrices, customerOf] = await Promise.all([
+    // "Ask for a review" / the closing question, only where the server's rules allow (#29 #26).
+    // Read-only accounts get none.
+    threadOffers(workspace.id, ids),
+    priceMemoryFor(
+      workspace.id,
+      rows.filter((r) => r.category === "quote_request").map((r) => r.id),
+      { timeZone },
+    ),
+    // Ideas G7 / H3: the customer of each row (their newest email that isn't a side
+    // conversation), its private note, and the email id the sheets post.
+    notesForThreads(workspace.id, ids),
+  ]);
   const own = boxes.map((b) => b.email);
-  const doneMsg = typeof params.done === "string" ? CONTROL_DONE[params.done] : undefined;
-  const errorMsg = typeof params.error === "string" ? INBOX_ERRORS[params.error] : undefined;
-
-  // Junk folds into one line on "All" (outside review); the Junk chip lists it as usual.
-  const foldJunk = filter.kind === "all";
+  const doneMsg = noticeText(INBOX_DONE, params.done);
+  const errorMsg = noticeText(INBOX_ERRORS, params.error);
 
   function renderRow(row: InboxRow) {
+    const permit = (row.extracted as { permit?: Parameters<typeof PermitCard>[0]["permit"] })
+      ?.permit;
+    const permitLine = permitSummaryLine(permit);
     return (
       <li key={row.id}>
         <details
           className={cn("group rounded-xl border", row.needsOwner ? "sa-inverted" : "bg-card")}
         >
           <summary className="flex min-h-tap cursor-pointer list-none flex-col gap-1 p-4">
-            <div className="flex items-baseline justify-between gap-3">
-              <span className="truncate text-base font-black">
+            {/* Check 32 P9 / P11: each row's name is a heading, and wraps if long. */}
+            <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+              <h2 className="min-w-0 text-base font-black break-words">
                 {row.senderName || row.senderAddress || "Unknown sender"}
-              </span>
-              <span
-                className={cn(
-                  "shrink-0 text-sm",
-                  row.needsOwner ? "text-ash" : "text-muted-foreground",
-                )}
-              >
+              </h2>
+              <span className="shrink-0 text-sm text-muted-foreground">
                 {row.lastMessageAt ? relativeTime(row.lastMessageAt) : ""}
               </span>
             </div>
             <span className="text-sm font-semibold">
-              {isCategory(row.category) ? categoryTag[row.category] : "Not sorted yet"}
-              {row.needsOwner ? " · Needs you" : ""}
-              {row.priority === "high" && !row.needsOwner ? " · Urgent" : ""}
+              {/* Check 10 P3: by weight only, first, on every card. */}
+              {urgencyWord(row) ? <span className="font-black">{urgencyWord(row)} · </span> : null}
+              {/* Check 22 P10: the owner's own people, never a kind of customer email. */}
+              {(row.extracted as { crew?: unknown } | null)?.crew === true
+                ? "Your crew"
+                : kindWord(row, categoryTag, row.olderUnsorted)}
+              {/* Check 10 P9: the same words as the chip and "This one needs me". */}
+              {row.needsOwner ? " · Needs me" : ""}
               {row.replyState ? ` · ${row.replyState}` : ""}
+              {row.pendingDraftId ? " · Draft ready" : ""}
+              {bouncedLine(row.extracted) ? " · Your email bounced" : ""}
             </span>
+            {row.needsOwner && row.needsOwnerReason ? (
+              // Check 10 P5: the reason on the face of the card, without opening it.
+              <span className="line-clamp-1 font-semibold">{row.needsOwnerReason}</span>
+            ) : null}
             <span className={cn("line-clamp-2", row.needsOwner ? "" : "text-muted-foreground")}>
               {row.summary ?? row.subject ?? "(no subject)"}
             </span>
+            {permitLine ? <span className="text-sm font-semibold">{permitLine}</span> : null}
           </summary>
           <div className="flex flex-col gap-3 border-t border-border px-4 pt-3 pb-4">
+            {row.category === null ? (
+              // Check 10 P7: never promise a sort that won't come.
+              <p className="text-sm font-semibold">
+                {row.olderUnsorted
+                  ? "This came in before Squared Away started sorting your email. It's safe in Gmail."
+                  : "We'll sort this within a few minutes. It's safe in Gmail."}
+              </p>
+            ) : null}
+            {/* Check 10 P6: the customer's page, by the opaque key of their newest email (never
+                an address in a URL). Lead websites and phone services aren't customers. */}
+            {customerOf.get(row.id)?.address && !row.leadChannel ? (
+              <p className="text-sm">
+                From{" "}
+                <Link
+                  href={`/customers/${customerOf.get(row.id)!.key}`}
+                  className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
+                >
+                  {row.senderName || row.senderAddress || "this customer"}
+                </Link>
+              </p>
+            ) : null}
             <NoteLine note={customerOf.get(row.id)?.note} editKey={customerOf.get(row.id)?.key} />
             {row.subject ? <p className="text-sm">Subject: {row.subject}</p> : null}
             {row.needsOwner && row.needsOwnerReason ? (
               <p className="font-semibold">Why: {row.needsOwnerReason}</p>
             ) : null}
-            <PermitCard
-              permit={
-                (row.extracted as { permit?: Parameters<typeof PermitCard>[0]["permit"] })?.permit
-              }
-            />
+            {bouncedLine(row.extracted) ? (
+              <p className="font-semibold">{bouncedLine(row.extracted)}</p>
+            ) : null}
+            <TownCaution extracted={row.extracted} />
+            <PermitCard permit={permit} />
             <Details row={row} />
+            <AttachmentLine counts={row.attachments} gmail={row} />
             <PastPricesLine prices={pastPrices.get(row.id)} />
             {row.leadChannel ? (
               // Leads package: nobody reads an email reply to a lead website or a phone message.
@@ -219,6 +319,14 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
                     : "Call or text them back from your own phone."}
                 </p>
               )
+            ) : row.pendingDraftId ? (
+              // Check 10 P4: the draft already exists; go to it instead of writing another.
+              <Link
+                href={`/queue?t=${row.id}#t-${row.id}`}
+                className={cn(buttonVariants(), "w-full")}
+              >
+                See the draft
+              </Link>
             ) : row.category !== "noise" && !readOnly ? (
               <form action={draftReplyAction}>
                 <input type="hidden" name="threadId" value={row.id} />
@@ -231,6 +339,14 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
               // "Say thanks" lives on Money's paid rows only (2026-10-16).
               <OfferButtons threadId={row.id} offers={inboxOffers(offers.get(row.id))} />
             ) : null}
+            <a
+              href={gmailThreadLink(row)}
+              target="_blank"
+              rel="noreferrer"
+              className={cn(buttonVariants({ variant: "outline" }), "w-full")}
+            >
+              Open in Gmail
+            </a>
             {!readOnly ? (
               <ResortSheet threadId={row.id} current={row.category} back="inbox" />
             ) : null}
@@ -249,6 +365,24 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
                 back="inbox"
               />
             ) : null}
+            {!readOnly && row.replyState === "Waiting on you" ? (
+              // Check 10 P1: answered by phone, from the Inbox too.
+              <CalledThem
+                threadId={row.id}
+                hasDraft={row.pendingDraftId != null}
+                inverted={row.needsOwner}
+                back="inbox"
+              />
+            ) : null}
+            {!readOnly && row.needsOwner && row.replyState !== "Waiting on you" ? (
+              // Check 10 P1: the customer isn't waiting, so any flag can come off by hand.
+              <form action={takeOffListAction}>
+                <input type="hidden" name="threadId" value={row.id} />
+                <Button type="submit" variant="outline" className="w-full">
+                  Take it off my list
+                </Button>
+              </form>
+            ) : null}
             {!row.needsOwner ? (
               <form action={markNeedsOwnerAction}>
                 <input type="hidden" name="threadId" value={row.id} />
@@ -266,24 +400,36 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
   return (
     <>
       <Headline serif="everything that came in," heavy="sorted." />
+      <UpdatedAt time={updatedTime(new Date(), usableTimeZone(timeZone))} what="inbox" />
       {doneMsg ? <Notice>{doneMsg}</Notice> : null}
       {errorMsg ? <Notice strong>{errorMsg}</Notice> : null}
 
-      <nav aria-label="Filter" className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1">
-        {chips.map((c) => (
-          <Link
-            key={c.key}
-            href={c.key === "all" ? "/inbox" : `/inbox?c=${c.key}`}
-            aria-current={active === c.key ? "page" : undefined}
-            className={cn(
-              "inline-flex min-h-tap shrink-0 items-center rounded-full border px-4 text-sm font-semibold whitespace-nowrap",
-              active === c.key ? "border-charcoal bg-charcoal text-offwhite" : "bg-card",
-            )}
-          >
-            {c.label}
-          </Link>
-        ))}
-      </nav>
+      <ChipRow>
+        {chips
+          .filter((c) => c.key !== "unsorted" || page.hasUnsorted || active === "unsorted")
+          .map((c) => (
+            <Link
+              key={c.key}
+              href={inboxHref(c.key)}
+              aria-current={active === c.key ? "page" : undefined}
+              className={cn(
+                "inline-flex min-h-tap shrink-0 items-center rounded-full border px-4 text-sm font-semibold whitespace-nowrap",
+                active === c.key ? "border-charcoal bg-charcoal text-offwhite" : "bg-card",
+              )}
+            >
+              {c.label}
+            </Link>
+          ))}
+      </ChipRow>
+
+      {cursor ? (
+        <Link
+          href={inboxHref(active)}
+          className="inline-flex min-h-tap items-center self-start font-semibold underline underline-offset-4"
+        >
+          Back to newest
+        </Link>
+      ) : null}
 
       {boxes.length === 0 ? (
         <p className="text-lg">
@@ -295,9 +441,11 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
         </p>
       ) : rows.length === 0 ? (
         <p className="text-lg text-muted-foreground">
-          {filter.kind === "all"
-            ? "Nothing here yet. New email shows up within a few minutes."
-            : "Nothing in this group."}
+          {cursor
+            ? "No older emails."
+            : filter.kind === "all"
+              ? "Nothing here yet. New email shows up within a few minutes."
+              : "Nothing in this group."}
         </p>
       ) : (
         <InboxSearch
@@ -309,10 +457,14 @@ export default async function InboxPage(props: PageProps<"/inbox">) {
               subject: r.subject,
               summary: r.summary,
               categoryLabel: isCategory(r.category) ? categoryLabels[r.category] : null,
+              ...searchFacts(r.extracted),
             }),
-            junk: foldJunk && isFoldableJunk(r),
+            group: junkIds.has(r.id) ? "junk" : olderIds.has(r.id) ? "older" : "main",
             node: renderRow(r),
           }))}
+          junkCount={page.junk.count}
+          olderCount={page.older.count}
+          olderHref={olderHref}
         />
       )}
     </>

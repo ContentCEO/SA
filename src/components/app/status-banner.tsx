@@ -4,7 +4,14 @@ import { siteConfig } from "@/config/site";
 import { daysPhrase } from "@/lib/trial-words";
 import { TrialClock } from "./trial-clock";
 import { getWorkspaceForUser } from "@/server/accounts";
-import { setupCallSentence } from "@/server/billing-rules";
+import type { Workspace } from "@/db/schema";
+import {
+  PAUSED_STILL_BILLED_LINE,
+  planEndingSoon,
+  setupCallSentence,
+  shortDate,
+} from "@/server/billing-rules";
+import { workspaceTimeZone } from "@/server/snooze";
 import { queueCounts } from "@/server/drafts";
 import { trialCounts } from "@/server/first-week";
 import { isLastDay, trialSoFarLine, waitingLine } from "@/server/first-week-rules";
@@ -14,6 +21,8 @@ import {
   setupReallyPaid,
   trialLengthDays,
 } from "@/server/lifecycle";
+import { freeMonthBanner, freeMonthRunning } from "@/server/referral-rules";
+import { freeMonthView, viewChanges } from "@/server/referrals";
 
 function Contact() {
   const support = process.env.SUPPORT_EMAIL;
@@ -34,6 +43,39 @@ function Contact() {
       ) : null}
       .
     </>
+  );
+}
+
+/**
+ * Plan #47: the running free month, bordered like the trial clock (not inverted: it isn't a
+ * problem). Only reads the database when a free month is set on the workspace.
+ */
+async function FreeMonthCard({ workspace, now }: { workspace: Workspace; now: Date }) {
+  if (!freeMonthRunning(workspace, now)) return null;
+  const view = await freeMonthView(workspace.id);
+  const banner = freeMonthBanner({
+    workspace,
+    reward: view.running,
+    changes: viewChanges(view, workspace.plan),
+    timeZone: view.timeZone,
+    now,
+  });
+  if (!banner) return null;
+  return (
+    <section
+      aria-label="Your free month"
+      className="flex flex-col gap-1 rounded-xl border-2 border-charcoal p-4"
+    >
+      <p className="font-semibold">{banner.line}</p>
+      {banner.link ? (
+        <Link
+          href={banner.link.href}
+          className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
+        >
+          {banner.link.label}
+        </Link>
+      ) : null}
+    </section>
   );
 }
 
@@ -84,6 +126,23 @@ export async function StatusBanner() {
       "Choose a plan",
     );
   }
+  // Check 17 P3: the owner canceled in Stripe's page; in the last week, a quiet reminder.
+  const ending =
+    (status === "setup_paid" || status === "active") &&
+    workspace.stripeCancelAt &&
+    planEndingSoon(workspace.stripeCancelAt, now) ? (
+      <p role="status" className="rounded-xl border-2 border-charcoal p-4">
+        Your plan ends on{" "}
+        {shortDate(workspace.stripeCancelAt, await workspaceTimeZone(workspace.id))}. Nothing is
+        deleted.{" "}
+        <Link
+          href="/billing"
+          className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
+        >
+          Plan &amp; billing
+        </Link>
+      </p>
+    ) : null;
   switch (status) {
     case "evaluation_expired": {
       // Round 2 (FW E7/F6): what's waiting for them, counts only.
@@ -103,12 +162,27 @@ export async function StatusBanner() {
       );
     }
     case "setup_paid":
-      return inverted(
-        "Setup's paid. Sending is on.",
+      // A running free month is a second bordered card under this one (setup_paid isn't a
+      // problem state, so it doesn't hide the free month).
+      return (
+        <div className="flex flex-col gap-3">
+          {inverted(
+            "Setup's paid. Sending is on.",
+            <>
+              Every reply still waits for your okay. On your setup call,{" "}
+              {siteConfig.operator.split(" ")[0]} {setupCallSentence("after")}. <Contact />
+            </>,
+          )}
+          <FreeMonthCard workspace={workspace} now={now} />
+          {ending}
+        </div>
+      );
+    case "active":
+      return (
         <>
-          Every reply still waits for your okay. On your setup call,{" "}
-          {siteConfig.operator.split(" ")[0]} {setupCallSentence("after")}. <Contact />
-        </>,
+          <FreeMonthCard workspace={workspace} now={now} />
+          {ending}
+        </>
       );
     case "past_due":
       return inverted(
@@ -122,7 +196,11 @@ export async function StatusBanner() {
       return inverted(
         "Your account is paused.",
         <>
-          Nothing new is read, drafted or sent, and nothing is deleted. <Contact />
+          Nothing new is read, drafted or sent, and nothing is deleted.{" "}
+          {workspace.stripeSubscriptionId ? (
+            <>{PAUSED_STILL_BILLED_LINE} Questions about it? </>
+          ) : null}
+          <Contact />
         </>,
       );
     case "canceled":

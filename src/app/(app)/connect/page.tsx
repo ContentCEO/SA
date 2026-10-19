@@ -1,12 +1,19 @@
+import type { Metadata } from "next";
 import { dayWord } from "@/lib/trial-words";
+import { noticeText } from "@/lib/notice-text";
 import { Notice } from "@/components/app/notice";
 import { Headline } from "@/components/brand/headline";
 import { Button } from "@/components/ui/button";
 import { bodyRetentionDays } from "@/config/retention";
+import { googleAppState, googleWarningLine } from "@/config/google-app";
 import { pricing } from "@/config/pricing";
+import { siteConfig } from "@/config/site";
 import { listMailboxes } from "@/server/mailboxes";
 import { requireOwner } from "@/server/session";
 import { startGmailConnect } from "./actions";
+
+// Check 32 P6: every screen has its own title ("… · Squared Away" from the root template).
+export const metadata: Metadata = { title: "Connect Gmail" };
 
 const errors: Record<string, string> = {
   busy: "That's a lot in a short time, so we've paused it for a bit. Try again in a few minutes.",
@@ -15,15 +22,42 @@ const errors: Record<string, string> = {
     "Google let you untick a permission, and Squared Away needs both to work: “View your email messages and settings” and “Manage drafts and send emails.” Nothing was saved. Try again and leave both ticked.",
   expired: "That took a little long and timed out. Tap Connect Gmail to try again.",
   failed: "Something went wrong on the way back from Google. Nothing was saved. Try again.",
+  in_use: `This Gmail is already connected to another Squared Away account. Disconnect it there first, or call Davi at ${siteConfig.phone}.`,
+  no_gmail: `This Google account doesn't have Gmail, so there's nothing for Squared Away to read. It works with Gmail and Google Workspace for now. If your business email is on Outlook, call or text Davi at ${siteConfig.phone}; Outlook is on the list.`,
 };
 
 export default async function ConnectPage(props: PageProps<"/connect">) {
   const { workspace } = await requireOwner();
+  const boxes = await listMailboxes(workspace.id);
   // Round 2 (FW): setup's honest step count starts here (2: your shop, 3: reading your email).
-  const firstConnect = (await listMailboxes(workspace.id)).length === 0;
-  const { error } = await props.searchParams;
-  const message = typeof error === "string" ? errors[error] : undefined;
+  const firstConnect = boxes.length === 0;
+  const params = await props.searchParams;
+  const { error } = params;
+  // Check 42 P3: which Gmail this connect is for. Only the workspace's own mailbox ids are
+  // read from the URL (never an address); anything else falls back to the plain choice.
+  const byId = (v: unknown) => (typeof v === "string" ? boxes.find((b) => b.id === v) : undefined);
+  const card =
+    byId(params.reconnect) ?? (error === "wrong_account" ? byId(params.mailbox) : undefined);
+  const mode: "first" | "add" | "reconnect" = card
+    ? "reconnect"
+    : params.add === "1" || error === "already_connected"
+      ? "add"
+      : firstConnect
+        ? "first"
+        : boxes.length === 1
+          ? "reconnect"
+          : "add";
+  const target = card ?? (mode === "reconnect" ? boxes[0] : undefined);
+  const again = error === "already_connected" ? byId(params.mailbox) : undefined;
+  const picked = error === "wrong_account" ? byId(params.picked) : undefined;
+  const message =
+    error === "already_connected" && again
+      ? `That's ${again.email} again, which is already connected. Tap Connect another Gmail and pick the other account on Google's screen.`
+      : error === "wrong_account" && card
+        ? `You picked ${picked ? picked.email : "a different Google account"} but this card is for ${card.email}. Try again and pick ${card.email}.`
+        : noticeText(errors, error);
   const days = dayWord(pricing.evaluationDays);
+  const googleWarning = googleWarningLine(googleAppState(), siteConfig.name);
 
   return (
     <>
@@ -65,8 +99,10 @@ export default async function ConnectPage(props: PageProps<"/connect">) {
           </li>
           <li>Delete, archive, or move your email.</li>
           <li>
-            Share your email. The only outside service that sees it is Anthropic&apos;s AI, to sort
-            and draft — and it&apos;s never used to train AI.
+            {/* Check 27 P9: the same places the privacy policy names (our servers, then the AI). */}
+            Share your email. It&apos;s stored on our own servers in the US, and the only outside
+            company that reads it is Anthropic&apos;s AI, to sort and draft. It&apos;s never used to
+            train AI.
           </li>
           <li>Keep the text of your emails longer than {bodyRetentionDays()} days.</li>
         </ul>
@@ -80,17 +116,21 @@ export default async function ConnectPage(props: PageProps<"/connect">) {
           reply goes out, and it still goes out only when you tap <strong>Send reply</strong> (or by
           autopilot, if you switch it on for a kind of email).
         </p>
-        <p className="text-muted-foreground">
-          While we&apos;re in early access, Google may also say the app isn&apos;t verified yet —
-          that&apos;s expected. Tap <strong>Advanced</strong>, then{" "}
-          <strong>Go to Squared Away</strong>.
-        </p>
+        {/* Check 28 P3: what Google's own screen shows depends on where the app is in Google's
+            process (GOOGLE_APP_STATE); nothing once verified. */}
+        {googleWarning ? <p className="text-muted-foreground">{googleWarning}</p> : null}
         <p className="text-muted-foreground">
           You can disconnect any time in Settings. That also removes our access at Google.
         </p>
         <form action={startGmailConnect}>
+          <input type="hidden" name="mode" value={mode} />
+          {target ? <input type="hidden" name="mailboxId" value={target.id} /> : null}
           <Button type="submit" size="lg" className="w-full">
-            Connect Gmail
+            {mode === "add"
+              ? "Connect another Gmail"
+              : mode === "reconnect"
+                ? "Reconnect Gmail"
+                : "Connect Gmail"}
           </Button>
         </form>
       </section>

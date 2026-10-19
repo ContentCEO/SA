@@ -25,7 +25,8 @@ function inline(text: string, key: string): ReactNode[] {
     const link = part.match(/^\[([^\]]+)\]\(([^)\s]+)\)$/);
     if (link) {
       const href = link[2]!;
-      const safe = /^(https:|mailto:|tel:|\/)/.test(href) ? href : "#";
+      // Check 27 P2: the Contact block's "Text:" link is an sms: link.
+      const safe = /^(https:|mailto:|tel:|sms:|\/)/.test(href) ? href : "#";
       const external = safe.startsWith("https:");
       return (
         <a
@@ -42,13 +43,23 @@ function inline(text: string, key: string): ReactNode[] {
   });
 }
 
-/** Paragraph text: lines joined with spaces; a line ending in "\" is a hard break. */
+/**
+ * Paragraph text: lines joined with spaces; a line ending in "\" is a hard break. Check 7 P1:
+ * the lines of each segment are joined first and `inline()` runs on the whole segment, so a
+ * bold phrase (or a link) that Prettier wrapped across two source lines still matches, instead
+ * of showing its ** stars.
+ */
 function paragraph(lines: string[], key: string): ReactNode[] {
-  const out: ReactNode[] = [];
+  const segments: string[][] = [[]];
   lines.forEach((line, i) => {
     const hard = line.endsWith("\\");
-    out.push(...inline(hard ? line.slice(0, -1) : line, `${key}-${i}`));
-    if (i < lines.length - 1) out.push(hard ? <br key={`${key}-br-${i}`} /> : " ");
+    segments[segments.length - 1]!.push(hard ? line.slice(0, -1) : line);
+    if (hard && i < lines.length - 1) segments.push([]);
+  });
+  const out: ReactNode[] = [];
+  segments.forEach((segment, s) => {
+    if (s > 0) out.push(<br key={`${key}-br-${s}`} />);
+    out.push(...inline(segment.join(" "), `${key}-${s}`));
   });
   return out;
 }
@@ -60,9 +71,17 @@ const cells = (row: string) =>
     .split("|")
     .map((c) => c.trim());
 
-export function Markdown({ source }: { source: string }) {
+export function Markdown({
+  source,
+  skipFirstH1 = false,
+}: {
+  source: string;
+  /** Check 7 P8: the page shows its own headline, so the document's "# Title" line isn't repeated. */
+  skipFirstH1?: boolean;
+}) {
   const lines = source.replace(/\r\n/g, "\n").split("\n");
   const blocks: ReactNode[] = [];
+  let skippedH1 = false;
   let i = 0;
   while (i < lines.length) {
     const line = lines[i]!;
@@ -74,6 +93,11 @@ export function Markdown({ source }: { source: string }) {
     const heading = line.match(/^(#{1,3})\s+(.*)$/);
     if (heading) {
       const level = heading[1]!.length;
+      if (level === 1 && skipFirstH1 && !skippedH1) {
+        skippedH1 = true;
+        i++;
+        continue;
+      }
       const text = inline(heading[2]!, key);
       blocks.push(
         level === 1 ? (

@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
-import { activityLog, drafts } from "@/db/schema";
+import { activityLog, businessProfiles, drafts, threads } from "@/db/schema";
 import {
   deliverQueuedSend,
   lateSends,
@@ -74,5 +74,40 @@ describe("Check 9 P10: sentDraftSummary and late sends", () => {
       .where(eq(activityLog.action, "send_undone"));
     expect(logs).toHaveLength(1);
     void NOW;
+  });
+
+  it("never promises a nudge the scan won't write: Not a quote, a bounce, the crew (merge B)", async () => {
+    const sent = async (over: Parameters<typeof w.seed>[0] = {}) => {
+      const { draft, thread } = await w.seed(over);
+      await w.database
+        .update(drafts)
+        .set({ status: "sent", decidedAt: NOW })
+        .where(eq(drafts.id, draft.id));
+      return { draft, thread };
+    };
+    const nudgeOn = async (id: string) =>
+      (await sentDraftSummary(w.workspace.id, id, at(5)))!.nudgeOn;
+
+    const plain = await sent();
+    expect(await nudgeOn(plain.draft.id)).not.toBeNull();
+
+    const bounced = await sent({ extracted: { bounced: true } });
+    expect(await nudgeOn(bounced.draft.id)).toBeNull();
+
+    const crewMark = await sent({ extracted: { crew: true } });
+    expect(await nudgeOn(crewMark.draft.id)).toBeNull();
+
+    const dismissed = await sent();
+    await w.database
+      .update(threads)
+      .set({ quoteDismissedAt: NOW })
+      .where(eq(threads.id, dismissed.thread.id));
+    expect(await nudgeOn(dismissed.draft.id)).toBeNull();
+
+    // A reply that went to someone on the crew list (read live).
+    await w.database
+      .insert(businessProfiles)
+      .values({ workspaceId: w.workspace.id, crewAddresses: ["dana@x.com"] });
+    expect(await nudgeOn(plain.draft.id)).toBeNull();
   });
 });

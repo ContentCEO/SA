@@ -318,7 +318,7 @@ describe("boundary: who may read the e2e switch", () => {
     ]);
   });
 
-  it("only the four seams import @/config/e2e", () => {
+  it("only the five seams import @/config/e2e", () => {
     const importers = files
       .filter((f) => /from\s+["']@\/config\/e2e["']|import\(\s*["']@\/config\/e2e["']/.test(f.text))
       .map((f) => f.path)
@@ -329,6 +329,8 @@ describe("boundary: who may read the e2e switch", () => {
         "src/app/api/test-hooks/run/route.ts",
         "src/mailbox/gmail/api.ts",
         "src/mailbox/gmail/connector.ts",
+        // Check 47 P3 CI fix: no real DNS lookup for the waitlist's mail host in e2e mode.
+        "src/server/mail-host.ts",
       ].sort(),
     );
     // Nothing reaches it by a relative path either.

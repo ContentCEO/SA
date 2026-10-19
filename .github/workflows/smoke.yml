@@ -1,0 +1,60 @@
+name: Smoke
+
+# Check 31 P6: after every successful Production deploy, run the smoke specs
+# (tests/e2e/smoke-specs.ts: no servers, no fakes, no database) against the live site.
+# Previews stay behind Vercel login, so they are skipped.
+on:
+  deployment_status:
+
+concurrency:
+  group: smoke-${{ github.event.deployment.sha }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    if: >-
+      github.event.deployment_status.state == 'success' &&
+      github.event.deployment.environment == 'Production'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # The public production address. A deploy's own URL (environment_url) needs a Vercel
+      # login, so the repository variable PRODUCTION_URL (e.g. https://sa-dac3.vercel.app) is
+      # used when set.
+      SMOKE_URL: ${{ vars.PRODUCTION_URL || github.event.deployment_status.environment_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.deployment.sha }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Production runs this commit
+        env:
+          EXPECTED: ${{ github.event.deployment.sha }}
+        run: |
+          # The alias can take a moment to move: ask for up to two minutes.
+          for i in $(seq 1 12); do
+            commit=$(curl -sf "$SMOKE_URL/api/health" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).commit??"")}catch{console.log("")}})')
+            if [ -n "$commit" ] && [ "${EXPECTED#"$commit"}" != "$EXPECTED" ]; then
+              echo "Production runs $commit."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::Production is running a different commit (${commit:-no answer}, expected ${EXPECTED:0:7})."
+          exit 1
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Smoke specs against production
+        env:
+          PLAYWRIGHT_BASE_URL: ${{ env.SMOKE_URL }}
+        run: pnpm test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: smoke-playwright-report
+          path: playwright-report
+          retention-days: 7

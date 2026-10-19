@@ -1,0 +1,1 @@
+ALTER TABLE "threads" ADD COLUMN "quote_amount_note" text;

@@ -12,7 +12,7 @@ import { createTestDb } from "../support/db";
 // The signed-in owner, without Auth.js: the route only reads `session.user.id`.
 const session = vi.hoisted(() => ({ userId: null as string | null }));
 vi.mock("@/auth", () => ({
-  auth: async () => (session.userId ? { user: { id: session.userId } } : null),
+  auth: async () => (session.userId ? { user: { id: session.userId, sv: 0 } } : null),
 }));
 // GUARDRAIL (plan M8 A1): the summary counts from the content-free membership. listQueue
 // loads names, summaries and draft text, so calling it from here fails the test.
@@ -124,6 +124,24 @@ describe("/api/push/summary counts like the queue (plan #36, M8 A1)", () => {
     // Plan #38: the badge number = replies + needs-you, the same numbers as the body.
     expect(json.count).toBe(2);
     expect(JSON.stringify(json)).not.toMatch(/SECRET|@example\.com/i);
+  });
+
+  it("Check 19 P1: a fresh quote request with no draft yet is named, and the tap opens Quotes", async () => {
+    const t = await thread({
+      category: "quote_request",
+      classifiedAt: at(-1),
+      lastMessageAt: at(-2),
+    });
+    const { json } = await summary();
+    expect(json.body).toBe("1 new quote request");
+    expect(json.body).not.toBe("Your queue is up to date.");
+    expect(json.url).toBe("/quotes");
+    expect(JSON.stringify(json)).not.toMatch(/SECRET|@example\.com/i);
+    // Once its reply is drafted it is a queue card like any other: counted once, as a reply.
+    await draft(t.id);
+    const after = (await summary()).json;
+    expect(after.body).toBe("1 reply ready to send");
+    expect(after.url).toBe("/queue");
   });
 
   it("signed out → 401", async () => {

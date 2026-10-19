@@ -3,6 +3,7 @@ import { and, asc, eq, inArray, isNotNull, isNull, sql, type SQL } from "drizzle
 import { db, type Database } from "@/db";
 import { activityLog, drafts, mailboxes, workspaces } from "@/db/schema";
 import { fitToPlan, mailboxLimitFor } from "./mailbox-plan-rules";
+import { effectivePlan } from "./referral-rules";
 
 /**
  * A lower plan pauses extra Gmail addresses (Davi, 2026-10-16). Rules in
@@ -26,16 +27,25 @@ export function notPlanPaused(): SQL {
   return isNull(mailboxes.planPausedAt);
 }
 
-type Tx = Parameters<Parameters<Database["transaction"]>[0]>[0];
+/** The database's transaction, or any caller's transaction these run inside. */
+type Tx = Pick<Database, "select" | "update" | "insert">;
 
-/** Locks the workspace row so a plan change and a swap can't interleave. Returns its plan. */
-async function lockWorkspace(tx: Tx, workspaceId: string) {
+/**
+ * Locks the workspace row so a plan change and a swap can't interleave. Returns how many
+ * addresses the plan that counts covers: a free referral month's plan while it runs
+ * (`effectivePlan`, plan #47 offer A), else the billed plan.
+ */
+async function lockWorkspace(tx: Tx, workspaceId: string, now: Date) {
   const [row] = await tx
-    .select({ plan: workspaces.plan })
+    .select({
+      plan: workspaces.plan,
+      freePlan: workspaces.freePlan,
+      freePlanUntil: workspaces.freePlanUntil,
+    })
     .from(workspaces)
     .where(eq(workspaces.id, workspaceId))
     .for("update");
-  return row;
+  return row ? { limit: mailboxLimitFor(effectivePlan(row, now)) } : undefined;
 }
 
 /** Paused addresses never count down to an autopilot send: those replies wait for a tap. */
@@ -60,47 +70,54 @@ export type FitResult = { paused: number; resumed: number };
  * more than the plan covers, and turns paused ones back on (oldest first) when there's room.
  * Called after every plan change (admin, Stripe's webhook), a disconnect, and as a backstop
  * from the 15-minute lifecycle job. Safe to call any time; a no-op when it already fits.
+ * The referral engine also calls it when a free month starts or ends, or the owner keeps the
+ * higher plan, passing its own transaction (`tx`) so the plan write and the fit land together.
  */
 export async function fitMailboxesToPlan(
   workspaceId: string,
   now: Date = new Date(),
+  tx?: Tx,
 ): Promise<FitResult> {
-  return db().transaction(async (tx) => {
-    const ws = await lockWorkspace(tx, workspaceId);
-    if (!ws) return { paused: 0, resumed: 0 };
-    const limit = mailboxLimitFor(ws.plan);
-    const boxes = await tx
-      .select({
-        id: mailboxes.id,
-        createdAt: mailboxes.createdAt,
-        planPausedAt: mailboxes.planPausedAt,
-      })
-      .from(mailboxes)
-      .where(eq(mailboxes.workspaceId, workspaceId));
-    const { pause, unpause } = fitToPlan(boxes, limit);
-    if (pause.length) {
-      await tx
-        .update(mailboxes)
-        .set({ planPausedAt: now })
-        .where(and(inArray(mailboxes.id, pause), isNull(mailboxes.planPausedAt)));
-      await stopCountdowns(tx, pause);
-    }
-    if (unpause.length) {
-      await tx
-        .update(mailboxes)
-        .set({ planPausedAt: null })
-        .where(and(inArray(mailboxes.id, unpause), isNotNull(mailboxes.planPausedAt)));
-    }
-    if (pause.length || unpause.length) {
-      await tx.insert(activityLog).values({
-        workspaceId,
-        actor: "squared_away",
-        action: "mailboxes_fit_plan",
-        detail: { paused: pause.length, resumed: unpause.length, limit },
-      });
-    }
-    return { paused: pause.length, resumed: unpause.length };
-  });
+  if (tx) return fitInside(tx, workspaceId, now);
+  return db().transaction((t) => fitInside(t, workspaceId, now));
+}
+
+async function fitInside(tx: Tx, workspaceId: string, now: Date): Promise<FitResult> {
+  const ws = await lockWorkspace(tx, workspaceId, now);
+  if (!ws) return { paused: 0, resumed: 0 };
+  const limit = ws.limit;
+  const boxes = await tx
+    .select({
+      id: mailboxes.id,
+      createdAt: mailboxes.createdAt,
+      planPausedAt: mailboxes.planPausedAt,
+    })
+    .from(mailboxes)
+    .where(eq(mailboxes.workspaceId, workspaceId));
+  const { pause, unpause } = fitToPlan(boxes, limit);
+  if (pause.length) {
+    await tx
+      .update(mailboxes)
+      .set({ planPausedAt: now })
+      .where(and(inArray(mailboxes.id, pause), isNull(mailboxes.planPausedAt)));
+    await stopCountdowns(tx, pause);
+  }
+  if (unpause.length) {
+    await tx
+      .update(mailboxes)
+      .set({ planPausedAt: null })
+      .where(and(inArray(mailboxes.id, unpause), isNotNull(mailboxes.planPausedAt)));
+  }
+  if (pause.length || unpause.length) {
+    await tx.insert(activityLog).values({
+      workspaceId,
+      actor: "squared_away",
+      action: "mailboxes_fit_plan",
+      detail: { paused: pause.length, resumed: unpause.length, limit },
+      createdAt: now,
+    });
+  }
+  return { paused: pause.length, resumed: unpause.length };
 }
 
 export type SwapOutcome = "swapped" | "resumed" | "not_found" | "not_paused" | "choose";
@@ -118,9 +135,9 @@ export async function swapPlanMailbox(
   now: Date = new Date(),
 ): Promise<SwapOutcome> {
   return db().transaction(async (tx) => {
-    const ws = await lockWorkspace(tx, workspaceId);
+    const ws = await lockWorkspace(tx, workspaceId, now);
     if (!ws) return "not_found";
-    const limit = mailboxLimitFor(ws.plan);
+    const limit = ws.limit;
     const boxes = await tx
       .select({ id: mailboxes.id, planPausedAt: mailboxes.planPausedAt })
       .from(mailboxes)
@@ -165,15 +182,17 @@ export async function fitAllMailboxesToPlans(now: Date = new Date()): Promise<nu
     .select({
       workspaceId: mailboxes.workspaceId,
       plan: workspaces.plan,
+      freePlan: workspaces.freePlan,
+      freePlanUntil: workspaces.freePlanUntil,
       on: sql<number>`count(*) filter (where ${mailboxes.planPausedAt} is null)::int`,
       total: sql<number>`count(*)::int`,
     })
     .from(mailboxes)
     .innerJoin(workspaces, eq(workspaces.id, mailboxes.workspaceId))
-    .groupBy(mailboxes.workspaceId, workspaces.plan);
+    .groupBy(mailboxes.workspaceId, workspaces.plan, workspaces.freePlan, workspaces.freePlanUntil);
   let changed = 0;
   for (const r of rows) {
-    const want = Math.min(mailboxLimitFor(r.plan), Number(r.total));
+    const want = Math.min(mailboxLimitFor(effectivePlan(r, now)), Number(r.total));
     if (Number(r.on) === want) continue;
     const res = await fitMailboxesToPlan(r.workspaceId, now);
     if (res.paused || res.resumed) changed++;

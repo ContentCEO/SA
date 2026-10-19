@@ -1,3 +1,5 @@
+import { siteConfig } from "@/config/site";
+
 /**
  * Squared Away Growth: the services we take on, one-on-one. One list: the
  * services section, the call-request form, its validation and the admin
@@ -10,17 +12,20 @@ export const GROWTH_SERVICES = [
     blurb:
       "Ads that can show up when someone nearby searches for the work you do. We set them up, keep an eye on the spend, and tell you in plain words what's happening.",
   },
+  // Check 2 P4 / Check 3 P2: home-repair ads on Meta fall under the Housing special ad category
+  // (at least a 15-mile radius around each place, no ZIP-code targeting). Never promise
+  // town-level targeting for the Facebook or Instagram ads.
   {
     value: "facebook_ads",
     label: "Facebook ads",
     blurb:
-      "Ads shown to people in the towns you actually work in. Your own photos, plain words, and a clear way to reach you.",
+      "Ads shown to people in and around the towns you work in. Your own photos, plain words, and a clear way to reach you.",
   },
   {
     value: "instagram_ads",
     label: "Instagram ads",
     blurb:
-      "Your finished work, shown to people in the towns you work in. Built from your own photos, never stock pictures.",
+      "Your finished work, shown to people in and around the towns you work in. Built from your own photos, never stock pictures.",
   },
   {
     value: "social_posts",
@@ -88,4 +93,52 @@ export function growthServicesFrom(values: readonly unknown[]): GrowthService[] 
 export function growthServicesFromLabels(labels: readonly string[]): GrowthService[] {
   const wanted = new Set(labels.map((l) => l.trim().toLowerCase()));
   return GROWTH_SERVICES.filter((s) => wanted.has(s.label.toLowerCase())).map((s) => s.value);
+}
+
+/**
+ * Check 3 P4: the form's extra choice for someone who just wants more work. Not a service: the
+ * cards never show it. No comma in the label (a stored request's services are comma-separated).
+ */
+export const GROWTH_NOT_SURE = {
+  value: "not_sure",
+  label: "Not sure yet — tell me what to do first",
+} as const;
+
+/** The form's checkboxes: every service, then "Not sure yet" last. */
+export const GROWTH_REQUEST_OPTIONS = [
+  ...GROWTH_SERVICES.map((s) => ({ value: s.value, label: s.label })),
+  GROWTH_NOT_SURE,
+] as const;
+export type GrowthRequestOption = GrowthService | typeof GROWTH_NOT_SURE.value;
+export const GROWTH_REQUEST_VALUES = GROWTH_REQUEST_OPTIONS.map((o) => o.value) as [
+  GrowthRequestOption,
+  ...GrowthRequestOption[],
+];
+
+export function growthRequestLabel(value: GrowthRequestOption): string {
+  return GROWTH_REQUEST_OPTIONS.find((o) => o.value === value)!.label;
+}
+
+/**
+ * Check 5 P2: "How did you hear about …?" on the call form, optional. The value id is stored,
+ * never the label. Values may be added; readers show an unknown stored id as it is.
+ */
+export const GROWTH_HEARD_FROM = [
+  { value: "google", label: "Searched on Google" },
+  { value: "social", label: "Facebook or Instagram" },
+  { value: "supply_house", label: "A supply house or lumber yard" },
+  { value: "group", label: "A trade group, BNI or an event" },
+  { value: "contractor", label: "Another contractor told me" },
+  { value: "app", label: "I use the Squared Away app" },
+  { value: "letter", label: `A letter or card from ${siteConfig.operator.split(" ")[0]}` },
+  { value: "other", label: "Something else" },
+] as const;
+export type GrowthHeardFrom = (typeof GROWTH_HEARD_FROM)[number]["value"];
+export const GROWTH_HEARD_FROM_VALUES = GROWTH_HEARD_FROM.map((h) => h.value) as [
+  GrowthHeardFrom,
+  ...GrowthHeardFrom[],
+];
+/** The label for a stored id; an id this code doesn't know comes back as it is. */
+export function growthHeardFromLabel(value: string): string {
+  return GROWTH_HEARD_FROM.find((h) => h.value === value)?.label ?? value;
 }

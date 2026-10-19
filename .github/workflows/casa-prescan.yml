@@ -1,0 +1,109 @@
+name: CASA pre-scan
+
+# Check 28 P5: a local dress rehearsal for the CASA lab. Run by hand only. It builds the app in
+# CI with the e2e stand-ins (fake Google / Gmail / Anthropic, a throwaway Postgres), never against
+# production or a preview, and needs no production secret. Reports are uploaded as artifacts;
+# findings are cleared or written into docs/casa-prep.md as accepted risks.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prescan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # Throwaway values for CI only (the same shape as .github/workflows/ci.yml).
+    env:
+      APP_URL: http://localhost:3000
+      PORT: "3000"
+      E2E_FAKES_PORT: "3001"
+      DATABASE_URL: postgres://sa:sa@localhost:5432/squared_away
+      AUTH_SECRET: ci-only-secret-0000000000000000000000000
+      AUTH_TRUST_HOST: "true"
+      AUTH_GOOGLE_ID: e2e-client-id
+      AUTH_GOOGLE_SECRET: e2e-client-secret
+      TOKEN_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      ADMIN_EMAIL: admin@example.com
+      ANTHROPIC_API_KEY: e2e-fake-key
+      SA_E2E: "1"
+      SA_E2E_GOOGLE_BASE_URL: http://127.0.0.1:3001/google
+      SA_E2E_ANTHROPIC_BASE_URL: http://127.0.0.1:3001/anthropic
+      SA_E2E_HOOK_SECRET: casa-prescan-only-hook-secret-0000000000
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start Postgres
+        run: |
+          sudo systemctl start postgresql.service
+          pg_isready -h localhost -p 5432 -t 30
+          sudo -u postgres psql -v ON_ERROR_STOP=1 -c "CREATE ROLE sa LOGIN SUPERUSER PASSWORD 'sa';"
+          sudo -u postgres createdb -O sa squared_away
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Migrate the throwaway database and build
+        run: |
+          pnpm exec tsx scripts/migrate.ts
+          pnpm build
+      - name: Start the e2e stand-ins and the app
+        run: |
+          nohup pnpm exec tsx tests/e2e/fakes/main.ts > fakes.log 2>&1 &
+          nohup pnpm start --port 3000 --hostname localhost > app.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:3000/api/health > /dev/null; then break; fi
+            sleep 1
+          done
+          curl -sf http://localhost:3000/api/health
+      # OWASP ZAP baseline: passive checks on the public pages (no attacks, no sign-in). The
+      # container shares the runner's network so localhost is the app. -I: warnings don't fail
+      # the job; the report is what we read.
+      - name: OWASP ZAP baseline scan
+        run: |
+          mkdir -p zap && chmod 777 zap
+          docker run --rm --network host -v "$PWD/zap:/zap/wrk:rw" -t ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py -t http://localhost:3000 -I \
+            -r zap-report.html -J zap-report.json -w zap-report.md || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zap-report
+          path: zap
+          retention-days: 30
+      # Fluid Attacks `skims`: the free static scan the App Defense Alliance documents for CASA
+      # self-assessment. Static analysis of this repository only; it sends nothing anywhere.
+      - name: Fluid Attacks static scan (skims)
+        run: |
+          mkdir -p skims
+          cat > skims/config.yaml <<'CFG'
+          namespace: squared-away
+          output:
+            file_path: /skims/results.csv
+            format: CSV
+          working_dir: /repo
+          path:
+            include:
+              - src
+              - scripts
+              - next.config.ts
+              - package.json
+            exclude:
+              - glob(**/node_modules/**)
+              - glob(**/.next/**)
+          sast:
+            include:
+              - .
+          language: EN
+          CFG
+          docker run --rm -v "$PWD:/repo" -v "$PWD/skims:/skims" fluidattacks/makes:latest \
+            m gitlab:fluidattacks/universe@trunk /skims scan /skims/config.yaml || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: skims-report
+          path: skims
+          retention-days: 30
+      - name: Stop the app
+        if: always()
+        run: pkill -f "next start" || true; pkill -f "tests/e2e/fakes/main.ts" || true

@@ -1,10 +1,10 @@
 import "server-only";
 import { eq, like, or, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { appSettings, invites, mailboxes, users, workspaces } from "@/db/schema";
+import { appSettings, invites, mailboxes, referralCredits, users, workspaces } from "@/db/schema";
 import { decryptSecret } from "@/lib/crypto";
 import type { MailboxConnector } from "@/mailbox/connector";
-import { cancelSubscriptionNow } from "./billing";
+import { cancelSubscriptionNow, liveSubscriptionIds, workspaceBillingKeyPattern } from "./billing";
 
 export class SubscriptionCancelError extends Error {
   constructor() {
@@ -27,8 +27,8 @@ export class SubscriptionCancelError extends Error {
  *      monthly cost alert, sent-email records).
  * Stripe keeps its own payment records (invoices), as the law requires. Left on purpose: a
  * waitlist entry or Growth call request (a separate service; the owner can ask us), referral
- * credits (a salted email fingerprint with the workspace ids cleared, so a referral is paid
- * once), Stripe event ids, rate-limit counters (purged within two days), and the draft
+ * credits (a salted email fingerprint with the workspace ids and Stripe ids cleared, so a
+ * referral is paid once), Stripe event ids, rate-limit counters (purged within two days), and the draft
  * cleanup's per-mailbox done marker (a bare uuid, never read once the mailbox is gone).
  * tests/unit/data-lifecycle.test.ts holds every table to this.
  */
@@ -38,11 +38,17 @@ export async function deleteAccount(userId: string, connector: MailboxConnector)
     .from(workspaces)
     .where(eq(workspaces.ownerUserId, userId));
 
+  // Check 17 P4: every live subscription of the customer, not just the stored one (a second
+  // paid checkout would keep charging). If any cancel fails, nothing is deleted.
   let subscriptionCanceled = false;
-  if (workspace?.stripeSubscriptionId) {
+  if (workspace?.stripeSubscriptionId || workspace?.stripeCustomerId) {
     try {
-      await cancelSubscriptionNow(workspace.stripeSubscriptionId);
-      subscriptionCanceled = true;
+      const ids = await liveSubscriptionIds(
+        workspace.stripeCustomerId,
+        workspace.stripeSubscriptionId,
+      );
+      for (const id of ids) await cancelSubscriptionNow(id);
+      subscriptionCanceled = ids.length > 0;
     } catch {
       throw new SubscriptionCancelError();
     }
@@ -62,6 +68,20 @@ export async function deleteAccount(userId: string, connector: MailboxConnector)
   }
 
   await db().transaction(async (tx) => {
+    // Plan #47: this account's free months keep only the fingerprint row (paid once, ever).
+    // Their Stripe ids go (the subscription is canceled above); the FK clears the workspace.
+    if (workspace)
+      await tx
+        .update(referralCredits)
+        .set({
+          stripeSubscriptionId: null,
+          stripeCouponId: null,
+          stripeDiscountId: null,
+          stripeInvoiceId: null,
+          paidPriceId: null,
+          claimedAt: null,
+        })
+        .where(eq(referralCredits.beneficiaryWorkspaceId, workspace.id));
     const [user] = await tx
       .delete(users)
       .where(eq(users.id, userId))
@@ -72,6 +92,8 @@ export async function deleteAccount(userId: string, connector: MailboxConnector)
       await tx.delete(appSettings).where(
         or(
           like(appSettings.key, `cost_alert:${workspace.id}:%`),
+          // Billing markers (open checkout, second plan, waiting on Stripe).
+          like(appSettings.key, workspaceBillingKeyPattern(workspace.id)),
           // Resend sent-records ("email-sent:digest-<workspace>-<date>",
           // "email-sent:access-lost-<mailbox>-…"); uuids hold no LIKE wildcards.
           ...ids.map((id) => like(appSettings.key, `email-sent:%-${id}-%`)),

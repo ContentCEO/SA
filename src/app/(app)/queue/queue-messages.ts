@@ -5,6 +5,9 @@ export const QUEUE_DONE: Record<string, string> = {
   ...CONTROL_DONE,
   away_off: "Welcome back. Away mode is off.",
   discarded: "Draft discarded.",
+  // Check 21 P8: from a nudge card.
+  marked_lost: "Marked lost.",
+  marked_paid: "Marked paid.",
   saved: "Changes saved. It's updated in Gmail too.",
   drafted: "Reply drafted. It's below, and in your Gmail drafts.",
   revised: "Draft changed. Read it below — it's updated in Gmail too.",
@@ -35,7 +38,8 @@ export const QUEUE_ERRORS: Record<string, string> = {
     "That one has hidden or coded text in it, so it stays marked. Read it in Gmail before you answer.",
   // Check 23 P7: plain words, no braces.
   gaps: "Fill in every blank before sending. Nothing was sent.",
-  busy: "That's a lot in a short time, so we've paused it for a bit. Nothing was sent. Try again in a few minutes.",
+  // Check 9 P15: says plainly that nothing went.
+  busy: "That's a lot in a short time, so nothing was sent. Try again in a few minutes.",
   blocked: "Sending isn't switched on for your account, so nothing was sent.",
   changed:
     "That draft changed since you opened it, so nothing was sent. Here's the latest version. Read it, then tap Send reply again.",

@@ -43,3 +43,39 @@ export function inBusinessHours(
     hours.days.includes(localWeekday(now, tz)) && hour >= hours.startHour && hour < hours.endHour
   );
 }
+
+/**
+ * Check 15 P8: the owner's own working days and hours (Settings → Your business), or the
+ * default schedule when a value is missing or doesn't make sense (no day, start ≥ end).
+ */
+export function workHoursOf(
+  p:
+    | {
+        workDays?: readonly number[] | null;
+        workStartHour?: number | null;
+        workEndHour?: number | null;
+      }
+    | null
+    | undefined,
+): BusinessHours {
+  const days = (p?.workDays ?? []).filter((d) => Number.isInteger(d) && d >= 1 && d <= 7);
+  const start = p?.workStartHour;
+  const end = p?.workEndHour;
+  if (
+    !days.length ||
+    typeof start !== "number" ||
+    typeof end !== "number" ||
+    start < 0 ||
+    end > 24 ||
+    start >= end
+  )
+    return BUSINESS_HOURS;
+  return { days: [...new Set(days)].sort((a, b) => a - b), startHour: start, endHour: end };
+}
+
+/** "7am", "noon", "midnight" for the hour selects. */
+export function hourLabel(h: number): string {
+  if (h === 0 || h === 24) return "midnight";
+  if (h === 12) return "noon";
+  return h < 12 ? `${h}am` : `${h - 12}pm`;
+}

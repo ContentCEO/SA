@@ -1,8 +1,6 @@
 import type { Metadata } from "next";
 import { ForgetOffline } from "@/components/app/forget-offline";
 import Link from "next/link";
-import { redirect } from "next/navigation";
-import { auth } from "@/auth";
 import { SiteFooter } from "@/components/app/site-footer";
 import { Headline } from "@/components/brand/headline";
 import { Wordmark } from "@/components/brand/wordmark";
@@ -17,7 +15,7 @@ import {
   promiseBand,
   steps,
 } from "@/components/marketing/home-copy";
-import { isReferralCode, referralsVisible } from "@/server/referral-rules";
+import { referralsVisible } from "@/server/referral-rules";
 import { formatDollars, pricing } from "@/config/pricing";
 import { siteConfig } from "@/config/site";
 import { capitalized, dayAdjective } from "@/lib/trial-words";
@@ -32,15 +30,18 @@ import { GrowthSwitch } from "@/components/marketing/growth/growth-switch";
 import { SiteAnalytics } from "@/components/marketing/site-analytics";
 import { StructuredData } from "@/components/marketing/structured-data";
 import { phoneHref } from "@/lib/phone-href";
+import { SkipLink } from "@/components/app/skip-link";
+import { deferred } from "@/lib/deferred-section";
 
 const telHref = phoneHref("tel", siteConfig.phone);
 
+// Check 33 P3: search results show about the first 155 characters, so the promise comes first.
 const description =
-  "AI email help for contractors, built for carpenters, plumbers, and electricians: Squared Away sorts your business email, drafts replies in your voice, and drafts quote follow-ups — and nothing goes out without your okay.";
+  "AI email help for contractors: Squared Away sorts your business email and drafts replies in your own voice. Nothing goes out without your okay.";
 
 export const metadata: Metadata = {
   // The words people search for; the share card keeps the brand line.
-  title: "Squared Away — AI email help for contractors",
+  title: { absolute: "Squared Away — AI email help for contractors" },
   description,
   alternates: { canonical: "/" },
   openGraph: {
@@ -63,31 +64,43 @@ function Section({
   className,
   children,
   label,
+  defer,
 }: {
   id?: string;
   className?: string;
   children: React.ReactNode;
   label: string;
+  /** Check 29 P9: [phone px, wide px] for an off-screen section (src/lib/deferred-section.ts). */
+  defer?: [number, number];
 }) {
+  const d = defer ? deferred(...defer) : null;
   return (
-    <section id={id} aria-label={label} className={cn("px-4 py-16 sm:py-24", className)}>
+    <section
+      id={id}
+      aria-label={label}
+      className={cn("px-4 py-16 sm:py-24", d?.className, className)}
+      style={d?.style}
+    >
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-10">{children}</div>
     </section>
   );
 }
 
-export default async function HomePage(props: PageProps<"/">) {
-  const session = await auth();
-  // Signed in: /start (the inbox, or for a Growth client the choice of inbox or Growth).
-  if (session?.user?.id) redirect("/start");
-  // Plan #47: a referral link's code rides along on the waitlist form — only while it's switched on.
-  const { ref } = await props.searchParams;
-  const referralCode = referralsVisible() && isReferralCode(ref) ? ref : undefined;
+/**
+ * Check 29 P3: prerendered (no session, no search params read here), so the CDN serves it.
+ * Signed in → /start happens in the proxy (src/proxy.ts, a session cookie on "/"); a referral
+ * link's ?ref= is read in the browser by the waitlist form, only while referrals are switched on
+ * (decided at build time: switching them on needs a redeploy anyway).
+ */
+export default function HomePage() {
+  const referrals = referralsVisible();
 
   return (
     <div className="flex flex-1 flex-col">
       <ForgetOffline />
-      <header className="sticky top-0 z-10 border-b border-stone/60 bg-paper px-4">
+      <SkipLink />
+      {/* data-site-header: GrowthSwitch makes it inert while the Growth bar covers it. */}
+      <header data-site-header className="sticky top-0 z-10 border-b border-stone/60 bg-paper px-4">
         <div className="mx-auto flex w-full max-w-5xl items-center justify-between py-2">
           <Link
             href="/"
@@ -122,7 +135,7 @@ export default async function HomePage(props: PageProps<"/">) {
         </div>
       </header>
 
-      <main className="flex flex-col">
+      <main id="main" tabIndex={-1} className="flex flex-col outline-none">
         {/* Part 1, the app (paper). Scrolling past the bridge switches the whole site to Growth. */}
         <div data-sa-half="app">
           <Section label="Introduction" className="pt-10 sm:pt-16">
@@ -168,7 +181,12 @@ export default async function HomePage(props: PageProps<"/">) {
             </div>
           </Section>
 
-          <Section id="how" label="How it works" className="border-t border-stone">
+          <Section
+            id="how"
+            label="How it works"
+            className="border-t border-stone"
+            defer={[936, 412]}
+          >
             <Headline as="h2" serif="three steps," heavy="then back to work." />
             <ol className="grid gap-6 md:grid-cols-3">
               {steps.map((s) => (
@@ -181,7 +199,11 @@ export default async function HomePage(props: PageProps<"/">) {
             </ol>
           </Section>
 
-          <section aria-label="Our promise" className="sa-inverted px-4 py-16 sm:py-24">
+          <section
+            aria-label="Our promise"
+            className="sa-inverted sa-cv px-4 py-16 sm:py-24"
+            style={deferred(535, 339).style}
+          >
             <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
               <p className="flex flex-col">
                 <span className="sa-headline-serif text-4xl sm:text-5xl">the one rule,</span>{" "}
@@ -191,7 +213,7 @@ export default async function HomePage(props: PageProps<"/">) {
             </div>
           </section>
 
-          <Section label="What it does">
+          <Section label="What it does" defer={[2116, 927]}>
             <Headline as="h2" serif="what it does," heavy="all day." />
             <ul className="grid gap-x-10 gap-y-8 sm:grid-cols-2 lg:grid-cols-3">
               {features.map((f) => (
@@ -205,7 +227,12 @@ export default async function HomePage(props: PageProps<"/">) {
 
           <AboutDavi />
 
-          <Section id="pricing" label="Pricing" className="border-t border-stone">
+          <Section
+            id="pricing"
+            label="Pricing"
+            className="border-t border-stone"
+            defer={[1920, 984]}
+          >
             <Headline as="h2" serif="simple pricing," heavy="no contract." />
             <div className="flex flex-col gap-2 rounded-2xl border-2 border-charcoal p-6 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex flex-col gap-1">
@@ -234,7 +261,7 @@ export default async function HomePage(props: PageProps<"/">) {
             </p>
           </Section>
 
-          <Section label="Questions" className="border-t border-stone">
+          <Section label="Questions" className="border-t border-stone" defer={[641, 605]}>
             <Headline as="h2" serif="good questions," heavy="straight answers." />
             <div className="flex flex-col divide-y divide-stone border-y border-stone">
               {faqs.map((f) => (
@@ -274,7 +301,7 @@ export default async function HomePage(props: PageProps<"/">) {
                 </div>
               </div>
               <div className="rounded-2xl border bg-card p-6">
-                <WaitlistForm referralCode={referralCode} />
+                <WaitlistForm referrals={referrals} />
               </div>
             </div>
           </Section>
@@ -285,7 +312,12 @@ export default async function HomePage(props: PageProps<"/">) {
         {/* Part 2, one-on-one Growth (charcoal). Its top edge is the switch boundary. */}
         <div className="sa-inverted" data-growth-chapter data-sa-half="growth">
           <GrowthChapterBar />
-          <GrowthChapter headingLevel="h2" standalone={false} openerId="growth" />
+          <GrowthChapter
+            headingLevel="h2"
+            standalone={false}
+            openerId="growth"
+            referrals={referrals}
+          />
         </div>
       </main>
 

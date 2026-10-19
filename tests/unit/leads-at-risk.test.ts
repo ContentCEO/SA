@@ -28,6 +28,7 @@ import {
   queueDeepLink,
 } from "@/server/leads-at-risk-rules";
 import { saveConnectedMailbox } from "@/server/mailboxes";
+import { saveWorkHours, workHoursInput } from "@/server/profile";
 import { listQuotes } from "@/server/quotes";
 import { savePushSubscription } from "@/server/push-alerts";
 import { createTestDb } from "../support/db";
@@ -220,6 +221,31 @@ describe("#34 which leads are at risk", () => {
     // Fri 5pm → Mon 9am = 60 + 660 + 120 = 840 business minutes: at risk.
     await synced(MON_9_NY);
     expect(await ids(MON_9_NY)).toEqual([fri]);
+  });
+
+  it("a Mon–Fri shop: a Saturday request isn't at risk until Monday (Check 15 P8)", async () => {
+    await saveWorkHours(
+      workspaceId,
+      workHoursInput.parse({ days: ["1", "2", "3", "4", "5"], startHour: "7", endHour: "18" }),
+    );
+    const SAT_10_NY = new Date("2026-10-17T14:00:00Z");
+    const id = await lead(SAT_10_NY);
+    const MON_10_59_NY = new Date("2026-10-19T14:59:00Z");
+    const MON_11_01_NY = new Date("2026-10-19T15:01:00Z");
+    for (const now of [new Date("2026-10-17T21:00:00Z"), MON_9_NY, MON_10_59_NY]) {
+      await synced(now);
+      expect(await ids(now)).toEqual([]);
+    }
+    await synced(MON_11_01_NY);
+    expect(await ids(MON_11_01_NY)).toEqual([id]);
+    // The default schedule (before the owner edits) counts Saturday: at risk by 2pm Saturday.
+    await saveWorkHours(
+      workspaceId,
+      workHoursInput.parse({ days: ["1", "2", "3", "4", "5", "6"], startHour: "7", endHour: "18" }),
+    );
+    const SAT_14_01_NY = new Date("2026-10-17T18:01:00Z");
+    await synced(SAT_14_01_NY);
+    expect(await ids(SAT_14_01_NY)).toEqual([id]);
   });
 
   it("Sat 5pm → Mon 9am is 60 + 0 (Sunday) + 120 = 180 minutes: not yet", async () => {
@@ -472,7 +498,8 @@ describe("#34 which leads are at risk", () => {
       `Re: ${FWD}`,
     );
     const { quotes } = await listQuotes(workspaceId, TUE_13_01_NY);
-    expect(quotes.find((q) => q.threadId === t)?.stage).toBe("talking");
+    // Check 11 P6: the owner answered (with no price in this test's text), not the customer.
+    expect(quotes.find((q) => q.threadId === t)?.stage).toBe("replied");
   });
 
   /** Any email on the thread, with explicit To / Cc and subject (addresses as sync stores them). */
@@ -1056,8 +1083,10 @@ describe("#34 the push", () => {
     const c = await digestCounts(workspaceId, TUE_13_01_NY, NY);
     expect(c.leadsAtRisk).toBe(2);
     const d = buildDigest(c, links, { now: TUE_13_01_NY, timeZone: NY });
-    expect(d.text).toContain("2 quote requests have waited more than 4 hours.");
-    expect(d.html).toContain("2 quote requests have waited more than 4 hours.");
+    // Check 18 P8: these leads have no queue card, so they are said once, under Needs you.
+    expect(d.text).toContain("2 quote requests waiting with no reply drafted");
+    expect(d.html).toContain("2 quote requests waiting with no reply drafted");
+    expect(d.text).not.toContain("have waited more than 4 hours.");
   });
 
   it("one owner's failure doesn't stop the others, and the error log names no content (A3, A29)", async () => {
@@ -1209,7 +1238,8 @@ describe("#34 in the morning summary and on the phone (counts only)", () => {
     await synced(TUE_13_01_NY);
     const c = await digestCounts(workspaceId, TUE_13_01_NY, NY);
     const d = buildDigest(c, links, { now: TUE_13_01_NY, timeZone: NY });
-    expect(d.text).toContain("1 quote request has waited more than 4 hours.");
+    // Check 18 P8: no queue card, so it is said once, under Needs you.
+    expect(d.text).toContain("1 quote request waiting with no reply drafted");
     expect(`${d.text}${d.html}`).not.toMatch(/SECRET/);
   });
 
@@ -1228,7 +1258,8 @@ describe("#34 in the morning summary and on the phone (counts only)", () => {
     expect(d.html).toContain("1 thing waiting.");
     expect(d.html).not.toContain("all clear.");
     expect(`${d.text}${d.html}`).not.toContain("No emails need a decision from you today.");
-    expect(d.text).toContain("1 quote request has waited more than 4 hours.");
+    // Check 18 P8: said once, under Needs you (not again as "has waited more than 4 hours").
+    expect(d.text).not.toContain("has waited more than 4 hours.");
     expect(d.text).toContain(
       "• 1 quote request waiting with no reply drafted — see your quotes: https://app/quotes",
     );

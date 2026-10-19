@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { getWorkspaceForUser } from "@/server/accounts";
+import { getWorkspaceForSession } from "@/server/accounts";
 import { badgeCountOf } from "@/server/badge";
 import { headerPicks, toNeedsYouItem } from "@/server/digest-rules";
 import { countQueue, queueCardIds, queueMembership } from "@/server/drafts";
@@ -8,7 +8,7 @@ import { emergencyAlertText } from "@/server/emergency-alert-rules";
 import { emergencySummary } from "@/server/emergency-alerts";
 import { leadsAtRisk } from "@/server/leads-at-risk";
 import { notificationUrl, queueDeepLink } from "@/server/leads-at-risk-rules";
-import { pushSummaryText } from "@/server/push-alerts";
+import { newQuotesWithoutCard, pushSummaryText } from "@/server/push-alerts";
 import { canSend } from "@/server/lifecycle";
 import { hitLimit } from "@/server/rate-limit";
 import { termsRequiredResponse } from "@/server/session";
@@ -28,7 +28,7 @@ export const dynamic = "force-dynamic";
  */
 export async function GET() {
   const session = await auth();
-  const workspace = session?.user?.id ? await getWorkspaceForUser(session.user.id) : null;
+  const workspace = await getWorkspaceForSession(session?.user);
   if (!workspace) return NextResponse.json({ error: "Sign in first." }, { status: 401 });
   // Not agreed to the current terms (Davi, 2026-10-15): 403, never a redirect.
   if (!(await termsAccepted(session!.user.id))) return termsRequiredResponse();
@@ -58,15 +58,28 @@ export async function GET() {
   // Replies package (B5 part 2): right after an emergency push, the phone says so and the tap
   // opens that card (`/queue?t=<uuid>#t-<uuid>`, which sw.js allows) — still no name or words.
   const emergencyCard = emergency?.threadIds.find((id) => onQueue.has(id));
+  // Check 19 P1: a fresh quote request with no reply drafted yet isn't on the queue: name it
+  // (as a count) and, when nothing else has a card to open, send the tap to Quotes. A lead
+  // already counted as at risk isn't counted twice.
+  const quotes = await newQuotesWithoutCard(
+    workspace.id,
+    onQueue,
+    now,
+    new Set(atRisk.map((l) => l.threadId)),
+  );
+  const newQuotes = quotes.count;
+  const leadUrl = notificationUrl({
+    atRisk: atRisk.map((l) => l.threadId),
+    needsYou: headerPicks(q.needsYou.map(toNeedsYouItem)).map((i) => i.threadId),
+    onQueue,
+  });
   const url = emergency
     ? emergencyCard
       ? queueDeepLink(emergencyCard)
       : "/queue"
-    : notificationUrl({
-        atRisk: atRisk.map((l) => l.threadId),
-        needsYou: headerPicks(q.needsYou.map(toNeedsYouItem)).map((i) => i.threadId),
-        onQueue,
-      });
+    : leadUrl === "/queue" && newQuotes > 0
+      ? "/quotes"
+      : leadUrl;
   return NextResponse.json(
     {
       title: "Squared Away",
@@ -76,6 +89,8 @@ export async function GET() {
             replies: counts.drafts,
             needsYou: counts.needsYou,
             atRisk: atRisk.length,
+            newQuotes,
+            waiting: quotes.waiting,
             canSend: canSend(workspace, now),
           }),
       url,

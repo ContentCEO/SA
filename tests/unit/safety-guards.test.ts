@@ -277,6 +277,8 @@ export const ELECTRICAL_HAZARDS = [
 
 describe("electrical fire signs (Check 37 P1)", () => {
   it.each([
+    // Check 37 P8 (wave 2): a lost neutral.
+    "Half the lights in the house go really bright and the other half go dim when the fridge starts.",
     ...ELECTRICAL_HAZARDS,
     "burning plastic smell from the outlet by the toaster, cover plate brown and warm",
     "lights keep going bright and dim",
@@ -423,6 +425,16 @@ describe("'is this a bot?' (Check 48 P1 + Check 43 P2)", () => {
     "Nobody else writes these.",
     "These replies are not automated.",
     "Hi Dana, this is Sarah herself.",
+    // Check 43 P1 (wave 2): the three untrue sentences, and Spanish / Portuguese.
+    "No, it's really me, not a bot!",
+    "Ha, no robots here, just me typing between jobs.",
+    "I write every one of these myself.",
+    "No AI here, just me.",
+    "No soy un robot, soy Mike.",
+    "No es un robot, es una persona real.",
+    "Não sou um robô.",
+    "Sou uma pessoa real.",
+    "You're talking to a real person, not a bot.",
   ])("a draft that claims a person wrote it alone is flagged: %s", (body) => {
     const r = checkDraft(body, ctx);
     expect(r.hits).toContain("human_claim");
@@ -431,6 +443,16 @@ describe("'is this a bot?' (Check 48 P1 + Check 43 P2)", () => {
   });
   it("an ordinary sign-off isn't", () => {
     expect(checkDraft("Mike here, I'll stop by Thursday.", ctx).hits).not.toContain("human_claim");
+  });
+  it.each([
+    // Check 43 P1: true sentences pass — the honest line, and a real person who really will call.
+    "I use an assistant to help draft my emails, and I read and send every reply myself.",
+    "A real person will call you back within the hour.",
+    "A real person from our office will meet you there.",
+    "I'll call you myself tomorrow.",
+    "The real problem is the drain.",
+  ])("true sentences pass: %s", (body) => {
+    expect(checkDraft(body, ctx).hits).not.toContain("human_claim");
   });
 
   it("autopilot refuses the question and a human-claim draft", () => {
@@ -543,8 +565,28 @@ describe("the money limit (Check 38 P3 + Check 22 P6 + Check 39 P2)", () => {
       signals: { ...classification().signals, large_request: true },
     });
     const r = rules({ firstTimeSender: true }, m);
-    expect(r.needsOwnerReason).toBe("New customer asking about a big job.");
+    expect(r.needsOwnerReason).toBe(
+      "Big job from someone who hasn't written in the mail we've read so far.",
+    );
     expect(r.hits.slice(0, 2)).toEqual(["big_new_job", "amount"]);
+  });
+
+  it("a big job's reason says how much mail we've read (Check 41 P5)", () => {
+    const m = withAmounts([48000], {
+      signals: { ...classification().signals, large_request: true },
+    });
+    expect(rules({ firstTimeSender: true, historyDays: 10 }, m).needsOwnerReason).toBe(
+      "Big job from someone who hasn't written in the mail we've read so far.",
+    );
+    expect(rules({ firstTimeSender: true, historyDays: 364 }, m).needsOwnerReason).toBe(
+      "Big job from someone who hasn't written in the mail we've read so far.",
+    );
+    expect(rules({ firstTimeSender: true, historyDays: 400 }, m).needsOwnerReason).toBe(
+      "Big job from someone new.",
+    );
+    expect(rules({ firstTimeSender: "unknown", historyDays: 400 }, m).hits).toContain(
+      "big_new_job",
+    );
   });
 
   it("remodeling asks the amount up front with suggestions; other trades don't", () => {

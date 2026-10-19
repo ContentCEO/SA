@@ -1,39 +1,52 @@
-import { ChevronLeft } from "lucide-react";
-import Link from "next/link";
+import { BackLink } from "@/components/app/back-link";
+import { noticeText } from "@/lib/notice-text";
 import { Notice } from "@/components/app/notice";
 import { Headline } from "@/components/brand/headline";
 import { SCREEN_MESSAGES, type SettingsScreenPath } from "./messages";
 
 type Params = Record<string, string | string[] | undefined>;
 
+/**
+ * A notice's {name} counts, from the address (Check 15 P5). Only small whole numbers are used;
+ * anything else reads as a plain "Saved." so typed text can never show up here.
+ */
+export function fillCounts(message: string | undefined, params: Params): string | undefined {
+  if (!message || !message.includes("{")) return message;
+  let ok = true;
+  const filled = message.replace(/\{(\w+)\}/g, (_, k: string) => {
+    const v = params[k];
+    if (typeof v === "string" && /^\d{1,4}$/.test(v)) return v;
+    ok = false;
+    return "";
+  });
+  return ok ? filled : "Saved.";
+}
+
 /** One Settings screen: a way back to the list, its heading, and its own notices. */
 export function SettingsScreen({
   path,
   heavy,
   params,
+  errorText,
   children,
 }: {
   path: SettingsScreenPath;
   heavy: string;
   params: Params;
+  /** Words for this visit's `?error=` when they depend on the account (else the map's). */
+  errorText?: string;
   children: React.ReactNode;
 }) {
   const messages = SCREEN_MESSAGES[path] as {
     done: Record<string, string>;
     error: Record<string, string>;
   };
-  const done = typeof params.done === "string" ? messages.done[params.done] : undefined;
-  const error = typeof params.error === "string" ? messages.error[params.error] : undefined;
+  const done = fillCounts(noticeText(messages.done, params.done), params);
+  const error = errorText ?? noticeText(messages.error, params.error);
   return (
     <>
       <div className="flex flex-col gap-2">
-        <Link
-          href="/settings"
-          className="-ml-1 inline-flex min-h-tap items-center gap-1 self-start font-semibold underline-offset-4 hover:underline"
-        >
-          <ChevronLeft aria-hidden className="size-5" />
-          Settings
-        </Link>
+        <BackLink href="/settings">Settings</BackLink>
         <Headline serif="settings," heavy={heavy} />
       </div>
       {done ? <Notice>{done}</Notice> : null}

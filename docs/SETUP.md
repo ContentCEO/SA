@@ -158,38 +158,42 @@ each have a separate Preview-only entry. `tests/unit/env-docs.test.ts`
 fails if the code reads a variable that isn't in this table (and, unless Vercel or Playwright
 sets it, in `.env.example`).
 
-| Variable                                                                              | Required?                | What it turns on                                                                                                                                                                                            | Where to get it                                                                        | Environments                      |
-| ------------------------------------------------------------------------------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | --------------------------------- |
-| `APP_URL`                                                                             | Production: yes          | Absolute links, OAuth redirect URIs, cookies, emails. Previews fall back to `VERCEL_BRANCH_URL`, local to `http://localhost:3000`.                                                                          | The production domain, no trailing slash.                                              | Prod only; local                  |
-| `DATABASE_URL`                                                                        | Yes                      | The database (postgres.js).                                                                                                                                                                                 | Neon → Connect → pooled string. Local: `postgres://sa:sa@localhost:5432/squared_away`. | Prod + Preview (sensitive); local |
-| `AUTH_SECRET`                                                                         | Yes                      | Signs sessions; salts hashed IPs and referral fingerprints. Rotating it signs everyone out.                                                                                                                 | `openssl rand -base64 32`                                                              | Prod + Preview (sensitive); local |
-| `AUTH_TRUST_HOST`                                                                     | Outside Vercel           | Lets Auth.js trust the host header (`pnpm start`, CI). Vercel handles it itself.                                                                                                                            | `true`                                                                                 | Local, CI                         |
-| `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET`                                                | Yes                      | Google sign-in and Connect Gmail (one OAuth client).                                                                                                                                                        | Google Cloud → APIs & Services → Credentials (§8).                                     | Prod + Preview (secret sensitive) |
-| `TOKEN_ENCRYPTION_KEY`                                                                | Yes                      | Encrypts Gmail refresh tokens (AES-256-GCM). Losing it means every mailbox reconnects.                                                                                                                      | `openssl rand -base64 32`                                                              | Prod + Preview (sensitive); local |
-| `ADMIN_EMAIL`                                                                         | Yes                      | The only address allowed into `/admin`; always allowed to sign in; gets cost alerts.                                                                                                                        | Davi's address.                                                                        | Prod + Preview                    |
-| `SUPPORT_EMAIL`                                                                       | Before launch            | Support address in the footer, status banner, not-invited page and legal pages (§6f).                                                                                                                       | Davi provides it.                                                                      | Prod + Preview                    |
-| `ANTHROPIC_API_KEY`                                                                   | For sorting and drafting | Every AI call (sorting, drafts, voice, rewording) and `pnpm eval`.                                                                                                                                          | console.anthropic.com → API Keys.                                                      | Prod + Preview (sensitive); local |
-| `AI_DAILY_CALL_CAP`                                                                   | No (default 500)         | Per-account daily ceiling on AI calls; warning at 80%.                                                                                                                                                      | A number.                                                                              | Prod                              |
-| `INNGEST_EVENT_KEY`, `INNGEST_SIGNING_KEY`                                            | Production: yes          | Background jobs (sync, sorting, drafting, sends after undo, crons).                                                                                                                                         | Set by the Inngest Vercel integration (§6).                                            | Prod + Preview                    |
-| `INNGEST_DEV`                                                                         | Local only               | `1` = use the local Inngest dev server.                                                                                                                                                                     | —                                                                                      | Local                             |
-| `GMAIL_PUBSUB_TOPIC`, `GMAIL_PUSH_VERIFICATION_TOKEN`                                 | No                       | Gmail instant notifications; without them the 5-minute poll picks up mail.                                                                                                                                  | §6a.                                                                                   | Prod (token sensitive)            |
-| `RESEND_API_KEY`, `EMAIL_FROM`                                                        | No                       | Morning and monthly summaries, Gmail-access-lost emails, cost and Growth notices. Without both, nothing is emailed.                                                                                         | §7b.                                                                                   | Prod (key sensitive)              |
-| `STRIPE_SECRET_KEY`                                                                   | For payments             | Checkout, billing portal, webhook, Connect Stripe in `/admin`.                                                                                                                                              | §7c.                                                                                   | Prod (sensitive)                  |
-| `STRIPE_WEBHOOK_SECRET`                                                               | No                       | Overrides the signing secret Connect Stripe stores. Leave unset in Vercel (a stale test value breaks every live webhook).                                                                                   | `stripe listen` locally.                                                               | Local only                        |
-| `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`                                             | No                       | Text alerts to the owner's own phone (both plus one sender below).                                                                                                                                          | §6c.                                                                                   | Prod (token sensitive)            |
-| `TWILIO_MESSAGING_SERVICE_SID`, `TWILIO_FROM_NUMBER`                                  | One of them, for texts   | The sender: a Messaging Service (preferred: STOP/HELP and A2P 10DLC) or, for quick tests, a number in E.164.                                                                                                | §6c.                                                                                   | Prod                              |
-| `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`                                               | No                       | Phone notifications (web push). Public key alone shows the switch; both are needed to send.                                                                                                                 | §6e.                                                                                   | Prod (private key sensitive)      |
-| `VAPID_SUBJECT`                                                                       | No (default `APP_URL`)   | Contact the push services can reach.                                                                                                                                                                        | `mailto:` address or https URL.                                                        | Prod                              |
-| `NEXT_PUBLIC_SENTRY_DSN`                                                              | No                       | Error alerts (scrubbed). Read at build time: redeploy after setting.                                                                                                                                        | §6b.                                                                                   | Prod                              |
-| `HEALTH_TOKEN`                                                                        | No                       | `/api/health/deep` (database + background jobs, for an uptime monitor). Without it the route is a 404 (§6g).                                                                                                | `openssl rand -hex 24`                                                                 | Prod (sensitive)                  |
-| `CRON_SECRET`                                                                         | No                       | Lets Vercel Cron call `/api/cron/jobs-check` (Vercel sends it as a Bearer token). Without it the route is a 404 (§6g).                                                                                      | `openssl rand -hex 24`                                                                 | Prod (sensitive)                  |
-| `FEATURE_CLOSING_QUESTION`                                                            | No (off when unset)      | Plan #26. **On** in Vercel since 2026-10-14 (Davi's okay); live from the next deploy.                                                                                                                       | `1` (§6d).                                                                             | Prod + Preview                    |
-| `FEATURE_REFERRALS`                                                                   | No (off)                 | Plan #47. **Ask Davi first**; does nothing while `REFERRAL_CREDIT_CENTS` is null.                                                                                                                           | `1` (§6d).                                                                             | Prod, only with Davi's okay       |
-| `RETENTION_BODY_DAYS`                                                                 | No (default 30)          | Days before email text is purged. The privacy policy and homepage promise 30: don't change it without changing them.                                                                                        | A number.                                                                              | Prod                              |
-| `VERCEL`, `VERCEL_ENV`, `VERCEL_BRANCH_URL`, `VERCEL_GIT_COMMIT_SHA`                  | Set by Vercel            | Deploy detection (turns e2e mode off), preview URLs, preview-only CSP, Sentry environment and release, `/api/health`'s `commit`, Web Analytics on production only.                                          | Automatic, while "Automatically expose System Environment Variables" is on.            | Vercel sets them                  |
-| `NODE_ENV`                                                                            | Set by Next              | Development vs production behaviour.                                                                                                                                                                        | Automatic.                                                                             | —                                 |
-| `SA_E2E`, `SA_E2E_GOOGLE_BASE_URL`, `SA_E2E_ANTHROPIC_BASE_URL`, `SA_E2E_HOOK_SECRET` | Set by Playwright        | Local e2e mode (§3).                                                                                                                                                                                        | `playwright.config.ts` sets them.                                                      | **Never** on Vercel               |
-| `PGHOST`, `ANTHROPIC_CUSTOM_HEADERS`                                                  | Not ours                 | Read by postgres.js and the Anthropic SDK. We never set them; e2e mode checks `PGHOST` (when `DATABASE_URL` names no host) and drops any `ANTHROPIC_CUSTOM_HEADERS` so nothing real reaches the fakes (§3). | —                                                                                      | Not set                           |
+| Variable                                                                              | Required?                    | What it turns on                                                                                                                                                                                                                                                                                                                                                            | Where to get it                                                                                                                          | Environments                             |
+| ------------------------------------------------------------------------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| `APP_URL`                                                                             | Production: yes              | Absolute links, OAuth redirect URIs, cookies, emails. Previews fall back to `VERCEL_BRANCH_URL`, local to `http://localhost:3000`.                                                                                                                                                                                                                                          | The production domain, no trailing slash.                                                                                                | Prod only; local                         |
+| `DATABASE_URL`                                                                        | Yes                          | The database (postgres.js).                                                                                                                                                                                                                                                                                                                                                 | Neon → Connect → pooled string. Local: `postgres://sa:sa@localhost:5432/squared_away`.                                                   | Prod + Preview (sensitive); local        |
+| `AUTH_SECRET`                                                                         | Yes                          | Signs sessions; salts hashed IPs and referral fingerprints. Rotating it signs everyone out.                                                                                                                                                                                                                                                                                 | `openssl rand -base64 32`                                                                                                                | Prod + Preview (sensitive); local        |
+| `AUTH_TRUST_HOST`                                                                     | Outside Vercel               | Lets Auth.js trust the host header (`pnpm start`, CI). Vercel handles it itself.                                                                                                                                                                                                                                                                                            | `true`                                                                                                                                   | Local, CI                                |
+| `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET`                                                | Yes                          | Google sign-in and Connect Gmail (one OAuth client).                                                                                                                                                                                                                                                                                                                        | Google Cloud → APIs & Services → Credentials (§8).                                                                                       | Prod + Preview (secret sensitive)        |
+| `GOOGLE_APP_STATE`                                                                    | No (default `testing`)       | Where the Google app is in Google's process: `testing` (publishing status Testing: the connect screen says "Tap Continue", the Gmail-access-lost email and Settings → Your Gmail name Google's 7-day limit), `unverified` (published, not yet verified: "Tap Advanced, then the link that starts with Go to"), `verified` (no warning line). Unknown values mean `testing`. | Set `unverified` when you publish the app (`docs/LAUNCH.md` 0c), `verified` when Google approves it, then Redeploy. Preview stays unset. | Production only                          |
+| `TOKEN_ENCRYPTION_KEY`                                                                | Yes                          | Encrypts Gmail refresh tokens (AES-256-GCM). Losing it means every mailbox reconnects.                                                                                                                                                                                                                                                                                      | `openssl rand -base64 32`                                                                                                                | Prod + Preview (sensitive); local        |
+| `TOKEN_ENCRYPTION_KEY_PREVIOUS`                                                       | Only while replacing the key | The old key while stored secrets move to a new one (§5a). Remove it after `pnpm reseal:secrets`.                                                                                                                                                                                                                                                                            | The key being replaced                                                                                                                   | Production only, for the switch          |
+| `ADMIN_EMAIL`                                                                         | Yes                          | The only address allowed into `/admin`; always allowed to sign in; gets cost alerts.                                                                                                                                                                                                                                                                                        | Davi's address.                                                                                                                          | Prod + Preview                           |
+| `SUPPORT_EMAIL`                                                                       | Before launch                | Support address in the footer, status banner, not-invited page and legal pages (§6f).                                                                                                                                                                                                                                                                                       | Davi provides it.                                                                                                                        | Prod + Preview                           |
+| `ANTHROPIC_API_KEY`                                                                   | For sorting and drafting     | Every AI call (sorting, drafts, voice, rewording) and `pnpm eval`.                                                                                                                                                                                                                                                                                                          | console.anthropic.com → API Keys.                                                                                                        | Prod + Preview (sensitive); local        |
+| `AI_DAILY_CALL_CAP`                                                                   | No (default 500)             | Daily ceiling on AI calls per running inbox (a shop gets this × its inboxes, at least one, up to `AI_DAILY_CALL_CAP_MAX`); warning at 80%; sorting may use 80%, the rest is kept for drafts and voice.                                                                                                                                                                      | A number.                                                                                                                                | Prod                                     |
+| `AI_DAILY_CALL_CAP_MAX`                                                               | No (default 3000)            | Ceiling on one shop's daily AI limit, however many inboxes it connects.                                                                                                                                                                                                                                                                                                     | A number.                                                                                                                                | Prod                                     |
+| `INNGEST_EVENT_KEY`, `INNGEST_SIGNING_KEY`                                            | Production: yes              | Background jobs (sync, sorting, drafting, sends after undo, crons).                                                                                                                                                                                                                                                                                                         | Set by the Inngest Vercel integration (§6).                                                                                              | Prod + Preview                           |
+| `INNGEST_DEV`                                                                         | Local only                   | `1` = use the local Inngest dev server.                                                                                                                                                                                                                                                                                                                                     | —                                                                                                                                        | Local                                    |
+| `GMAIL_PUBSUB_TOPIC`, `GMAIL_PUSH_AUDIENCE`, `GMAIL_PUSH_SERVICE_ACCOUNT`             | No                           | Gmail instant notifications, checked by Pub/Sub's signed token; without them the 5-minute poll picks up mail.                                                                                                                                                                                                                                                               | §6a.                                                                                                                                     | Prod                                     |
+| `GMAIL_PUSH_VERIFICATION_TOKEN`                                                       | No (old way)                 | The old shared secret in the push URL. Accepted only while the two settings above are unset; remove it after switching.                                                                                                                                                                                                                                                     | —                                                                                                                                        | Prod (sensitive), during the switch only |
+| `RESEND_API_KEY`, `EMAIL_FROM`                                                        | No                           | Every app email: invites, "Your first drafts are ready", morning and monthly summaries, Gmail-access-lost alert and reminder, waitlist and trial emails, Davi's notices. Without both, nothing is emailed; until a domain is verified, only the Resend account's own address gets them (§7b).                                                                               | §7b.                                                                                                                                     | Prod (key sensitive)                     |
+| `STRIPE_SECRET_KEY`                                                                   | For payments                 | Checkout, billing portal, webhook, Connect Stripe in `/admin`.                                                                                                                                                                                                                                                                                                              | §7c.                                                                                                                                     | Prod (sensitive)                         |
+| `STRIPE_WEBHOOK_SECRET`                                                               | No                           | Overrides the signing secret Connect Stripe stores. Leave unset in Vercel (a stale test value breaks every live webhook).                                                                                                                                                                                                                                                   | `stripe listen` locally.                                                                                                                 | Local only                               |
+| `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`                                             | No                           | Text alerts to the owner's own phone (both plus one sender below).                                                                                                                                                                                                                                                                                                          | §6c.                                                                                                                                     | Prod (token sensitive)                   |
+| `TWILIO_MESSAGING_SERVICE_SID`, `TWILIO_FROM_NUMBER`                                  | One of them, for texts       | The sender: a Messaging Service (preferred: STOP/HELP, and it carries the A2P 10DLC campaign once one is approved) or, for quick tests, a number in E.164.                                                                                                                                                                                                                  | §6c.                                                                                                                                     | Prod                                     |
+| `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`                                               | No                           | Phone notifications (web push). Public key alone shows the switch; both are needed to send.                                                                                                                                                                                                                                                                                 | §6e.                                                                                                                                     | Prod (private key sensitive)             |
+| `VAPID_SUBJECT`                                                                       | No (default `APP_URL`)       | Contact the push services can reach.                                                                                                                                                                                                                                                                                                                                        | `mailto:` address or https URL.                                                                                                          | Prod                                     |
+| `NEXT_PUBLIC_SENTRY_DSN`                                                              | No                           | Error alerts (scrubbed). Read at build time: redeploy after setting.                                                                                                                                                                                                                                                                                                        | §6b.                                                                                                                                     | Prod                                     |
+| `HEALTH_TOKEN`                                                                        | No                           | `/api/health/deep` (database + background jobs, for an uptime monitor). Without it the route is a 404 (§6g).                                                                                                                                                                                                                                                                | `openssl rand -hex 24`                                                                                                                   | Prod (sensitive)                         |
+| `CRON_SECRET`                                                                         | No                           | Lets Vercel Cron call `/api/cron/jobs-check` (Vercel sends it as a Bearer token). Without it the route is a 404 (§6g).                                                                                                                                                                                                                                                      | `openssl rand -hex 24`                                                                                                                   | Prod (sensitive)                         |
+| `FEATURE_CLOSING_QUESTION`                                                            | No (off when unset)          | Plan #26. **On** in Vercel since 2026-10-14 (Davi's okay); live from the next deploy.                                                                                                                                                                                                                                                                                       | `1` (§6d).                                                                                                                               | Prod + Preview                           |
+| `FEATURE_REFERRALS`                                                                   | No (off)                     | Plan #47 (a free month, one plan up). **Ask Davi first**; the switch is the only control (§6d).                                                                                                                                                                                                                                                                             | `1` (§6d).                                                                                                                               | Prod, only with Davi's okay              |
+| `RETENTION_BODY_DAYS`                                                                 | No (default 30)              | Days before email text is purged. The privacy policy and homepage promise 30: don't change it without changing them.                                                                                                                                                                                                                                                        | A number.                                                                                                                                | Prod                                     |
+| `VERCEL`, `VERCEL_ENV`, `VERCEL_BRANCH_URL`, `VERCEL_GIT_COMMIT_SHA`                  | Set by Vercel                | Deploy detection (turns e2e mode off), preview URLs, preview-only CSP, Sentry environment and release, `/api/health`'s `commit`, Web Analytics on production only.                                                                                                                                                                                                          | Automatic, while "Automatically expose System Environment Variables" is on.                                                              | Vercel sets them                         |
+| `NODE_ENV`                                                                            | Set by Next                  | Development vs production behaviour.                                                                                                                                                                                                                                                                                                                                        | Automatic.                                                                                                                               | —                                        |
+| `SA_E2E`, `SA_E2E_GOOGLE_BASE_URL`, `SA_E2E_ANTHROPIC_BASE_URL`, `SA_E2E_HOOK_SECRET` | Set by Playwright            | Local e2e mode (§3).                                                                                                                                                                                                                                                                                                                                                        | `playwright.config.ts` sets them.                                                                                                        | **Never** on Vercel                      |
+| `PGHOST`, `ANTHROPIC_CUSTOM_HEADERS`                                                  | Not ours                     | Read by postgres.js and the Anthropic SDK. We never set them; e2e mode checks `PGHOST` (when `DATABASE_URL` names no host) and drops any `ANTHROPIC_CUSTOM_HEADERS` so nothing real reaches the fakes (§3).                                                                                                                                                                 | —                                                                                                                                        | Not set                                  |
 
 ## 5. Database
 
@@ -201,6 +205,25 @@ pnpm db:generate    # after editing src/db/schema.ts — commit the new files in
 pnpm db:migrate     # apply migrations to DATABASE_URL
 pnpm db:migrate:http   # same, over Neon's HTTPS endpoint — for networks that block port 5432
 ```
+
+### 5a. Replacing the encryption key
+
+`TOKEN_ENCRYPTION_KEY` locks the Gmail access we keep for each owner and the Stripe webhook
+secret. To replace it (after a leak, or to give previews their own key) without anyone having to
+reconnect Gmail:
+
+1. Make a new key: `openssl rand -base64 32`.
+2. In Vercel (Production): put the **old** key in a new variable `TOKEN_ENCRYPTION_KEY_PREVIOUS`,
+   and the **new** key in `TOKEN_ENCRYPTION_KEY`. Redeploy. Everything still works: anything
+   the new key can't open is opened with the old one, and anything saved from now on uses the
+   new one.
+3. Run `pnpm reseal:secrets` with production's `DATABASE_URL`, `TOKEN_ENCRYPTION_KEY` and
+   `TOKEN_ENCRYPTION_KEY_PREVIOUS` (for example in a `.env.local` you delete afterwards). It
+   prints counts only, for example "Gmail tokens: 12 re-sealed, 0 already on the new key, 0
+   unreadable." It is safe to run again; a second run should say everything is already on the
+   new key.
+4. If it says anything is unreadable, stop and keep the old key set until you know why.
+5. Otherwise delete `TOKEN_ENCRYPTION_KEY_PREVIOUS` in Vercel and redeploy.
 
 ## 6. Background jobs (Inngest)
 
@@ -219,23 +242,40 @@ Without Inngest nothing syncs: connecting Gmail still works, but no mail is read
 
 Without this, new mail is picked up by the 5-minute poll. With it, Gmail tells us within seconds.
 Free at this volume (Pub/Sub's free tier is 10 GB/month; each notification is a few hundred bytes).
-All in the same Google Cloud project as the OAuth client (project number 214188340483):
+All in the same Google Cloud project as the OAuth client (project number 214188340483).
+
+Pub/Sub signs every notification it sends us with a Google ID token, and we check the signature,
+who sent it and where it was meant to go. Nothing secret goes in the web address, so nothing
+secret ends up in Vercel's request logs.
 
 1. console.cloud.google.com → APIs & Services → Library → **Cloud Pub/Sub API** → Enable.
 2. Pub/Sub → Topics → **Create topic**, ID `gmail-push`, untick "Add a default subscription" → Create.
    Copy its full name: `projects/<project-id>/topics/gmail-push`.
 3. On that topic → **Permissions** (right panel; "Show info panel") → Add principal
    `gmail-api-push@system.gserviceaccount.com`, role **Pub/Sub Publisher** → Save.
-4. Make a long random token (e.g. `openssl rand -hex 24`, or any 40+ random letters and digits).
+4. IAM & Admin → Service Accounts → **Create service account**, name `gmail-push`, no roles →
+   Done. Copy its email, e.g. `gmail-push@<project-id>.iam.gserviceaccount.com`.
 5. Pub/Sub → Subscriptions → **Create subscription**: topic `gmail-push`, delivery type **Push**,
-   endpoint `https://sa-dac3.vercel.app/api/gmail/push?token=<the token>`, everything else default.
+   endpoint `https://sa-dac3.vercel.app/api/gmail/push` (no `?token=`), tick **Enable
+   authentication**, service account = the one from step 4, audience = the same endpoint URL.
+   Everything else default. The same from a terminal:
+
+   ```bash
+   gcloud pubsub subscriptions create gmail-push-sub --topic=gmail-push \
+     --push-endpoint=https://sa-dac3.vercel.app/api/gmail/push \
+     --push-auth-service-account=gmail-push@<project-id>.iam.gserviceaccount.com \
+     --push-auth-token-audience=https://sa-dac3.vercel.app/api/gmail/push
+   ```
+
 6. Vercel → sa → Settings → Environment Variables (Production): `GMAIL_PUBSUB_TOPIC` = the full topic
-   name from step 2, `GMAIL_PUSH_VERIFICATION_TOKEN` = the token (sensitive). Redeploy.
+   name from step 2, `GMAIL_PUSH_AUDIENCE` = the endpoint URL from step 5 (exactly as typed there),
+   `GMAIL_PUSH_SERVICE_ACCOUNT` = the service account email from step 4. Redeploy.
 7. Watches start at the next daily renewal (6:17 UTC). To start now: Inngest dashboard → Functions →
    **renew-gmail-watches** → Invoke.
 
 The push only says "something changed in this mailbox" — we never read content from it; it just
-starts the normal sync. The poll keeps running as a safety net.
+starts the normal sync. The poll keeps running as a safety net. A refused push is logged as
+`gmail_push_refused` with a reason (`wrong_audience`, `wrong_email`, `expired`…), never the token.
 
 ### 6b. Error alerts (Sentry, optional)
 
@@ -258,8 +298,20 @@ no heat, no power, a gas smell) is the one exception while the owner leaves "Eme
 night" on (it's on by default): "An emergency email just came in." right away, night or day, once
 per conversation, at most 3 a night and 6 a day (phone notifications follow the same switch). A
 voicemail or text message emailed by a phone service (Google Voice) counts, though its sender is
-no-reply. Costs: about $1.15/month
-for the number plus about $0.01 per text, and a one-time US carrier (A2P 10DLC) registration.
+no-reply.
+
+Costs (Twilio's listed US prices, checked 2026-10-19; **check the current price before
+budgeting**):
+
+- The number: $1.15 a month for a Twilio local number, and $0.0083 per text segment sent, plus a
+  carrier fee per segment of $0.0035 (AT&T), $0.0045 (T-Mobile) or $0.005 (Verizon)
+  ([twilio.com/en-us/sms/pricing/us](https://www.twilio.com/en-us/sms/pricing/us)).
+- US carrier registration (A2P 10DLC), per Twilio's "A2P 10DLC Campaign Vetting FAQ"
+  ([support.twilio.com](https://support.twilio.com/hc/en-us/articles/11587910480155)):
+  a $4.50 brand fee and a $15 campaign vetting fee, once each, and then a **monthly** campaign fee
+  of $1.50 to $10 depending on the use case ($2 for a sole proprietor). The monthly fee is not
+  one-time. (An older Twilio page, `pages.twilio.com/10DLC-HelpArticles-WW`, still says $4 for the
+  brand: another reason to check in the Twilio console before registering.)
 
 1. twilio.com → sign up → upgrade the account (add a card).
 2. Phone Numbers → Buy a number (local, SMS-capable).
@@ -270,9 +322,16 @@ for the number plus about $0.01 per text, and a one-time US carrier (A2P 10DLC) 
    owner enters their own mobile number in Settings and confirms a texted code". Approval takes
    days; texts may be blocked by carriers until it's approved.
 4. Messaging → Services → Create → add the number to the service. Opt-out (STOP/HELP) handling is
-   on by default.
+   on by default. The service only carries the campaign once the campaign is approved and linked
+   to it: until then Twilio blocks texts to US numbers with error 30034 ("Message from an
+   Unregistered Number", [twilio.com/docs/api/errors/30034](https://www.twilio.com/docs/api/errors/30034)).
 5. Vercel → sa → Environment Variables (Production): `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`
    (sensitive), `TWILIO_MESSAGING_SERVICE_SID`. Redeploy.
+6. Nothing else to set (Check 19 P6): every text asks Twilio to report its delivery to
+   `APP_URL/api/twilio/status`, signed with `TWILIO_AUTH_TOKEN`; the owner's Text alerts screen
+   then shows "Last text delivered at 9:42am." or why the last one didn't arrive, and a STOP
+   reply (or a landline) switches their texts off. The "nothing after 9pm" validity window on
+   each text applies only through a Messaging Service, not `TWILIO_FROM_NUMBER`.
 
 ### 6d. Feature switches (off by default)
 
@@ -286,38 +345,54 @@ off (`src/config/features.ts`). The code default stays off: the env var is the s
   never on a complaint, and it goes through the normal queue. It is not a nudge and doesn't count
   as one.
 
-- `FEATURE_REFERRALS` (plan #47, default **off**): each account gets a referral link in Plan &
-  billing (`/?ref=<code>`). The code rides on the waitlist form, onto the invite when Davi taps
-  Invite, and onto the new workspace at its first sign-in (used up there). The first time the
-  referred account is **active** (paid through Stripe and the setup call done), the referral is
-  settled once, ever: a Stripe balance credit for the sides in `REFERRAL_CREDIT_TO`. Self and
-  same-business-domain referrals never count (gmail.com, yahoo.com, outlook.com, icloud.com and
-  other public webmail are fine). A side with no Stripe customer waits and is added by the
-  15-minute job; one Stripe refuses for good shows on the /admin card. **It also needs an amount:**
-  `REFERRAL_CREDIT_CENTS` in `src/config/pricing.ts` is `null`, and while it is null nothing
-  happens at all, even with the switch on (no link, no code saved, nothing carried, no credit).
-  Referrals that become active while the switch is off (or the amount is null) are settled as
-  "skipped" and are **never paid later**, even if it's turned on again. The same goes for an
-  owner whose first sign-in happens while it's off: the invite's referral is used up then without
-  linking them, so deleting the account and signing up again once it's on earns nothing.
-  Changing the amount or `REFERRAL_CREDIT_TO` only affects referrals settled after the change. A
-  refused (self or same-domain) referral is settled as "skipped" too. Credits still waiting or
-  refused by Stripe stay on the /admin card even after the switch goes off.
+- `FEATURE_REFERRALS` (plan #47, default **off**; offer A, decided 2026-10-15): each account gets
+  a referral link in Plan & billing (`/?ref=<code>`). The code rides on the waitlist form, onto the
+  invite when Davi taps Invite, and onto the new workspace at its first sign-in (used up there).
+  The first time the referred account is **active** (paid through Stripe and the setup call done),
+  the referral is settled once, ever: **the referrer's next month is free on the plan above
+  theirs** (Solo → Crew, Crew → Company, Company → Company). There is no amount to set
+  (`REFERRAL_REWARD` in `src/config/pricing.ts`); the switch is the only control. Self,
+  same-business-domain and house-account referrals never count (gmail.com, yahoo.com, outlook.com,
+  icloud.com and other public webmail are fine).
+  **A Growth request can earn it too** (Davi, 2026-10-16): a Growth call request sent from the
+  homepage with the referral link keeps the code on its waitlist row; when Davi makes that person
+  a Growth client (/admin/growth → Start Growth, or their first sign-in after Invite to Growth),
+  the referral is settled the same way, with the same reward and the same self / same-domain /
+  house rules. One person is only ever counted once: the app account and the Growth client share
+  the email fingerprint, whichever comes first.
+  How it works: a one-time 100%-off coupon (`sa_ref_<id>`, "Referral thanks: this month is free")
+  goes on the referrer's live subscription, so Stripe keeps billing their own plan and the next
+  renewal's plan line is free; the app gives the plan above for exactly that line's period. It
+  starts only while the account is on (setup paid or active, paid through Stripe), one free month
+  at a time with a paid month between (Davi, Q1), and a month that can't start yet waits with no
+  expiry (Q5). Afterwards they go back to their own plan by itself unless they tap **Keep**
+  (normal price, named in full before the tap); **Go back** after a Keep restores exactly the
+  price they paid. Nothing else ever raises a price. At the end, autopilot turns off if the plan
+  has none and extra inboxes pause (oldest-created stay on, nothing deleted, the owner can switch
+  which one); a move down on Stripe's page pauses extra inboxes the same way (Q2). During the free
+  month Stripe's page offers card, invoices and cancel only (Q3), and any charge Stripe adds for
+  free days is removed. The 15-minute job and every Stripe webhook keep it in step, always from a
+  fresh read of the subscription.
+  **Free months wait while Stripe's billing page schedules downgrades for the period end**
+  ("Manage downgrades"): such a schedule can drop the coupon. /admin → Payments says so; turn it
+  off in Stripe → Customer portal.
+  Referrals that become active while the switch is off are settled as "skipped" and are **never
+  given later**, even if it's turned on again. The same goes for an owner whose first sign-in
+  happens while it's off: the invite's referral is used up then without linking them. A free month
+  already booked or running carries on if the switch goes off (Stripe already holds the coupon);
+  waiting ones stay on the /admin card. Refunding the new contractor later doesn't take the
+  referrer's free month back (Q6).
   Known gaps, by design until Davi decides otherwise: if the referrer deletes their account
-  before the new owner is active, the referral is void (neither side is paid — the link is
-  cleared with the account). Only a waitlist sign-up from the link counts: someone already on the
-  waitlist who joins again from a link keeps their first (code-less) entry, and an owner invited
-  with the plain "Invite an owner" form is never linked to anyone.
-  **Privacy policy, before turning it on:** referral records outlive account deletion so a
-  referral is only paid once. Add a line such as "If you were referred, we keep a scrambled
-  one-way fingerprint of your email and the credit record after you delete your account, so a
-  referral is only paid once." — the policy's "Delete my account" section (and the homepage FAQ's
-  "deletes your account and everything in it") is otherwise not literally true once referrals are on.
-  **Don't rotate `AUTH_SECRET` once referrals have been paid** (or know what it costs): the
-  "paid once, ever" check matches that fingerprint, which is salted with `AUTH_SECRET`. After a
-  rotation, earlier referrals no longer match, so an owner who deleted their account and is
-  linked again from a referral link could be paid a second time (the referrer's credit). Rotating it also
-  signs everyone out. If it must be rotated, settle it with Davi first.
+  before the new owner is active, the referral is void (the link is cleared with the account).
+  Only a waitlist sign-up or a Growth call request from the link counts (the /growth page itself
+  carries no code): someone already on the waitlist who joins again from a link keeps their first
+  (code-less) entry, and an owner invited with the plain "Invite an
+  owner" form is never linked to anyone.
+  **Don't rotate `AUTH_SECRET` once referrals have been given** (or know what it costs): the
+  "once, ever" check matches a fingerprint salted with `AUTH_SECRET`. After a rotation, earlier
+  referrals no longer match, so an owner who deleted their account and is linked again from a
+  referral link could earn the referrer a second month. Rotating it also signs everyone out. If it
+  must be rotated, settle it with Davi first.
 
 **`FEATURE_CLOSING_QUESTION` is on** (Davi, 2026-10-14). The engineers set it to `1` in Vercel →
 sa → Environment Variables on Production and Preview that day, at his request; it takes effect with
@@ -325,23 +400,60 @@ the next deploy (the launch merge). Turning it off needs his okay too: delete th
 it empty) and redeploy; the offer disappears, and any closing-question drafts already in the queue
 stay there for the owner to send or discard.
 
-**Ask Davi before turning `FEATURE_REFERRALS` on** — he decides the amount. Decided (Davi,
-2026-10-13): only the owner who shared the link gets it (`REFERRAL_CREDIT_TO = "referrer"`), and
-the same-domain block stays. The amount is still open (options in `docs/LAUNCH.md` step 13: a fixed
-$50 / $99 / $199 / $250, or one free month of the referrer's plan, possibly on Crew for a Solo
-owner; a fixed amount only needs `REFERRAL_CREDIT_CENTS`, the free-month options need new code
-because the credit would depend on the plan). In order:
+**Ask Davi before turning `FEATURE_REFERRALS` on.** The reward itself is decided (offer A,
+2026-10-15; his answers to the seven questions on 2026-10-16 are in `docs/LAUNCH.md` step 13).
+In order, all before the switch:
 
-1. Set `REFERRAL_CREDIT_CENTS` in `src/config/pricing.ts` to his amount in cents, with the
-   privacy-policy line above, and deploy that code. While the amount is `null` the switch does nothing at all.
-2. Vercel → sa → Environment Variables → add `FEATURE_REFERRALS` with value `1` (Production only,
+1. The live Stripe key, **Connect Stripe** and **Reset test payments** (LAUNCH steps 7–7c). Reset
+   also deletes free months earned in test mode, so a test-card referral never becomes a real free
+   month (the real payment settles it again, once).
+2. /admin → Payments shows "Stripe's billing page changes plans straight away, so free months
+   can be booked." (Not the "schedules downgrades" line, and not "Couldn't check…": refresh until
+   Stripe answers.)
+3. Add these lines (held here so the terms version doesn't change before then), update
+   `tests/unit/legal-docs.test.ts` (it pins that the privacy policy says nothing about referrals
+   while they're off) and bump the terms version in the app with the terms' "Last updated" date:
+   - **Terms:** "If someone you referred becomes a customer, your next month is free on the plan
+     above yours. Afterwards you go back to your own plan unless you choose to keep it at its
+     normal price. During that free month, plan changes are made in the app; you can still update
+     your card or cancel."
+   - **Privacy policy** (its Growth-request sentence, "If you followed another Squared Away
+     owner's referral link while we offer referrals, we keep that link's code with your request…",
+     is in the policy already and the test allows it): "If you were referred, we keep a scrambled one-way fingerprint of your
+     email and the referral record after you delete your account, so a referral only counts
+     once." and "If you earn a free month: which plan, the dates, and whether you chose to keep
+     it." (Otherwise the policy's "Delete my account" section and the FAQ's "deletes your account
+     and everything in it" aren't literally true once referrals are on.)
+4. **An engineer runs the Stripe Test Clock check, locally only** (never on a preview or
+   production: previews share production's database). A laptop with its own Postgres, a **test**
+   key, `FEATURE_REFERRALS=1` and `stripe listen --forward-to localhost:3000/api/stripe/webhook`.
+   Make a Test Clock and a customer on it with a Massachusetts address; put that customer id on
+   the referrer workspace and choose a plan (if Checkout refuses a clock customer, make the
+   subscription in the Dashboard's clock simulation with automatic tax and
+   `metadata.workspaceId`, and set the workspace's ids and status by SQL). Settle a referral by
+   seeding an active, Stripe-paid referred workspace. Then check, advancing the clock (at most two
+   billing periods per step): the sweep books the coupon; the renewal's plan line is −100% with $0
+   tax on it, the app shows the plan above (provisional, then confirmed once the invoice
+   finalizes); Keep makes no invoice and the next renewal is the kept plan plus tax, ended by
+   Stripe's renewal rather than our clock; without Keep the next renewal is the old plan plus tax,
+   autopilot is off and the extra inbox paused; a plan change on Stripe's page during the month
+   (with the login page, since the app's page has none) leaves no charge for free days; a change
+   while booked charges at most the normal proration and the free month is one above the new
+   plan; canceling or a past-due card (test card `4000000000000341`) while booked returns it to
+   waiting; repeat on a **classic**-mode subscription made in the Dashboard; and remove the address
+   so the renewal can't finalize: provisional; from a day before the end the coupon comes off the
+   subscription, and **the stuck draft must keep its −100% line** (if it loses it, /admin flags
+   "lost its discount"); the next renewal is the normal price. Also check that a renewal drafted
+   just before the coupon landed leaves the coupon on for the renewal after. Record the results
+   in `docs/LAUNCH.md`.
+5. Vercel → sa → Environment Variables → add `FEATURE_REFERRALS` with value `1` (Production only,
    unless Davi says otherwise) → Redeploy.
 
 To turn it off again, delete the variable (or set it empty) and redeploy: the Share section and
-links disappear, new codes aren't carried, and no new credits are made (credits waiting for a
-Stripe customer wait, and are added if it's turned back on). Credits already added stay on the
-owners' Stripe balances. Referrals whose account went active while it was off are settled as
-"skipped" and are never paid later.
+links disappear, new codes aren't carried, and nothing new is earned or booked. Free months
+already booked or running carry on (Stripe holds the coupon); waiting ones wait and are booked if
+it's turned back on. Referrals whose account went active while it was off are settled as
+"skipped" and are never given later.
 
 ### 6e. Phone notifications (VAPID, optional)
 
@@ -365,7 +477,8 @@ Microsoft) only sees a ping, and the phone then fetches the counts from us (`src
    app (on iPhone, only from the Home Screen app) and the first new quote request buzzes the phone.
 
 Keep the pair once owners use it: after a change, each phone has to switch notifications off and
-on again.
+on again. A phone whose push service keeps refusing for 7 days is forgotten on its own (Check 19
+P5); the Settings switch shows "off" there the next time it opens.
 
 ### 6f. SUPPORT_EMAIL
 
@@ -412,19 +525,43 @@ pnpm invite owner@shop.com electrical "note for Davi"
 
 Runs against whatever `DATABASE_URL` is in `.env.local`. Day to day, use `/admin` → Invite an owner.
 
-## 7b. Morning summary email (Resend)
+## 7b. App emails (Resend)
 
-The digest is sent through Resend's HTTP API (`src/lib/email.ts`). Without `RESEND_API_KEY` and
-`EMAIL_FROM`, nothing is sent — the job reports "not configured" and tries again next hour.
+Every email the app sends goes through Resend's HTTP API (`src/lib/email.ts`). Without
+`RESEND_API_KEY` and `EMAIL_FROM`, nothing is sent — each job reports "not configured" and tries
+again on its next run.
+
+Until a domain is verified, `onboarding@resend.dev` only delivers to the Resend account's own
+address, so these never reach anyone else: the invite email with the sign-in link
+(`src/server/invite-email.ts`), "Your first drafts are ready to check"
+(`src/server/first-week.ts`), the morning and monthly summaries, "Squared Away lost access to your
+Gmail" and its reminder (`src/server/alerts.ts`), and "You're on the Squared Away list"
+(`src/server/waitlist-emails.ts`); the trial emails and the Growth confirmation too. Davi's own
+notices reach him only if the Resend account uses `ADMIN_EMAIL`. Owner-facing emails carry
+`Reply-To: SUPPORT_EMAIL` (else `ADMIN_EMAIL`), so that address needs a real inbox.
 
 1. resend.com → API Keys → Create API Key (sending access is enough).
-2. Until a domain is verified, Resend only delivers to the email address on the Resend account,
-   from `onboarding@resend.dev`. For testing: `EMAIL_FROM="Squared Away <onboarding@resend.dev>"`.
-3. For real owners: resend.com → Domains → add the production domain, add the DNS records it shows,
-   then set `EMAIL_FROM="Squared Away <hello@thatdomain>"`.
-4. Put both in Vercel (Production) and redeploy.
+2. For testing: `EMAIL_FROM="Squared Away <onboarding@resend.dev>"`.
+3. For real owners: resend.com → Domains → add a subdomain such as `mail.<domain>` (Resend
+   recommends a subdomain), add every DNS record it shows, and a DMARC TXT record
+   `_dmarc.<domain>` = `v=DMARC1; p=none; rua=mailto:<an address Davi reads>`. Then set
+   `EMAIL_FROM="Squared Away <hello@mail.<domain>>"` and `SUPPORT_EMAIL` to an address with a
+   real inbox.
+4. Put them in Vercel (Production) and redeploy.
+5. Check: Resend shows Verified; /admin → Email says "Sending from …"; an invite to a second Gmail
+   address arrives and Gmail's Show original reads SPF, DKIM and DMARC PASS; then the /admin
+   catch-up buttons re-send the waitlist confirmations and invites that never went out
+   (`docs/LAUNCH.md` step 6).
+
+Resend's free plan: 100 emails a day, 3,000 a month (resend.com/pricing). The morning email alone
+is about one email per active shop per day.
 
 The digest carries counts and categories only — no customer names, subjects or email text.
+
+A Growth call request also emails the visitor a short confirmation ("Your Squared Away Growth
+call": fixed words and the business phone, nothing they typed; one per address per day). Until
+the domain is verified in Resend, `onboarding@resend.dev` only reaches the Resend account's own
+address, so visitors won't get it yet; the request is stored either way.
 
 The trial emails (2026-10-16, `src/server/trial-emails.ts`: day 2, the last day, and one a week
 after an unpaid trial ends) use the same key and sender, counts only, from the 15-minute
@@ -436,8 +573,10 @@ The same key and sender also carry the waitlist emails (`src/server/waitlist-ema
 content-free "New waitlist sign-up" notice to `ADMIN_EMAIL`, and one "You're on the Squared Away
 list" to the person who joined (replies go to `SUPPORT_EMAIL` when it is set). Until a domain is
 verified the confirmation can't reach anyone but the Resend account's own address. It is only
-marked sent after Resend accepts it, but it is only tried when someone first joins, so people who
-join before the domain is verified never get one. No new settings.
+marked sent after Resend accepts it, but it is only tried when someone first joins. People who
+joined before the domain was verified get it when Davi taps "Send the list email to people who
+never got it" on /admin → Waitlist (Check 18 P4; the button shows once EMAIL_FROM is a real
+sender; 8 a tap, nobody twice). No new settings.
 
 ## 7c. Payments (Stripe)
 
@@ -520,9 +659,17 @@ APIs & Services → Credentials, the client needs two redirect URIs per environm
 - `{APP_URL}/api/gmail/callback`
 
 Registered today: production `https://sa-dac3.vercel.app` and the working-branch preview
-`https://sa-git-claude-squared-away-mvp-ddxl7s-dac3.vercel.app`. For local work add
-`http://localhost:3000/api/auth/callback/google` and `http://localhost:3000/api/gmail/callback`
-(the browser tests don't need them: they never talk to Google).
+`https://sa-git-claude-squared-away-mvp-ddxl7s-dac3.vercel.app`, on the one client in the
+production Google project. Once the domain is live (`docs/LAUNCH.md` step 5, then step 0e "Clean
+the live client"), the production client lists **only the production domain**: no `vercel.app`
+address and no `localhost`, because Google's verification needs every address on the client to be
+on a domain we own and have proved in Search Console (a `vercel.app` address sits on Vercel's DNS
+and can't be). Previews and local work then use a **separate Google project**, "sa preview"
+(`docs/LAUNCH.md` step 2), which stays in Testing forever and is never submitted: its own Web client
+carries the preview branch addresses plus `http://localhost:3000/api/auth/callback/google` and
+`http://localhost:3000/api/gmail/callback`, and Preview's `AUTH_GOOGLE_ID` / `AUTH_GOOGLE_SECRET`
+point at it. Its test users don't use places in the production project's 100-user cap. The
+browser tests need none of this: they never talk to Google.
 
 The Gmail API must be enabled. Connect Gmail asks for exactly two Gmail scopes,
 `https://www.googleapis.com/auth/gmail.readonly` and `https://www.googleapis.com/auth/gmail.compose`
@@ -538,6 +685,24 @@ Google's "unverified app" warning. Access given while it was still Testing keeps
 everyone who connected then reconnects once after the switch (`/connect` → the same address;
 `docs/LAUNCH.md` step 0c). See `docs/google-verification.md` for why we ask for each scope,
 the demo-video script and the reviewer account.
+
+## 8b. Adding a second mailbox provider
+
+Gmail is the only provider today. Another one (Outlook, plan #49 in `docs/FEATURE-PLAN.md`) is
+added beside it, never by editing shared sync, draft or voice code:
+
+1. `src/mailbox/<provider>/`: `connector.ts` (a `MailboxConnector`: consent URL, code exchange,
+   revoke), `api.ts` (the `MailboxReader` and `MailboxWriter`, mapping its folders onto
+   `MAIL_LABELS`) and `scopes.ts` (the permissions it must have; missing any refuses the
+   connection).
+2. A new value in `mailboxProviderEnum` (`src/db/schema.ts`, an additive migration) and one more
+   case in `mailboxClientFor` (`src/mailbox/clients.ts`), the only place a client is built.
+3. Sending stays "send this draft" only; any new send path needs Davi's okay and a row in
+   `tests/unit/security-surface.test.ts` ("Only two places can send mail").
+4. The shared tests it must pass: `tests/unit/mailbox-clients.test.ts` (one provider switch),
+   `tests/unit/mime.test.ts` (the replies it sends are the MIME the app builds),
+   `tests/unit/security-surface.test.ts`, and a `<provider>-connector` / `<provider>-api` pair
+   like `tests/unit/gmail-connector.test.ts` and `tests/unit/gmail-api.test.ts`.
 
 ## 9. Deploys (Vercel)
 
@@ -567,3 +732,37 @@ if anything is worse than `tests/evals/baseline.json`. Needs `ANTHROPIC_API_KEY`
 - First time (or after an intended improvement): `pnpm eval --update-baseline`, then commit the file.
 - From GitHub: Actions → **Prompt evals** → Run workflow. Add `ANTHROPIC_API_KEY` as a repository
   secret first (Settings → Secrets and variables → Actions). It never runs on its own.
+- Another model, without changing production: `pnpm eval --no-drafts --model classify=<id>`
+  (also `draft=` and `voice=`). Only ids in `EVAL_MODEL_IDS` (`src/config/models.ts`) are taken;
+  `--update-baseline` is refused with `--model` (the baseline is production's models). What each
+  model accepts (effort, thinking) is `modelCapabilities` in the same file.
+
+### When Anthropic emails about a model
+
+Each model's keep-until date is `modelLifecycle` in `src/config/models.ts`, copied from Anthropic's
+model deprecations page (platform.claude.com/docs/en/about-claude/model-deprecations) with the day
+it was read. `tests/unit/model-lifecycle.test.ts` fails when a date is within 30 days (or past)
+and the page hasn't been read in 14 days. Anthropic promises at least 60 days' notice by email
+before a retirement. When that email comes, or the test fails:
+
+1. Re-read the deprecations page. Update `notBefore` and `checkedOn` (never guess a date; write
+   "none announced" if the page gives none). If nothing changed, that's the whole job.
+2. If a retirement is announced, add the recommended replacement to `modelFallbacks`,
+   `modelPricing` (from Anthropic's pricing page), `modelCapabilities` and `modelLifecycle`.
+3. Run `pnpm eval --model <role>=<replacement>` (with `--no-drafts` for sorting) and compare the
+   table with `tests/evals/baseline.json`. Note anything worse, and the token cost.
+4. Davi decides, from those numbers, whether to switch.
+5. Then switch `models` (and keep `modelPricing` right), run `pnpm eval --update-baseline` on the
+   new model, commit both, and deploy before the retirement date.
+
+## 11. Phone checks (by hand, on real phones)
+
+Things the e2e tests can't see. Tick each one on a real device before a release that changes the
+app's layout, and say which phone you used.
+
+- [ ] **iPhone home bar (Check 8 P2):** on an iPhone with a home bar (no Home button), open the
+      site in Safari, Share → Add to Home Screen, open it from the home screen. The tab labels
+      (Queue, Inbox, Quotes, Money, More) sit above the home-bar strip, and swiping up on a label
+      doesn't send you to the home screen by accident.
+- [ ] **iPhone sideways:** in the installed app, turn the phone sideways both ways. Nothing (text,
+      buttons, the tab bar) sits under the notch or the camera.

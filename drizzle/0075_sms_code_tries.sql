@@ -1,0 +1,1 @@
+ALTER TABLE "business_profile" ADD COLUMN "sms_code_tries" integer DEFAULT 0 NOT NULL;

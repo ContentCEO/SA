@@ -1,0 +1,159 @@
+- **pnpm** as package manager (lockfile committed, CI uses `--frozen-lockfile`).
+- **Next 16.3 / React 19.2 / Tailwind 4 / Zod 4** — latest stable at scaffold ti
+- **Next 16.3.8** (and `eslint-config-next` 16.3.8), 2026-10-17 (Check 26 P1): c
+- shadcn init installed a stray `cn` npm package; replaced with the standard cls
+- No OS dark mode. The brand is a light paper surface with charcoal inversions; 
+- shadcn `destructive` maps to charcoal, not red; destructive actions are made c
+- Haiku ID: using dated snapshot `claude-haiku-4-5-20251001` (as specified; alia
+- `db()` is created lazily so build/test don't need `DATABASE_URL`.
+- **DB driver: postgres.js everywhere** (not `@neondatabase/serverless`). Works 
+- **Sign-in and Gmail are two separate OAuth consents.** Auth.js asks only `open
+- If Google's granular consent returns fewer than both Gmail scopes (`gmail.read
+- Connect uses `prompt=consent` + `access_type=offline` so a refresh token alway
+- OAuth `state`: random 32 bytes in an httpOnly, SameSite=Lax cookie scoped to `
+- **Sign-in is invite-only** via an `invites` table (script now, /admin later). 
+- JWT sessions (no Auth.js adapter tables); session carries our `users.id` as `u
+- CSRF: mutations are Server Actions (POST + Origin/Host check by Next). Every a
+- Mailbox limit before a plan is chosen (evaluation) = 1. Reconnecting the same 
+- Disconnect revokes at Google, then deletes the mailbox even if revoke fails (l
+- `activity_log` created early (M1) to record connect/reconnect/disconnect; deta
+- Neon: project `autumn-term-70302192`, branch `production`, pooled URL in Verce
+- Cloud sandboxes can't reach Postgres port 5432; use `pnpm db:migrate:http` (Ne
+- **Branches:** `main` = production (sa-dac3.vercel.app; Vercel Production branc
+- `APP_URL` is set for Production only; previews fall back to `VERCEL_BRANCH_URL
+- Vercel env (2026-09-28): `AUTH_SECRET`, `TOKEN_ENCRYPTION_KEY`, `DATABASE_URL`
+- Inngest: Vercel Marketplace integration (Hobby/free), connected to `sa` 2026-0
+- Resend (2026-10-03): `RESEND_API_KEY` (sensitive) + `EMAIL_FROM="Squared Away 
+- Google OAuth client lives in Cloud project number 214188340483; app is in Test
+- **Sync (M2):** `MailboxReader` interface in `src/mailbox/connector.ts`; Gmail 
+- Engine in `src/server/sync.ts`: backfill = record `historyId` first, then page
+- `MailboxAuthError` anywhere → `status = reconnect_needed` + one `mailbox_acces
+- Retention purge nulls `body_text` AND `snippet` (Gmail snippets are body text)
+- Jobs (Inngest v4, `triggers` in options): backfill (singleton per mailbox), sy
+- Migrations run in `vercel-build` before `next build`. Keep them additive (old 
+- **Classification (M3):** prompt in `src/ai/prompts/classify.v1.ts` (versioned;
+- Only the newest unclassified inbound message per inbox thread (last 14 days) g
+- Amount threshold defaults to $2,500 and VIP list is empty until the business p
+- "First-time sender" = no earlier message from that address in what we've synce
+- `src/ai/client.ts` `callStructured`: reserves a call against the per-workspace
+- Prompt caching: cache breakpoint after instructions + business block. Haiku 4.
+- `threads.needs_owner_manual`: the owner's "This one needs me" always wins over
+- Nav: Inbox · Settings in the header; Sign out lives at the bottom of Settings.
+- **Profiles (M4):** `business_profile` (one row per workspace; business name + 
+- Voice learning (`src/server/voice.ts`, prompt `voice.v1`, Sonnet): up to 200 `
+- Owner edits set `source = edited`; the weekly refresh (Mon cron) skips those. 
+- Onboarding: connect → `/welcome/profile` (only if the profile was never comple
+- Forms use `useActionState`; on error, focus + scroll to the first invalid fiel
+- "Toasts" are currently `?done=` / `?error=` query params rendered as `<Notice>
+- Playwright's mobile project uses Chromium at 375×812 (not WebKit) to keep CI f
+- Favicon and wordmark are text placeholders until Davi's icon pack arrives (`pu
+- **Fonts are self-hosted via `next/font/local` (2026-10-15)**, because CI build
+- `/api/health` returns `{ ok, service, commit }` — used by Playwright's webServ
+- **Drafts + Queue (M5):** `src/server/drafts.ts`, prompt `draft.v1` (Sonnet, ef
+- Every draft is a **real Gmail draft** (`MailboxWriter`, `src/mailbox/mime.ts` 
+- **Send gate:** `src/server/lifecycle.ts` (`SENDING_ALLOWED = setup_paid, activ
+- Before sending we re-read the Gmail draft: deleted → discarded; changed in Gma
+- `reconcileDrafts` (runs at the start of every draft job): new inbound → expire
+- Swipe-left on a draft card only reveals Discard's confirm — no gesture ever se
+- Draft text is purged with the same retention as bodies; pending drafts past re
+- Pipeline: sync → classify (if new mail) → draft; sync with no new mail still r
+- Signed-in home is now `/queue`. Nav: Queue · Inbox · Settings.
+- **Lifecycle (M6):** rules are pure functions in `src/server/lifecycle.ts`; DB 
+- The 3-day clock starts on the **first Gmail connect** (`saveConnectedMailbox` 
+- `JOBS_ALLOWED` = invited, evaluating, setup_paid, active. Everything else is *
+- `StatusBanner` on every signed-in screen: "Day N of 3 · X left" during evaluat
+- `/admin` (`requireAdmin` → 404 for anyone but `ADMIN_EMAIL`; actions re-check)
+- Gmail pacing: 4 concurrent reads, 50 messages per backfill step. A rate limit 
+- **Follow-ups (M7):** hourly cron `followup-scan` (:11); each owner's scan runs
+- Nudges reuse `createDraftForThread` with `trigger: "followup"` (prompt `follow
+- Settings → Follow-ups: on/off + wait days (stored on `business_profile`). Ever
+- **Digest + Activity (M8):** `/activity` (in the header nav) renders `activity_
+- Digest (`src/server/digest.ts`): hourly cron `morning-digest`; due once per lo
+- **Resend 409s (2026-10-13, M8 review):** a retry whose body changed (summaries
+- Voice learning reads sent mail 3 at a time (8 tripped Gmail's limit live and t
+- **Autopilot (M9)** — `src/server/autopilot.ts`, approved by Davi 2026-10-03. T
+- Grace window: `considerAutopilot` sets `drafts.auto_send_at` = now + 10 min an
+- Admin sets plans by hand (`setWorkspacePlan`) until Stripe (M10); dropping to 
+- **Billing (M10, 2026-10-05):** Stripe SDK, `src/server/billing.ts` + pure rule
+- **Delete my account (2026-10-06):** Settings → Account → one confirmation.
+- **Rate limits (2026-10-06):** `src/server/rate-limit.ts`, fixed windows in the
+- **Error alerts (2026-10-06):** `@sentry/nextjs`, off unless `NEXT_PUBLIC_SENTR
+- **Upgrades (2026-10-09, Davi: "everything you said, let's do it"):**
+- **Text alerts (2026-10-09, plan #50; Davi: texting included in plans):** `src/
+- **Feature plan:** `docs/FEATURE-PLAN.md` (Davi's picks from 50 ideas, 2026-10-
+- **#44 Your Gmail health (2026-10-09):** `mailboxHealth()` (`src/server/mailbox
+- **#48 More trades (2026-10-09):** one list in `src/config/trades.ts` (enum, fo
+- **Davi 2026-10-09 on the plan:** #4 voice-to-edit yes, with a plain note that 
+- **classify.v2 (2026-10-09, plan #17 #27 #42):** schema adds `signals.from_buil
+- **#46 Prompt evals (2026-10-09):** `tests/evals/cases.ts` (66 invented emails,
+- **Plan M4 (2026-10-10):** #39 checklist (`src/server/onboarding.ts`, pure `bui
+- **Milestone 2 re-check (2026-10-10, Davi's M2 prompt, branch `claude/milestone
+- **Plan M5 (2026-10-10, branch `claude/milestone-5-drafts`; brief M5 was alread
+- **Plan M6 (2026-10-11, branch `claude/milestone-6-8`):** #40 practice sends — 
+- **Plan M7 (2026-10-12, branch `claude/milestone-6-8`; #27 #28 #29 #30 #15 done
+- **Plan M8 (2026-10-12, branch `claude/milestone-6-8`; #31 #32 #33 #34 #35 #38 
+- **#47 referrals (built 2026-10-12; reward = offer A since 2026-10-15/16, behin
+- **Public site pass (2026-10-11, branch `claude/homepage-fixes`, PR — Davi revi
+- **Sending requires a real payment (Davi, 2026-10-10):** `canSend` = status in 
+- **Future goal (after the website is complete):** a downloadable app (phone app
+- **Public site (2026-10-05, Davi asked for a sales website):** `/` is the marke
+- **Installable app (PWA, 2026-10-05):** Davi wants website + downloadable app. 
+- Davi's direction (2026-10-05): keep features simple; make it faster, smoother,
+- postgres.js can't bind a `Date` inside a raw `sql` template — pass `.toISOStri
+- Lesson: scripted `str.replace` edits must `assert old in s` — silent no-ops af
+- **Squared Away Growth (2026-10-12, branch `claude/growth-page`, stacked on PR 
+- **Launch merge (2026-10-13, branch `claude/launch-integration`):** M5–M8 + #47
+- **Gmail drafts are not mail (2026-10-13, M8 review):** a Gmail draft is a mess
+- **Side conversations (2026-10-13, M8 review):** Gmail keeps the owner's forwar
+- **Website-form leads reach the customer (2026-10-16, outside review "Must fix"
+- **Round 2 trust + trades (2026-10-16, branch `round2-fixes`; reviews "Trust Ch
+- **Round 2 first week (2026-10-16, branch `round2-fixes`; review "First Week" R
+- **The app on a phone (2026-10-16, outside review P3; I4, K1):**
+- **Public site from the outside review (2026-10-16, P2):**
+- **Legal docs moved to 2026-10-16 (outside review P4):** the privacy policy now
+- **Outside-review follow-ups (2026-10-16, after verifying P1–P4):**
+- **M11 security audit (S4, 2026-10-13):** static tests guard the surface —
+- **M11 legal drafts (S5, 2026-10-13):** `docs/privacy-policy.md` and `docs/term
+- **Milestone 11 summary (2026-10-13, branch `claude/launch-integration`, not de
+- **Stripe Tax (Davi, 2026-10-14: "turn on Stripe Tax"):** detect, don't configu
+- **Reset test payments (Davi, 2026-10-14):** /admin → Payments, **live key only
+- **Davi's decisions, 2026-10-14** (all in `docs/LAUNCH.md`: the "Decided" and "
+- **"I agree" boxes (Davi, 2026-10-15: "add those in"; branch `claude/squared-aw
+- **Google demo video: option B (Davi, 2026-10-15: "just do b"):** a separate de
+- **Gmail scopes: two (Davi, 2026-10-15: "remove the gmail.send permission"):** 
+- **Leads package (2026-10-16, branch `leads-build`; plan `ideas-plan-leads.md`:
+- **Ideas "control" package (2026-10-16, branch `ideas-build`; H3, H4, G7, E7 bu
+- **Ideas "numbers" package, part (2026-10-16, branch `ideas-build`; C8, H8, C5,
+- **Leads + ideas merge (2026-10-16, `ideas-build` ← `leads-build`):** leads' `0
+- **Growth cross-sell rule (Check 5 P1, 2026-10-17):** the app may mention Growt
+- **Growth code may not import inbox modules or tables (Check 2 P5):** no `@/mai
+- **Where email text may go (Check 48 P7, 2026-10-17):** only to Anthropic, as o
+- **Preview guard (Check 26 P2, 2026-10-17):** `previewGuard` (`src/config/envir
+- **Reserved columns (Check 50 P3, migration `0035_reserved_columns`):** added o
+- **Prompt versions (Check 50 P2, `src/ai/prompts/registry.ts`):** a new version
+- **Davi's decisions package (2026-10-16, branch `decisions-build`):** migration
+- **Replies package (2026-10-16, branch `replies-build`; Davi's answers that day
+- **Growth client portal (2026-10-16, branch `growth-portal`):** migration `0038
+- **Integration (2026-10-17, branch `integrate-3` on `wave0`):** decisions, repl
+- **Referral merge (2026-10-17, branch `referral-offer-a`):** the tip (cd15c59) 
+- **Wave 1 integration (2026-10-17, branch `integrate-w1` on `claude/squared-awa
+- **Referral merge 2 (2026-10-18, branch `referral-offer-a`):** production `main
+- **Wave 2 merge A (2026-10-18, branch `integrate-w2a`):** the Voice, Inbox, Syn
+- **Voice (wave 2, `w2-voice`):**
+- **Inbox (wave 2, `w2-inbox`):**
+- **Sync and Gmail connect (wave 2, `w2-sync`):**
+- **Queue screen (wave 2, `w2-queue`):**
+- **Wave 2 merge B (2026-10-18, branch `integrate-w2b`):** the Quotes and Money,
+- **Quotes and Money (wave 2, `w2-quotes`):**
+- **Settings and time zone (wave 2, `w2-settings`):**
+- **Follow-ups (wave 2, `w2-followups`):**
+- **Customers and senders (wave 2, `w2-customers`):**
+- **Autopilot rules (wave 2, `w2-autopilot`; Checks 20 P2 P13 P3 P8 P7 P6):** on
+- **Wave 2 merge C (2026-10-18, branch `integrate-w2c`):** the Mail format, Town
+- **Mail format (wave 2, `w2-mail`; Checks 43 P3 P4 P5 P6 P10, 42 P4):** every o
+- **Town, utility and job-kind lists (wave 2, `w2-lists`; Checks 22 P8, 36 P4 P5
+- **Numbers and Activity (wave 2, `w2-numbers`; Check 14 P2–P11 + Check 42 P5):*
+- **Billing and admin (wave 2, `w2-billing`; Checks 17 P2–P11, 16 P3–P10, 1 P3, 
+- **Wave 2 merge D (2026-10-18, branch `integrate-w2d`):** the Data and speed, P
+- **Wave 3 merge A (2026-10-19, branch `integrate-w3a`):** `w2-prompts` (wave 2 
+- **Model keep-until dates (Check 48 P2, 2026-10-19):** `modelLifecycle` in

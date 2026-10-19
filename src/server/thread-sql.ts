@@ -1,8 +1,16 @@
 import "server-only";
-import { eq, isNotNull, or, sql, type SQL } from "drizzle-orm";
+import { MAIL_LABELS } from "@/mailbox/connector";
+import { sql, type SQL } from "drizzle-orm";
 import { EMAIL_TO_TEXT_DOMAINS, PHONE_SERVICES } from "@/config/phone-services";
-import { messages, threads } from "@/db/schema";
-import { NO_REPLY_LOCAL_PATTERN, PUBLIC_WEBMAIL_DOMAINS } from "./sender-rules";
+import { messages, replyAddressExpr, threads } from "@/db/schema";
+import { LEAD_RELAY_LOCAL_PATTERN, LEAD_SOURCES } from "@/config/lead-sources";
+import { RECEIPT_SENDER_DOMAINS } from "./money-rules";
+import { FORM_SENDER_DOMAINS, FORM_SENDER_LOCAL_PATTERN } from "./reply-address-rules";
+import {
+  MACHINE_SENDER_DOMAINS,
+  NO_REPLY_LOCAL_PATTERN,
+  PUBLIC_WEBMAIL_DOMAINS,
+} from "./sender-rules";
 
 /**
  * SQL pieces about a thread, shared by the quote tracker, the scorecard and the summaries.
@@ -20,6 +28,16 @@ export const asDate = (v: unknown): Date | null => (v ? new Date(v as string | D
 const outerThreadId = () => sql`${threads.id}`;
 
 /**
+ * Check 47 P4: a label name (MAIL_LABELS, fixed constants) as SQL literals: a text literal for
+ * jsonb `?`, and a one-element jsonb array for `@>`. Never built from anything but the constants.
+ */
+const labelText = (label: (typeof MAIL_LABELS)[keyof typeof MAIL_LABELS]) => `'${label}'`;
+export const labelArray = (label: (typeof MAIL_LABELS)[keyof typeof MAIL_LABELS]) =>
+  `'${JSON.stringify([label])}'::jsonb`;
+export const labelSql = (label: (typeof MAIL_LABELS)[keyof typeof MAIL_LABELS]) =>
+  sql.raw(labelText(label));
+
+/**
  * An unsent Gmail draft, for a messages alias (`m`, `o`, …): DRAFT label and no SENT label —
  * the same rule as `isUnsentDraft` in sync.ts, so a row sync keeps is never one these checks
  * hide. Sync no longer stores drafts and a one-shot cleanup re-checks the old rows with Gmail,
@@ -28,7 +46,7 @@ const outerThreadId = () => sql`${threads.id}`;
  */
 export const unsentDraftSql = (alias: string) =>
   sql.raw(
-    `(${alias}.label_ids @> '["DRAFT"]'::jsonb and not (${alias}.label_ids @> '["SENT"]'::jsonb))`,
+    `(${alias}.label_ids @> ${labelArray(MAIL_LABELS.draft)} and not (${alias}.label_ids @> ${labelArray(MAIL_LABELS.sent)}))`,
   );
 
 /**
@@ -37,7 +55,7 @@ export const unsentDraftSql = (alias: string) =>
  * The choice was made at sync (`pickReplyTo`), so this is a plain coalesce.
  */
 export const replyAddressSql = (alias: string) =>
-  sql.raw(`lower(trim(coalesce(${alias}.reply_to_header->>'address', ${alias}.from_address)))`);
+  replyAddressExpr(sql.raw(`${alias}.reply_to_header`), sql.raw(`${alias}.from_address`));
 /** SQL twin of `customerReplyName`: the Reply-To's own name when it redirects, else From's. */
 export const replyNameSql = (alias: string) =>
   sql.raw(
@@ -45,9 +63,7 @@ export const replyNameSql = (alias: string) =>
   );
 /** The same two on the messages table, in a query-builder select / where. */
 export const messageReplyAddress = () =>
-  sql<
-    string | null
-  >`lower(trim(coalesce(${messages.replyToHeader}->>'address', ${messages.fromAddress})))`;
+  replyAddressExpr(messages.replyToHeader, messages.fromAddress);
 export const messageReplyName = () =>
   sql<
     string | null
@@ -63,12 +79,24 @@ export const customerNameSql = () =>
     string | null
   >`(select ${replyNameSql("cx_m")} from messages cx_m where cx_m.thread_id = ${outerThreadId()} and cx_m.direction = 'in' order by cx_m.sent_at desc limit 1)`;
 
+/**
+ * Check 13 P9: the outer thread's customer page key — the newest inbound email on the thread
+ * whose reply address is the thread's customer (`customerAddressSql`), and only one the
+ * Customers list would accept (inbox, not junk, not a lead site's notice, not a robot:
+ * `customerByKey`'s rule), so a link never leads to a 404. An opaque uuid; the address never
+ * goes in a URL. Null = no link.
+ */
+export const customerKeySql = () =>
+  sql<
+    string | null
+  >`(select ck_m.id::text from messages ck_m join threads ck_t on ck_t.id = ck_m.thread_id where ck_m.thread_id = ${outerThreadId()} and ck_m.direction = 'in' and ck_m.from_address is not null and ${replyAddressSql("ck_m")} = ${customerAddressSql()} and ck_t.in_inbox and ck_t.category is distinct from 'noise' and ck_t.lead_channel is null and not ${customerRobotSql(replyAddressSql("ck_m"))} order by ck_m.sent_at desc limit 1)`;
+
 /** Not an unsent Gmail draft, for a messages alias. */
 export const notDraftSql = (alias: string) => sql`not ${unsentDraftSql(alias)}`;
 
 /** The same, as a condition on the messages table in a query-builder WHERE. */
 export const unsentDraftMessage = () =>
-  sql`(${messages.labelIds} @> '["DRAFT"]'::jsonb and not (${messages.labelIds} @> '["SENT"]'::jsonb))`;
+  sql`(${messages.labelIds} @> ${sql.raw(labelArray(MAIL_LABELS.draft))} and not (${messages.labelIds} @> ${sql.raw(labelArray(MAIL_LABELS.sent))}))`;
 export const notDraftMessage = () => sql`not ${unsentDraftMessage()}`;
 
 /**
@@ -187,11 +215,34 @@ export const sideEmailSql = (alias: string) => sql`(${sideInSql(alias)} or ${sid
 export const lastInSql = () =>
   sql<
     string | Date | null
-  >`(select max(m.sent_at) from messages m where m.thread_id = ${outerThreadId()} and m.direction = 'in' and not ${sideEmailSql("m")})`;
+  >`(select max(m.sent_at) from messages m where m.thread_id = ${outerThreadId()} and m.direction = 'in' and not m.auto_reply and not ${sideEmailSql("m")})`;
 export const lastOutSql = () =>
   sql<
     string | Date | null
   >`greatest((select max(m.sent_at) from messages m where m.thread_id = ${outerThreadId()} and m.direction = 'out' and ${notDraftSql("m")} and not ${sideEmailSql("m")}), ${threads.handledOfflineAt})`;
+
+/**
+ * Check 21 P1: the customer's newest email that needs an answer — not an automatic reply, not
+ * a bare acknowledgement ("Thanks, we'll look it over and get back to you", `ack_only`).
+ */
+export const lastAnswerInSql = () =>
+  sql<
+    string | Date | null
+  >`(select max(m.sent_at) from messages m where m.thread_id = ${outerThreadId()} and m.direction = 'in' and not m.auto_reply and not m.ack_only and not ${sideEmailSql("m")})`;
+
+/**
+ * Check 21 P1: the ball is in the customer's court — the owner wrote, and everything the
+ * customer sent since was an acknowledgement or an automatic reply. Never NULL.
+ */
+export const ballInTheirCourtSql = () =>
+  sql`(${lastOutSql()} is not null and ${lastOutSql()} > coalesce(${lastAnswerInSql()}, '-infinity'::timestamptz))`;
+
+/**
+ * Check 21 P1: when the quiet started — the owner's last email, or the customer's later
+ * acknowledgement ("we'll look it over" on Tuesday: the wait counts from Tuesday).
+ */
+export const quietSinceSql = () =>
+  sql<string | Date | null>`greatest(${lastOutSql()}, ${lastInSql()})`;
 
 /**
  * Round 2 (FW E11): the owner said they answered by phone ("I called them") after the
@@ -209,32 +260,46 @@ export const answeredByPhoneSql = () =>
 export const waitingSinceSql = () =>
   sql<
     string | Date | null
-  >`(select min(w.sent_at) from messages w where w.thread_id = ${outerThreadId()} and w.direction = 'in' and not ${sideEmailSql("w")} and w.sent_at > coalesce(${lastOutSql()}, '-infinity'::timestamptz))`;
+  >`(select min(w.sent_at) from messages w where w.thread_id = ${outerThreadId()} and w.direction = 'in' and not w.auto_reply and not ${sideEmailSql("w")} and w.sent_at > coalesce(${lastOutSql()}, '-infinity'::timestamptz))`;
 
 /** The sender of that first waiting email (for WHERE clauses only: A2). */
 export const waitingSenderSql = () =>
-  sql`(select w.from_address from messages w where w.thread_id = ${outerThreadId()} and w.direction = 'in' and not ${sideEmailSql("w")} and w.sent_at > coalesce(${lastOutSql()}, '-infinity'::timestamptz) order by w.sent_at asc, w.id asc limit 1)`;
+  sql`(select w.from_address from messages w where w.thread_id = ${outerThreadId()} and w.direction = 'in' and not w.auto_reply and not ${sideEmailSql("w")} and w.sent_at > coalesce(${lastOutSql()}, '-infinity'::timestamptz) order by w.sent_at asc, w.id asc limit 1)`;
 
 /** Where a reply to that first waiting email goes (`replyAddressSql`; WHERE clauses only). */
 export const waitingReplySql = () =>
-  sql`(select ${replyAddressSql("w")} from messages w where w.thread_id = ${outerThreadId()} and w.direction = 'in' and not ${sideEmailSql("w")} and w.sent_at > coalesce(${lastOutSql()}, '-infinity'::timestamptz) order by w.sent_at asc, w.id asc limit 1)`;
+  sql`(select ${replyAddressSql("w")} from messages w where w.thread_id = ${outerThreadId()} and w.direction = 'in' and not w.auto_reply and not ${sideEmailSql("w")} and w.sent_at > coalesce(${lastOutSql()}, '-infinity'::timestamptz) order by w.sent_at asc, w.id asc limit 1)`;
 
 /**
- * SQL twin of `isQuoteThread`: sorted as a quote request, or has ever had an outcome
- * (a cleared guess or an owner's reopen keeps its source), whatever its category now.
+ * SQL twin of `isQuoteThread` (quote-rules.ts) — keep the two in step. A quote thread: sorted
+ * as a quote request, OR carrying the sticky `quote_requested_at` mark (Check 11 P1: the
+ * customer's "Could you do Thursday?" re-sorts the thread as scheduling, and the quote must
+ * stay on Quotes), OR it has ever had an outcome (a cleared guess or an owner's reopen keeps
+ * its source), whatever its category now — unless the owner said "Not a quote" (Check 11 P8)
+ * and hasn't marked an outcome since. A thread now sorted as noise, or holding an email
+ * that tried to instruct us (`extracted.injection`), is left out unless the owner marked it
+ * (`quote_outcome_source = 'owner'`, or an outcome from before the column, which is theirs).
  */
 export const quoteThreadSql = () =>
-  or(
-    eq(threads.category, "quote_request"),
-    isNotNull(threads.quoteOutcome),
-    isNotNull(threads.quoteOutcomeSource),
-  );
+  sql`(((${threads.quoteOutcomeSource} = 'owner' or (${threads.quoteOutcome} is not null and ${threads.quoteOutcomeSource} is null))
+    or (${threads.category} is distinct from 'noise'
+      and coalesce(${threads.extracted}->>'injection', '') <> 'true'
+      and (${threads.category} = 'quote_request' or ${threads.quoteRequestedAt} is not null or ${threads.quoteOutcome} is not null or ${threads.quoteOutcomeSource} is not null)))
+    and ${quoteNotDismissedSql()})`;
 
 /**
- * A quote request, even one later re-sorted (plan M8 A11): the sticky `quote_requested_at`
- * mark from classification, or the current quote-thread rule (older threads have no mark).
+ * Check 11 P8: not "Not a quote", or the owner marked an outcome after saying so. Never NULL
+ * (callers negate it).
  */
-export const quoteRequestSql = () => or(isNotNull(threads.quoteRequestedAt), quoteThreadSql());
+export const quoteNotDismissedSql = () =>
+  sql`(${threads.quoteDismissedAt} is null or coalesce(${threads.quoteOutcomeSource} = 'owner' and ${threads.quoteOutcomeAt} > ${threads.quoteDismissedAt}, false))`;
+
+/**
+ * A quote request, even one later re-sorted (plan M8 A11). Since Check 11 P1 this is the same
+ * rule as `quoteThreadSql` (which now holds the sticky mark), so Quotes and Activity count the
+ * same threads.
+ */
+export const quoteRequestSql = () => quoteThreadSql();
 
 /**
  * When a quote request was asked for, for the scorecard and the monthly summary: the sticky
@@ -259,12 +324,122 @@ export const requestReplySql = () =>
   sql`(select ${replyAddressSql("m")} from messages m where m.thread_id = ${outerThreadId()} and m.direction = 'in' and m.sent_at >= coalesce(${threads.quoteRequestedAt}, '-infinity'::timestamptz) order by m.sent_at asc, m.id asc limit 1)`;
 
 /**
+ * Check 12 P4: who an address is, for "the same sender" — its domain ("@supply.com"), or the
+ * whole address on public webmail (one gmail.com supplier says nothing about the rest).
+ */
+const senderKeySql = (addr: SQL) =>
+  sql`(case when ${domainOf(addr)} in (${WEBMAIL_SQL}) then ${addr} else '@' || ${domainOf(addr)} end)`;
+
+/** The outer thread's newest inbound sender, normalized (WHERE clauses only). */
+const newestSenderSql = () =>
+  sql`(select ${norm("bs_m.from_address")} from messages bs_m where bs_m.thread_id = ${outerThreadId()} and bs_m.direction = 'in' order by bs_m.sent_at desc limit 1)`;
+
+/**
+ * Another thread in the same workspace whose inbound mail comes from the same sender as the
+ * outer thread's newest email and matches `cond` (on alias `bs_t`). Content-free: addresses
+ * are only compared inside the database, never selected.
+ */
+const sameSenderThreadSql = (cond: SQL, byDomain: boolean) =>
+  sql`(${newestSenderSql()} like '%@%' and exists (select 1 from threads bs_t join messages bs_i on bs_i.thread_id = bs_t.id
+    where bs_t.mailbox_id in (select bs_x.id from mailboxes bs_x where bs_x.workspace_id = (select bs_w.workspace_id from mailboxes bs_w where bs_w.id = ${threads.mailboxId}))
+      and bs_t.id <> ${outerThreadId()} and bs_i.direction = 'in' and ${cond}
+      and ${
+        byDomain
+          ? sql`${senderKeySql(norm("bs_i.from_address"))} = ${senderKeySql(newestSenderSql())}`
+          : sql`${norm("bs_i.from_address")} = ${newestSenderSql()}`
+      }))`;
+
+/** Check 12 P4: the sender's business (domain) has another thread sorted supplier_vendor. */
+export const senderHasSupplierThreadSql = () =>
+  sameSenderThreadSql(sql`bs_t.category = 'supplier_vendor'`, true);
+/**
+ * Check 12 P4: the owner tapped "Not owed to me" on another thread from this exact address.
+ * Not the whole domain (safe default): a property manager's office or a company with several
+ * contacts shares one, and one hidden duplicate must not hide every colleague's invoice.
+ */
+export const senderMarkedNotOwedSql = () =>
+  sameSenderThreadSql(sql`bs_t.invoice_paid_source = 'not_owed'`, false);
+
+/**
+ * SQL twin of `billOwedByOwner` (money-rules.ts) — keep the two in step: a bill the business
+ * owes. Never NULL, so `not (...)` is safe.
+ */
+export const billOwedByOwnerSql = () =>
+  sql`coalesce((${threads.extracted}->>'bill_direction') = 'owed_by_business'
+    or ((${threads.extracted}->>'bill_direction') is distinct from 'owed_to_business'
+      and ${threads.invoicePaidSource} is distinct from 'owner'
+      and (${senderHasSupplierThreadSql()} or ${senderMarkedNotOwedSql()})), false)`;
+
+/**
  * SQL twin of `isNoReplyAddress` for an address expression: the local part before the last
  * "@" matches the shared no-reply pattern. Used only inside WHERE clauses, so the address
  * itself never leaves the database.
  */
 export const noReplySql = (address: SQL) =>
-  sql`(position('@' in coalesce(${address}, '')) > 1 and regexp_replace(lower(trim(${address})), '@[^@]*$', '') ~ ${NO_REPLY_LOCAL_PATTERN})`;
+  sql`(position('@' in coalesce(${address}, '')) > 1 and (regexp_replace(lower(trim(${address})), '@[^@]*$', '') ~ ${NO_REPLY_LOCAL_PATTERN} or ${hostIn(sql`regexp_replace(lower(trim(${address})), '^.*@', '')`, MACHINE_SENDER_DOMAINS)}))`;
+
+/** A host expression is one of these domains or a subdomain of one (`exact`: the host only). */
+const hostIn = (host: SQL, domains: readonly string[], exact = false) =>
+  domains.length
+    ? sql`(${sql.join(
+        domains.map((d) =>
+          exact ? sql`${host} = ${d}` : sql`(${host} = ${d} or ${host} like ${`%.${d}`})`,
+        ),
+        sql` or `,
+      )})`
+    : sql`false`;
+
+/**
+ * Check 13 P2: SQL twin of `isCustomerRobot` (customer-robot-rules.ts) for a reply-address
+ * expression: a no-reply or job-board sender, a website form's robot (no usable Reply-To was
+ * stored, or the address would be the person's), a lead platform's own address that isn't a
+ * per-customer relay, or a payment-receipt sender. WHERE clauses only.
+ */
+export const customerRobotSql = (address: SQL) => {
+  const a = sql`lower(trim(coalesce(${address}, '')))`;
+  const local = sql`regexp_replace(${a}, '@[^@]*$', '')`;
+  const host = sql`regexp_replace(${a}, '^.*@', '')`;
+  const leadHost = sql.join(
+    LEAD_SOURCES.map((s) => hostIn(host, s.domains, s.exact === true)),
+    sql` or `,
+  );
+  return sql`(position('@' in ${a}) > 1 and (${noReplySql(address)}
+    or ${hostIn(host, FORM_SENDER_DOMAINS)} or ${local} ~ ${FORM_SENDER_LOCAL_PATTERN}
+    or ((${leadHost}) and not ${local} ~ ${LEAD_RELAY_LOCAL_PATTERN})
+    or ${hostIn(host, RECEIPT_SENDER_DOMAINS)}))`;
+};
+
+/**
+ * Check 22 P10 + 41 P6: SQL twin of `isCrewAddress` (sender-rules.ts) for an address
+ * expression in workspace `workspaceId`: on the owner's crew list
+ * (`business_profile.crew_addresses`) or one of the workspace's own Gmail addresses; with
+ * `includeDomain` (Customers' "Your crew and subs" only), also on a connected mailbox's business
+ * domain (never public webmail). WHERE clauses / aggregates only, so the address never leaves
+ * the database.
+ */
+export const crewSql = (
+  workspaceId: string | SQL,
+  address: SQL,
+  opts: { includeDomain?: boolean } = {},
+) => {
+  const a = sql`lower(trim(coalesce(${address}, '')))`;
+  const w = typeof workspaceId === "string" ? sql`${workspaceId}::uuid` : workspaceId;
+  const domain = opts.includeDomain
+    ? sql` or (${domainOf(norm("cw_mb.email"))} not in (${WEBMAIL_SQL}) and ${domainOf(norm("cw_mb.email"))} = ${domainOf(a)})`
+    : sql``;
+  return sql`(position('@' in ${a}) > 1 and (
+    exists (select 1 from business_profile cw_bp where cw_bp.workspace_id = ${w} and ${a} = any(cw_bp.crew_addresses))
+    or exists (select 1 from mailboxes cw_mb where cw_mb.workspace_id = ${w} and (lower(trim(cw_mb.email)) = ${a}${domain}))
+  ))`;
+};
+
+/**
+ * Check 22 P10 + 41 P6: the outer thread is a conversation with the owner's own people only —
+ * it has inbound mail and every inbound email's reply address is crew (`crewSql`). A customer
+ * thread where the crew replied to a forward still has the customer on it, so it never is.
+ */
+export const crewThreadSql = (workspaceId: string | SQL) =>
+  sql`(exists (select 1 from messages cw_i where cw_i.thread_id = ${outerThreadId()} and cw_i.direction = 'in') and not exists (select 1 from messages cw_o where cw_o.thread_id = ${outerThreadId()} and cw_o.direction = 'in' and not ${crewSql(workspaceId, replyAddressSql("cw_o"))}))`;
 
 /**
  * SQL twin of `channelOf(from)?.kind` being `phone` or `phone_text` (leads package): the sender
@@ -281,3 +456,20 @@ export const phoneMessageSenderSql = (fromAddress: SQL) => {
   );
   return sql`(position('@' in ${a}) > 1 and (${a} in (${sql.join(senders, sql`, `)}) or ${sql.join(gateways, sql` or `)}))`;
 };
+
+/**
+ * Check 36 P3: the owner's newest email on the outer thread (not an unsent draft, not a side
+ * email): its text, for the "service call" rule only (an amount check in code). Never logged.
+ */
+export const ownerNewestBodySql = () =>
+  sql<
+    string | null
+  >`(select ow_m.body_text from messages ow_m where ow_m.thread_id = ${outerThreadId()} and ow_m.direction = 'out' and ${notDraftSql("ow_m")} and not ${sideEmailSql("ow_m")} order by ow_m.sent_at desc limit 1)`;
+
+/**
+ * Check 36 P3: SQL twin (a superset) of `isServiceCall`: an emergency-marked thread whose
+ * owner's newest email has no dollar figure at all. The code check (`isServiceCall`, on the
+ * owner's own words without the quoted part) is the real gate. Never NULL.
+ */
+export const serviceCallSql = () =>
+  sql`(coalesce(${threads.extracted}->>'emergency', '') = 'true' and coalesce(${ownerNewestBodySql()}, '') !~ '\\$\\s?[0-9]')`;

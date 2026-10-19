@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { getWorkspaceForUser } from "@/server/accounts";
+import { getWorkspaceForSession } from "@/server/accounts";
 import { badgeCount } from "@/server/badge";
 import { hitLimit } from "@/server/rate-limit";
 import { termsRequiredResponse } from "@/server/session";
@@ -15,7 +15,7 @@ export const dynamic = "force-dynamic";
  */
 export async function GET() {
   const session = await auth();
-  const workspace = session?.user?.id ? await getWorkspaceForUser(session.user.id) : null;
+  const workspace = await getWorkspaceForSession(session?.user);
   if (!workspace) return NextResponse.json({ error: "Sign in first." }, { status: 401 });
   // Not agreed to the current terms (Davi, 2026-10-15): 403, never a redirect.
   if (!(await termsAccepted(session!.user.id))) return termsRequiredResponse();

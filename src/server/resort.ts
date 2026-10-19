@@ -69,6 +69,7 @@ export async function resortThread(
             needsOwner: true,
             needsOwnerManual: true,
             needsOwnerReason: "You marked this a complaint.",
+            needsOwnerSince: sql`${nowIso}::timestamptz`,
             complainedAt: sql`greatest(${threads.complainedAt}, ${nowIso}::timestamptz)`,
           }
         : category === "noise"

@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { growthCopy } from "@/components/marketing/growth/growth-copy";
 import { GROWTH_OWNED, GROWTH_SERVICES } from "@/config/growth";
+import { siteConfig } from "@/config/site";
 
 /** Squared Away Growth copy guard: what the page may and may not say. */
 const SOURCES = [
@@ -14,6 +15,8 @@ const SOURCES = [
   "src/components/marketing/growth/big-words.tsx",
   "src/components/marketing/growth/big-words-rules.ts",
   "src/components/marketing/growth/growth-call-form.tsx",
+  "src/components/marketing/growth/growth-proof.tsx",
+  "src/config/growth-proof.ts",
   "src/config/growth.ts",
   "src/app/growth/page.tsx",
   "src/app/growth-actions.ts",
@@ -45,9 +48,30 @@ describe("Squared Away Growth copy", () => {
       expect(text).not.toMatch(/\$\s?\d/);
       expect(text).not.toMatch(/\bGC\b/);
       expect(text).not.toMatch(/can'?t send|cannot send|nothing can send|switched off entirely/i);
-      for (const banned of ["testimonial", "guarantee", "first group", "call booked"]) {
-        expect(text.toLowerCase()).not.toContain(banned);
+      for (const banned of [
+        "testimonial",
+        "guarantee",
+        "first group",
+        "call booked",
+        // Check 2 P1: nothing is booked; Davi calls them back, and that call is the free call.
+        "book a free call",
+        "booking",
+        "find a time",
+        // Check 3 P7: results we can't promise.
+        "first page",
+        "page one",
+        "#1",
+        "number one",
+        "more leads",
+        // Check 3 P7: Local Services badge names Google retired on 2025-10-20 ("Google
+        // Guaranteed" is caught by "guarantee" above).
+        "google screened",
+        "license verified",
+      ]) {
+        expect(text.toLowerCase(), banned).not.toContain(banned);
       }
+      // "rank" as a whole word only, so "frank" or "cranky" can't trip it.
+      expect(text).not.toMatch(/\brank(?:s|ed|ing)?\b/i);
     }
   });
 
@@ -96,7 +120,7 @@ describe("Squared Away Growth copy", () => {
       "Davi looks at what you have today — your Google listing, your pages, your site, your reviews — and tells you plainly what to do first and what it costs.",
     );
     expect(growthCopy.who.heavy).toBe("Davi, personally.");
-    expect(growthCopy.faq.items[4].a).toBe(
+    expect(growthCopy.faq.items.find((i) => i.q === "Who will I be dealing with?")?.a).toBe(
       "Davi Chaves, directly. For now, Davi does the work personally.",
     );
   });
@@ -145,13 +169,118 @@ describe("Squared Away Growth copy", () => {
   });
 
   it("labels the decorative switch plainly", () => {
-    expect(growthCopy.switch).toEqual({ from: "The app", to: "One-on-one" });
+    expect(growthCopy.switch).toEqual({ from: "Your inbox", to: "Your marketing" });
   });
 
   it("the homepage hero link and header link come from the copy file", () => {
     const home = readFileSync("src/app/page.tsx", "utf8");
-    expect(growthCopy.hero.link).toBe("Want more work coming in? See Squared Away Growth");
+    expect(growthCopy.hero.link).toBe(
+      "Want more work coming in? We also run ads, your Google listing and reviews",
+    );
+    // Check 6 P6: the hero link names at least two services.
+    const named = GROWTH_SERVICES.filter((s) =>
+      growthCopy.hero.link.toLowerCase().includes(s.label.toLowerCase()),
+    );
+    const words2 = ["ads", "google listing", "reviews", "website"].filter((w) =>
+      growthCopy.hero.link.toLowerCase().includes(w),
+    );
+    expect(Math.max(named.length, words2.length)).toBeGreaterThanOrEqual(2);
     expect(home).toContain("{growthCopy.hero.link}");
     expect(home).toContain("{growthCopy.header.link}");
+  });
+});
+
+describe("Check 5 P5: a Growth card for an existing app owner says they use the app", () => {
+  it("picks the line from inviteState only", () => {
+    const a = growthCopy.admin;
+    expect(a.growthOnlyLine("has_account")).toBe("Also uses the app.");
+    expect(a.growthOnlyLine("invited")).toBe("Invited to the app, not signed in yet.");
+    expect(a.growthOnlyLine("not_invited")).toBe(a.growthOnly);
+    expect(a.growthOnlyLine("invite_gone")).toBe(a.growthOnly);
+    expect(a.growthOnlyLine("has_account")).toBe(a.growthOnlyHasAccount);
+    expect(a.growthOnlyLine("invited")).toBe(a.growthOnlyInvited);
+  });
+});
+
+describe("Check 2 P4 / Check 3 P2: ad reach matches Meta's housing rules", () => {
+  it("pins both ad blurbs to 'in and around'", () => {
+    const blurb = (v: string) => GROWTH_SERVICES.find((s) => s.value === v)!.blurb;
+    expect(blurb("facebook_ads")).toBe(
+      "Ads shown to people in and around the towns you work in. Your own photos, plain words, and a clear way to reach you.",
+    );
+    expect(blurb("instagram_ads")).toBe(
+      "Your finished work, shown to people in and around the towns you work in. Built from your own photos, never stock pictures.",
+    );
+  });
+
+  it("never promises town-only targeting", () => {
+    const og = readFileSync("src/app/growth/opengraph-image.tsx", "utf8");
+    for (const text of [source, words, og]) {
+      expect(text.toLowerCase()).not.toContain("actually work in");
+      expect(text.toLowerCase()).not.toContain("only in your town");
+    }
+    for (const s of GROWTH_SERVICES) {
+      if (/\bads\b/i.test(`${s.label} ${s.blurb}`) && /\btowns?\b/i.test(s.blurb)) {
+        expect(s.blurb, s.value).toContain("in and around");
+      }
+    }
+  });
+
+  it("explains the radius in the FAQ", () => {
+    const item = growthCopy.faq.items.find(
+      (i) => i.q === "Can my Facebook ads show only in my town?",
+    );
+    expect(item?.a).toContain("at least 15 miles");
+  });
+});
+
+describe("Check 2 P1 / Check 3 P7: the banned list catches what it should", () => {
+  it("matches 'rank' only as a whole word", () => {
+    const rank = /\brank(?:s|ed|ing)?\b/i;
+    expect("We rank you first").toMatch(rank);
+    expect("Frank was cranky").not.toMatch(rank);
+  });
+});
+
+describe("Check 2 P7 + Check 6 P6: the first ground rule and the homepage hand-off", () => {
+  it("the inbox rule gives examples, not a complete list", () => {
+    expect(growthCopy.rules.items[0].body).toBe(
+      "Growth never touches your inbox. If you use the Squared Away app, your email is used only to run the app for you, like sorting, drafts and follow-ups, and never for Growth ads, posts or anything else outside the app.",
+    );
+  });
+
+  it("the bridge says what Growth is", () => {
+    expect(growthCopy.bridge.heavy).toBe("Need more jobs? We'll do the marketing for you.");
+    expect(growthCopy.bridge.body).toBe(
+      "Squared Away Growth is a separate service for anyone in the trades: ads, your Google listing, reviews and your website. It never touches your inbox, and you don't need the app to use it.",
+    );
+  });
+});
+
+describe("Check 3 P4: Not sure yet is a form choice, not a card", () => {
+  it("the services section still lists exactly GROWTH_SERVICES", async () => {
+    const { GROWTH_REQUEST_OPTIONS } = await import("@/config/growth");
+    expect(growthCopy.services.items.map((i) => i.title)).toEqual(
+      GROWTH_SERVICES.map((s) => s.label),
+    );
+    expect(words).not.toContain("Not sure yet — tell me");
+    expect(GROWTH_REQUEST_OPTIONS.at(-1)).toEqual({
+      value: "not_sure",
+      label: "Not sure yet — tell me what to do first",
+    });
+    // A stored request's services are comma-separated: no label may hold a comma.
+    for (const o of GROWTH_REQUEST_OPTIONS) expect(o.label).not.toContain(",");
+  });
+});
+
+describe("Check 33 P2: /growth says what owners search", () => {
+  it("title, description and eyebrow", () => {
+    expect(growthCopy.meta.title).toContain("Contractor marketing");
+    expect(growthCopy.meta.description.length).toBeLessThanOrEqual(160);
+    expect(growthCopy.meta.description).toContain(siteConfig.operator);
+    expect(growthCopy.opener.eyebrow).toContain("Massachusetts");
+    expect(growthCopy.opener.eyebrow).toBe(
+      "Squared Away Growth · marketing for contractors, run from Massachusetts",
+    );
   });
 });

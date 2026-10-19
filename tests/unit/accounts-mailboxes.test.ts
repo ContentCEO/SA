@@ -2,15 +2,18 @@ import { randomBytes } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Database } from "@/db";
-import { activityLog, invites, mailboxes, workspaces } from "@/db/schema";
+import { activityLog, drafts, invites, mailboxes, threads, workspaces } from "@/db/schema";
 import type { MailboxConnector } from "@/mailbox/connector";
 import { ensureUserAndWorkspace, isAllowedToSignIn } from "@/server/accounts";
 import {
+  MailboxInUseError,
   MailboxLimitError,
   disconnectMailbox,
   listMailboxes,
+  mailboxLimit,
   saveConnectedMailbox,
 } from "@/server/mailboxes";
+import { fitMailboxesToPlan, swapPlanMailbox } from "@/server/mailbox-plan";
 import { decryptSecret } from "@/lib/crypto";
 import { createTestDb } from "../support/db";
 
@@ -101,6 +104,46 @@ describe("mailboxes", () => {
     );
   });
 
+  it("GUARDRAIL: a Gmail live in another account is refused, nothing saved (Check 25 P7)", async () => {
+    const a = await ensureUserAndWorkspace({ email: "owner@shop.com" });
+    const b = await ensureUserAndWorkspace({ email: "spouse@shop.com" });
+    await database.insert(invites).values({ email: "spouse@shop.com" }).onConflictDoNothing();
+    await saveConnectedMailbox(a.workspace, connect("owner@shop.com"));
+    for (const status of ["active", "reconnect_needed", "paused"] as const) {
+      await database.update(mailboxes).set({ status });
+      await expect(
+        saveConnectedMailbox(b.workspace, connect("Owner@Shop.com", "rt-other")),
+      ).rejects.toBeInstanceOf(MailboxInUseError);
+    }
+    expect(await listMailboxes(b.workspace.id)).toEqual([]);
+    const [w] = await database.select().from(workspaces).where(eq(workspaces.id, b.workspace.id));
+    expect(w!.status).toBe("invited"); // no trial clock for a refused connect
+    const refused = await database
+      .select()
+      .from(activityLog)
+      .where(eq(activityLog.action, "mailbox_in_use_refused"));
+    expect(refused.map((r) => [r.workspaceId, r.detail])).toEqual([
+      [b.workspace.id, {}],
+      [b.workspace.id, {}],
+      [b.workspace.id, {}],
+    ]);
+    // The first account's mailbox and token are untouched.
+    const [box] = await database.select().from(mailboxes);
+    expect(box!.workspaceId).toBe(a.workspace.id);
+    expect(decryptSecret(box!.encryptedRefreshToken)).toBe("rt-owner@shop.com");
+  });
+
+  it("reconnecting in the same account still works, and after a disconnect the other account can connect", async () => {
+    const a = await ensureUserAndWorkspace({ email: "owner@shop.com" });
+    const b = await ensureUserAndWorkspace({ email: "spouse@shop.com" });
+    const first = await saveConnectedMailbox(a.workspace, connect("owner@shop.com"));
+    const again = await saveConnectedMailbox(a.workspace, connect("owner@shop.com", "rt-new"));
+    expect(again.id).toBe(first.id);
+    await disconnectMailbox(a.workspace.id, first.id, fakeConnector());
+    const moved = await saveConnectedMailbox(b.workspace, connect("owner@shop.com", "rt-b"));
+    expect((await listMailboxes(b.workspace.id)).map((m) => m.id)).toEqual([moved.id]);
+  });
+
   it("disconnect revokes at Google, deletes the mailbox, and logs it", async () => {
     const { workspace } = await ensureUserAndWorkspace({ email: "o@shop.com" });
     const m = await saveConnectedMailbox(workspace, connect("o@shop.com", "tok"));
@@ -136,5 +179,209 @@ describe("mailboxes", () => {
     expect(await disconnectMailbox(b.workspace.id, m.id, fakeConnector(revoke))).toBe(false);
     expect(revoke).not.toHaveBeenCalled();
     expect(await database.select().from(mailboxes)).toHaveLength(1);
+  });
+});
+
+// --- Plan #47 offer A: the plan that counts, and Gmail addresses over it (§3.6) -----------
+// Since the referral merge (2026-10-17) the referral engine pauses through the decisions
+// package's plan pause (`mailboxes.plan_paused_at`, `fitMailboxesToPlan`); these tests pin that
+// the plan that counts is `effectivePlan` (a running free month's higher plan).
+
+describe("inbox limits follow the plan that counts", () => {
+  const NOW = new Date("2026-10-16T15:00:00Z");
+  const DAY = 86_400_000;
+  let workspaceId: string;
+
+  async function ws() {
+    const [w] = await database.select().from(workspaces).where(eq(workspaces.id, workspaceId));
+    return w!;
+  }
+  async function setPlan(values: Partial<typeof workspaces.$inferInsert>) {
+    await database.update(workspaces).set(values).where(eq(workspaces.id, workspaceId));
+  }
+  /** Inboxes made a day apart: a, b, c (oldest first). */
+  async function threeInboxes() {
+    await setPlan({ plan: "crew", status: "active", setupPaidVia: "stripe" });
+    const ids: string[] = [];
+    for (const [i, e] of ["a@x.com", "b@x.com", "c@x.com"].entries()) {
+      const m = await saveConnectedMailbox(await ws(), connect(e));
+      await database
+        .update(mailboxes)
+        .set({ createdAt: new Date(NOW.getTime() - (10 - i) * DAY) })
+        .where(eq(mailboxes.id, m.id));
+      ids.push(m.id);
+    }
+    return ids;
+  }
+  /** email → [status, paused on the plan]. */
+  const byEmail = async () =>
+    Object.fromEntries(
+      (await database.select().from(mailboxes)).map((m) => [
+        m.email,
+        [m.status, m.planPausedAt !== null],
+      ]),
+    );
+  const logs = (action: string) =>
+    database.select().from(activityLog).where(eq(activityLog.action, action));
+
+  beforeEach(async () => {
+    workspaceId = (await ensureUserAndWorkspace({ email: "o@shop.com" })).workspace.id;
+  });
+
+  it("a running free month raises the limit, and it drops at the end with no job", async () => {
+    await setPlan({ plan: "solo", freePlan: "crew", freePlanUntil: new Date(NOW.getTime() + DAY) });
+    const w = await ws();
+    expect(mailboxLimit(w, NOW)).toBe(3);
+    expect(mailboxLimit(w, new Date(NOW.getTime() + DAY))).toBe(1);
+    expect(mailboxLimit({ ...w, freePlan: null }, NOW)).toBe(1);
+    expect(mailboxLimit({ plan: null, freePlan: null, freePlanUntil: null }, NOW)).toBe(1);
+  });
+
+  it("over the limit, the newest-created inboxes pause; a reconnect never moves the first one back", async () => {
+    const [a] = await threeInboxes();
+    // The first inbox is reconnected mid-month: connected_at moves, created_at doesn't.
+    await saveConnectedMailbox(await ws(), connect("a@x.com", "new-token"));
+    expect((await database.select().from(mailboxes).where(eq(mailboxes.id, a!)))[0]!.status).toBe(
+      "active",
+    );
+    await setPlan({ plan: "solo" });
+    expect(await fitMailboxesToPlan(workspaceId, NOW)).toEqual({ paused: 2, resumed: 0 });
+    expect(await byEmail()).toEqual({
+      "a@x.com": ["active", false],
+      "b@x.com": ["active", true],
+      "c@x.com": ["active", true],
+    });
+    const fit = await logs("mailboxes_fit_plan");
+    expect(fit.map((l) => l.detail)).toEqual([{ paused: 2, resumed: 0, limit: 1 }]);
+    // Idempotent: nothing more to pause, nothing more logged. Nothing was deleted.
+    expect(await fitMailboxesToPlan(workspaceId, NOW)).toEqual({ paused: 0, resumed: 0 });
+    expect(await logs("mailboxes_fit_plan")).toHaveLength(1);
+    expect(await database.select().from(mailboxes)).toHaveLength(3);
+  });
+
+  it("an inbox that needs a reconnect still counts against the limit", async () => {
+    await threeInboxes();
+    await database
+      .update(mailboxes)
+      .set({ status: "reconnect_needed" })
+      .where(eq(mailboxes.email, "a@x.com"));
+    await setPlan({ plan: "solo" });
+    await fitMailboxesToPlan(workspaceId, NOW);
+    expect(await byEmail()).toEqual({
+      "a@x.com": ["reconnect_needed", false],
+      "b@x.com": ["active", true],
+      "c@x.com": ["active", true],
+    });
+  });
+
+  it("a free month that is still running keeps every inbox on; its end pauses the extras", async () => {
+    await threeInboxes();
+    await setPlan({ plan: "solo", freePlan: "crew", freePlanUntil: new Date(NOW.getTime() + DAY) });
+    expect(await fitMailboxesToPlan(workspaceId, NOW)).toEqual({ paused: 0, resumed: 0 });
+    expect(await fitMailboxesToPlan(workspaceId, new Date(NOW.getTime() + DAY))).toEqual({
+      paused: 2,
+      resumed: 0,
+    });
+  });
+
+  it("pausing an inbox stops its autopilot countdowns (and no other inbox's)", async () => {
+    const ids = await threeInboxes();
+    for (const mailboxId of ids) {
+      const [t] = await database
+        .insert(threads)
+        .values({ mailboxId, gmailThreadId: `t-${mailboxId}` })
+        .returning();
+      await database.insert(drafts).values({
+        threadId: t!.id,
+        mailboxId,
+        gmailDraftId: `g-${mailboxId}`,
+        toAddress: "dana@customer.com",
+        subject: "Re",
+        body: "b",
+        originalBody: "b",
+        reason: "r",
+        promptVersion: "draft.v1",
+        autoSendAt: new Date(NOW.getTime() + 600_000),
+      });
+    }
+    await setPlan({ plan: "solo" });
+    await fitMailboxesToPlan(workspaceId, NOW);
+    const left = await database.select().from(drafts);
+    expect(left.filter((d) => d.autoSendAt !== null).map((d) => d.mailboxId)).toEqual([ids[0]]);
+  });
+
+  it("reconnecting a paused inbox keeps it paused; a new address at the limit is refused", async () => {
+    await threeInboxes();
+    await setPlan({ plan: "solo" });
+    await fitMailboxesToPlan(workspaceId, NOW);
+    await saveConnectedMailbox(await ws(), connect("b@x.com"));
+    expect((await byEmail())["b@x.com"]).toEqual(["active", true]);
+    // A new address is refused as before (paused inboxes are still connected).
+    expect(
+      await saveConnectedMailbox(await ws(), connect("d@x.com")).catch((e: unknown) => e),
+    ).toBeInstanceOf(MailboxLimitError);
+
+    await setPlan({ plan: "crew" });
+    await fitMailboxesToPlan(workspaceId, NOW);
+    expect((await byEmail())["b@x.com"]).toEqual(["active", false]);
+  });
+
+  it("disconnecting an inbox that is on switches the oldest paused one back on", async () => {
+    const [a] = await threeInboxes();
+    await setPlan({ plan: "solo" });
+    await fitMailboxesToPlan(workspaceId, NOW);
+    expect(await disconnectMailbox(workspaceId, a!, fakeConnector())).toBe(true);
+    expect(await byEmail()).toEqual({
+      "b@x.com": ["active", false],
+      "c@x.com": ["active", true],
+    });
+  });
+
+  it("a free month's plan makes room: paused inboxes come back on, up to its limit", async () => {
+    await threeInboxes();
+    await setPlan({ plan: "solo" });
+    await fitMailboxesToPlan(workspaceId, NOW);
+    await setPlan({ freePlan: "crew", freePlanUntil: new Date(NOW.getTime() + 30 * DAY) });
+    expect(await fitMailboxesToPlan(workspaceId, NOW)).toEqual({ paused: 0, resumed: 2 });
+    expect(Object.values(await byEmail()).every(([, p]) => p === false)).toBe(true);
+  });
+
+  it("an inbox that lost Google access keeps that state through a pause and back", async () => {
+    const [, b] = await threeInboxes();
+    const lostAt = new Date(NOW.getTime() - DAY);
+    await database
+      .update(mailboxes)
+      .set({ status: "reconnect_needed", accessLostAt: lostAt, accessAlertsSent: 1 })
+      .where(eq(mailboxes.id, b!));
+    await setPlan({ plan: "solo" });
+    await fitMailboxesToPlan(workspaceId, NOW);
+    expect((await byEmail())["b@x.com"]).toEqual(["reconnect_needed", true]);
+    await setPlan({ plan: "crew" });
+    await fitMailboxesToPlan(workspaceId, NOW);
+    const [row] = await database.select().from(mailboxes).where(eq(mailboxes.id, b!));
+    expect(row).toMatchObject({
+      status: "reconnect_needed",
+      planPausedAt: null,
+      accessLostAt: lostAt,
+      accessAlertsSent: 1,
+    });
+  });
+
+  it("the owner can swap which inbox is on under a free month's limit too", async () => {
+    const [a, b] = await threeInboxes();
+    await setPlan({ plan: "solo" });
+    await fitMailboxesToPlan(workspaceId, NOW);
+    expect(await swapPlanMailbox(workspaceId, b!, a!, NOW)).toBe("swapped");
+    expect(await byEmail()).toEqual({
+      "a@x.com": ["active", true],
+      "b@x.com": ["active", false],
+      "c@x.com": ["active", true],
+    });
+    // A running free month's plan has room: switching one on needs nothing paused in its place.
+    await setPlan({ freePlan: "crew", freePlanUntil: new Date(NOW.getTime() + DAY) });
+    expect(await swapPlanMailbox(workspaceId, a!, null, NOW)).toBe("resumed");
+    // Another workspace's ids never move.
+    const other = (await ensureUserAndWorkspace({ email: "x@other.com" })).workspace.id;
+    expect(await swapPlanMailbox(other, b!, null, NOW)).toBe("not_found");
   });
 });

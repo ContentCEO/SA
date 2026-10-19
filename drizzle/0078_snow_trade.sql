@@ -1,0 +1,1 @@
+ALTER TYPE "public"."trade" ADD VALUE 'snow' BEFORE 'other';

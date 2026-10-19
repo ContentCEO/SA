@@ -28,6 +28,7 @@ import {
   markAnsweredByPhone,
   sendFirstDraftsReady,
   trialCounts,
+  trialActivityCounts,
 } from "@/server/first-week";
 import {
   answeredByPhone,
@@ -111,7 +112,7 @@ describe("first-week rules (pure)", () => {
     expect(isLastDay(25 * HOUR)).toBe(false);
     expect(isLastDay(0)).toBe(false);
     expect(trialSoFarLine({ sorted: 14, drafted: 6 })).toBe(
-      "So far it has sorted 14 emails and written 6 drafts for you.",
+      "So far it has sorted 14 conversations and written 6 drafts for you.",
     );
     expect(trialSoFarLine({ sorted: 0, drafted: 0 })).toBeNull();
     expect(waitingLine({ drafts: 6, needsYou: 1 })).toBe(
@@ -228,6 +229,8 @@ describe("first week, with the database", () => {
     inAt?: Date;
     outAt?: Date;
     classifiedAt?: Date;
+    /** Check 21 P5: a newer email from the same address elsewhere would answer a quiet quote. */
+    from?: string;
   }) {
     const id = `g${++g}`;
     const inAt = o.inAt ?? ago(2 * HOUR);
@@ -248,7 +251,7 @@ describe("first week, with the database", () => {
       mailboxId,
       gmailMessageId: `${id}-in`,
       direction: "in",
-      fromAddress: "dana@customer.com",
+      fromAddress: o.from ?? "dana@customer.com",
       bodyText: "Can you quote a water heater swap?",
       sentAt: inAt,
     });
@@ -290,7 +293,11 @@ describe("first week, with the database", () => {
     const drafted = await thread({});
     const draft = await pendingDraft(drafted);
     const needs = await thread({ needsOwner: true });
-    const quiet = await thread({ inAt: ago(6 * DAY), outAt: ago(5 * DAY) });
+    const quiet = await thread({
+      inAt: ago(6 * DAY),
+      outAt: ago(5 * DAY),
+      from: "lee@customer.com",
+    });
 
     // Before: a nudge is due, the needs-you card shows.
     expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([quiet]);
@@ -326,6 +333,15 @@ describe("first week, with the database", () => {
       fromAddress: "dana@customer.com",
       sentAt: new Date(NOW.getTime() + HOUR),
     });
+    // Check 10 P1: the call cleared the flag (logged by: phone); the sorter raises it again
+    // for the new email when it needs the owner, from that email's time.
+    expect(
+      (await database.select().from(threads).where(eq(threads.id, needs)))[0]!.needsOwner,
+    ).toBe(false);
+    await database
+      .update(threads)
+      .set({ needsOwner: true, needsOwnerSince: new Date(NOW.getTime() + HOUR) })
+      .where(eq(threads.id, needs));
     expect(
       (await queueMembership(workspaceId, new Date(NOW.getTime() + 2 * HOUR))).needsYou.map(
         (m) => m.threadId,
@@ -400,6 +416,37 @@ describe("first week, with the database", () => {
     expect((await firstLookFor(w!, NOW)).show).toBe(false);
   });
 
+  it("found money counts every slipped quote, while one tap still drafts 10 (Check 14 P8)", async () => {
+    await database
+      .update(mailboxes)
+      .set({ backfillCompletedAt: ago(2 * HOUR) })
+      .where(eq(mailboxes.id, mailboxId));
+    const [w] = await database.select().from(workspaces).where(eq(workspaces.id, workspaceId));
+    const made: string[] = [];
+    for (let i = 0; i < 14; i++) made.push(await thread({ inAt: ago(DAY + i * HOUR) }));
+
+    const look = await firstLookFor(w!, NOW);
+    expect(look.counts.unansweredQuotes).toBe(14);
+    expect(foundMoneyLine(look.counts)).toBe(
+      "14 quote requests still have no answer. Draft the newest 10? You check each one before anything goes out.",
+    );
+    expect(firstLookLines(look.counts, 14)[1]).toContain("(14 with no answer or draft yet)");
+
+    const found = await claimFoundMoneyDrafts(w!, NOW);
+    expect(found!.replies).toHaveLength(10);
+    // The newest 10.
+    expect(found!.replies).toEqual(made.slice(0, 10));
+  });
+
+  it("found money under the cap: no 'newest' wording (Check 14 P8)", () => {
+    expect(foundMoneyLine({ unansweredQuotes: 3, quietQuotes: 0 })).toBe(
+      "3 quote requests still have no answer. Want drafts? You check each one before anything goes out.",
+    );
+    expect(foundMoneyLine({ unansweredQuotes: 12, quietQuotes: 2 })).toBe(
+      "12 quote requests still have no answer, and 2 quotes you sent never got a follow-up. Draft up to 10 of each, newest first? You check each one before anything goes out.",
+    );
+  });
+
   it("'your first drafts are ready': once, only after reading + voice, only with a draft waiting", async () => {
     const sent: OutgoingEmail[] = [];
     const send = async (e: OutgoingEmail): Promise<SendOutcome> => {
@@ -455,6 +502,51 @@ describe("first week, with the database", () => {
     await pendingDraft(t);
     const [w] = await database.select().from(workspaces).where(eq(workspaces.id, workspaceId));
     expect(await trialCounts(w!)).toEqual({ sorted: 1, drafted: 1 });
+  });
+
+  it("Activity's trial box: sorted, drafted, changed and practice copies since the start (Check 14 P9)", async () => {
+    await database
+      .update(workspaces)
+      .set({ status: "evaluating", evaluationStartedAt: ago(2 * DAY) })
+      .where(eq(workspaces.id, workspaceId));
+    const t1 = await thread({ inAt: ago(DAY) });
+    const t2 = await thread({ inAt: ago(DAY) });
+    const t3 = await thread({ inAt: ago(DAY) });
+    await thread({ inAt: ago(5 * DAY), classifiedAt: ago(5 * DAY) });
+    await pendingDraft(t1);
+    const tweaked = await pendingDraft(t2);
+    const edited = await pendingDraft(t3);
+    await database.update(drafts).set({ revisions: 1 }).where(eq(drafts.id, tweaked.id));
+    await database
+      .update(drafts)
+      .set({ body: "Thanks! I can come Tuesday." })
+      .where(eq(drafts.id, edited.id));
+    // Practice copies: two in the trial, one from before it (not counted), another account's.
+    const practice = (ws: string, createdAt: Date) =>
+      database.insert(activityLog).values({
+        workspaceId: ws,
+        actor: "owner",
+        action: "practice_sent",
+        detail: {},
+        createdAt,
+      });
+    await practice(workspaceId, ago(DAY));
+    await practice(workspaceId, ago(HOUR));
+    await practice(workspaceId, ago(3 * DAY));
+    const [w] = await database.select().from(workspaces).where(eq(workspaces.id, workspaceId));
+    expect(await trialActivityCounts(w!)).toEqual({
+      sorted: 3,
+      drafted: 3,
+      changed: 2,
+      practice: 2,
+    });
+    // No clock yet: zeros, no error.
+    expect(await trialActivityCounts({ ...w!, evaluationStartedAt: null })).toEqual({
+      sorted: 0,
+      drafted: 0,
+      changed: 0,
+      practice: 0,
+    });
   });
 
   it("the invite email: once per invite, not after sign-in, and never fails the invite", async () => {

@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { auth } from "@/auth";
-import { getWorkspaceForUser } from "@/server/accounts";
+import { getWorkspaceForSession } from "@/server/accounts";
 import { draftSendQueued, enqueue } from "@/jobs/client";
 import { queueSend } from "@/server/drafts";
 import { SENDING_BLOCKED_MESSAGE, SendingBlockedError } from "@/server/lifecycle";
@@ -34,7 +34,7 @@ export async function POST(request: NextRequest, ctx: RouteContext<"/api/drafts/
   }
   const session = await auth();
   if (!session?.user?.id) return NextResponse.json({ error: "Sign in first." }, { status: 401 });
-  const workspace = await getWorkspaceForUser(session.user.id);
+  const workspace = await getWorkspaceForSession(session.user);
   if (!workspace) return NextResponse.json({ error: "Sign in first." }, { status: 401 });
   // Not agreed to the current terms (Davi, 2026-10-15): 403 before anything is sent.
   if (!(await termsAccepted(session.user.id))) return termsRequiredResponse();

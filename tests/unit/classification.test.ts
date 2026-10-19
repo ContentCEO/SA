@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { setModelTransportForTests } from "@/ai/client";
+import { ACTIVE } from "@/ai/prompts/registry";
 import type { Database } from "@/db";
 import { messages, threads, workspaces } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
@@ -9,7 +10,11 @@ import * as autoOutcomes from "@/server/auto-outcomes";
 import { classifyPending, markNeedsOwner } from "@/server/classification";
 import { listInboxThreads } from "@/server/inbox";
 import { saveConnectedMailbox } from "@/server/mailboxes";
+import { UTILITY_DATE_REASON, UTILITY_SCAM_REASON } from "@/ai/guards";
+import { createDraftForThread, queueMembership } from "@/server/drafts";
 import { createTestDb } from "../support/db";
+import { UTILITY_EMAILS } from "../support/utility-emails";
+import { DATE_BOUND_CODE } from "../support/no-date-params";
 import { classification, fakeTransport } from "../support/fake-model";
 
 const NOW = new Date("2026-09-28T12:00:00Z");
@@ -82,6 +87,8 @@ describe("classifyPending", () => {
       needsOwner: true,
       priority: "high",
       summary: "Leak came back.",
+      // Check 30 P6: the version that wrote `extracted`.
+      classifiedPromptVersion: ACTIVE.classify,
     });
     const pending = await database.select().from(messages).where(eq(messages.classifiedAt, NOW));
     expect(pending).toHaveLength(2);
@@ -113,7 +120,11 @@ describe("classifyPending", () => {
     await classifyPending(mailboxId, { now: NOW });
     expect(calls).toHaveLength(0);
     const [row] = await database.select().from(threads);
-    expect(row).toMatchObject({ category: "noise", needsOwner: false });
+    expect(row).toMatchObject({
+      category: "noise",
+      needsOwner: false,
+      classifiedPromptVersion: ACTIVE.classify,
+    });
   });
 
   it("tells the model when a sender is new", async () => {
@@ -123,6 +134,99 @@ describe("classifyPending", () => {
     setModelTransportForTests(transport);
     await classifyPending(mailboxId, { now: NOW });
     expect(calls[0]!.user).toContain("First time this sender has emailed the business: yes");
+  });
+
+  describe("lead sites and voicemail services (Check 22 P7)", () => {
+    const big = () =>
+      classification({ signals: { ...classification().signals, large_request: true } });
+    const hitsOf = async (id: string) => {
+      const [row] = await database.select().from(threads).where(eq(threads.id, id));
+      return {
+        row: row!,
+        hits: (row!.extracted as { owner_rule_hits?: string[] }).owner_rule_hits ?? [],
+      };
+    };
+
+    it("a second Thumbtack lead for a big job is still a new customer", async () => {
+      const first = await thread("tt1");
+      await message(first.id, "tt1-m", {
+        fromAddress: "leads@thumbtack.com",
+        fromName: "Thumbtack",
+        subject: "New lead: deck",
+        replyToHeader: {},
+        sentAt: daysAgo(5),
+        classifiedAt: daysAgo(5),
+      });
+      const second = await thread("tt2");
+      await message(second.id, "tt2-m", {
+        fromAddress: "leads@thumbtack.com",
+        fromName: "Thumbtack",
+        subject: "New lead: home addition",
+        replyToHeader: {},
+      });
+      setModelTransportForTests(fakeTransport([big()]).transport);
+      await classifyPending(mailboxId, { now: NOW });
+      const { row, hits } = await hitsOf(second.id);
+      expect(row.needsOwner).toBe(true);
+      expect(hits).toContain("big_new_job");
+    });
+
+    it("a repeat customer's own address with a big job is not new", async () => {
+      const t = await thread("rep");
+      await message(t.id, "rep-old", { sentAt: daysAgo(6), classifiedAt: daysAgo(6) });
+      await message(t.id, "rep-new", { replyToHeader: {} });
+      setModelTransportForTests(fakeTransport([big()]).transport);
+      await classifyPending(mailboxId, { now: NOW });
+      expect((await hitsOf(t.id)).hits).not.toContain("big_new_job");
+    });
+
+    it("a voicemail from a number seen before is not first time; a new number is", async () => {
+      const vm = (id: string, subject: string, over: Partial<typeof messages.$inferInsert> = {}) =>
+        thread(id).then(async (t) => {
+          await message(t.id, `${id}-m`, {
+            fromAddress: "voice-noreply@google.com",
+            fromName: "Google Voice",
+            subject,
+            bodyText: "Voicemail transcript: we want a whole new kitchen.",
+            replyToHeader: {},
+            ...over,
+          });
+          return t.id;
+        });
+      await vm("vm-old", "New voicemail from (508) 555-1234", {
+        sentAt: daysAgo(9),
+        classifiedAt: daysAgo(9),
+      });
+      const again = await vm("vm-again", "New voicemail from (508) 555-1234");
+      const fresh = await vm("vm-new", "New voicemail from (617) 555-9876", {
+        sentAt: new Date(NOW.getTime() - 3_600_000),
+      });
+      const { transport, calls } = fakeTransport([big(), big()]);
+      setModelTransportForTests(transport);
+      await classifyPending(mailboxId, { now: NOW });
+      expect(calls).toHaveLength(2);
+      expect((await hitsOf(again)).hits).not.toContain("big_new_job");
+      expect((await hitsOf(fresh)).hits).toContain("big_new_job");
+    });
+  });
+
+  it("a returning customer's big job doesn't read 'new' in the first year (Check 41 P5)", async () => {
+    const t = await thread("rosa");
+    await message(t.id, "rosa-1", {
+      fromAddress: "pat@x.com",
+      bodyText: "You did our interior two years ago. Ready to do the whole exterior now.",
+      sentAt: daysAgo(10),
+    });
+    setModelTransportForTests(
+      fakeTransport([
+        classification({ signals: { ...classification().signals, large_request: true } }),
+      ]).transport,
+    );
+    await classifyPending(mailboxId, { now: NOW });
+    const [row] = await database.select().from(threads).where(eq(threads.id, t.id));
+    expect(row!.needsOwnerReason).toBe(
+      "Big job from someone who hasn't written in the mail we've read so far.",
+    );
   });
 
   it("never clears the owner's own 'This one needs me'", async () => {
@@ -137,6 +241,49 @@ describe("classifyPending", () => {
       needsOwnerManual: true,
       needsOwnerReason: "You marked this one.",
     });
+  });
+
+  it("Check 10 P1: the flag remembers when it went up (the email's time), kept while it stays up", async () => {
+    const t = await thread("t1");
+    await message(t.id, "m1", { sentAt: daysAgo(2) });
+    setModelTransportForTests(
+      fakeTransport([classification({ category: "complaint", needs_owner: true })]).transport,
+    );
+    await classifyPending(mailboxId, { now: NOW });
+    let [row] = await database.select().from(threads);
+    expect(row!.needsOwnerSince).toEqual(daysAgo(2));
+    // A second email while it's still up keeps the first time.
+    await message(t.id, "m2", { sentAt: daysAgo(1) });
+    setModelTransportForTests(
+      fakeTransport([classification({ category: "complaint", needs_owner: true })]).transport,
+    );
+    await classifyPending(mailboxId, { now: NOW });
+    [row] = await database.select().from(threads);
+    expect(row!.needsOwnerSince).toEqual(daysAgo(2));
+    // Down again: no time.
+    await message(t.id, "m3", { sentAt: daysAgo(0.5) });
+    setModelTransportForTests(
+      fakeTransport([classification({ category: "scheduling", needs_owner: false })]).transport,
+    );
+    await classifyPending(mailboxId, { now: NOW });
+    [row] = await database.select().from(threads);
+    expect(row).toMatchObject({ needsOwner: false, needsOwnerSince: null });
+  });
+
+  it("Check 10 P7: a sort that failed twice is stored as unreadable", async () => {
+    const t = await thread("t1");
+    await message(t.id, "m1");
+    setModelTransportForTests(fakeTransport([null, { junk: true }]).transport);
+    await classifyPending(mailboxId, { now: NOW });
+    const [row] = await database.select().from(threads).where(eq(threads.id, t.id));
+    expect(row!.extracted).toMatchObject({ unreadable: true });
+    expect(row!.needsOwner).toBe(true);
+    // The next sort that works drops the mark.
+    await message(t.id, "m2", { sentAt: daysAgo(0.5) });
+    setModelTransportForTests(fakeTransport([classification()]).transport);
+    await classifyPending(mailboxId, { now: NOW });
+    const [again] = await database.select().from(threads).where(eq(threads.id, t.id));
+    expect((again!.extracted as Record<string, unknown>).unreadable).toBeUndefined();
   });
 
   it("stops cleanly at the daily cap", async () => {
@@ -692,7 +839,8 @@ describe("sticky quote-request facts (M8 A11)", () => {
       () => null,
       (e: unknown) => e as { cause?: unknown },
     );
-    expect(String(err?.cause ?? err)).toMatch(/A Date was bound into SQL/);
+    // Check 26 P5: the error is a SafeQueryError (no cause); the guard's code names it.
+    expect(String(err?.cause ?? err)).toContain(`(code ${DATE_BOUND_CODE})`);
     await expect(
       database.execute(sql`select ${NOW.toISOString()}::timestamptz as t`),
     ).resolves.toBeDefined();
@@ -742,5 +890,176 @@ describe("sticky quote-request facts (M8 A11)", () => {
     );
     await classifyPending(mailboxId, { now: NOW });
     expect((await rowOf(t.id)).jobKind).toBe("Remodels and renovations");
+  });
+});
+
+describe("Check 37 P3: the electric company", () => {
+  const noise = (dates: string[] = []) =>
+    classification({
+      category: "noise",
+      priority: "low",
+      summary: "Automated notice.",
+      extracted: { ...classification().extracted, dates },
+    });
+  async function sortOne(
+    id: string,
+    e: { fromName: string; fromAddress: string; subject: string; body: string },
+    model: ReturnType<typeof classification>,
+  ) {
+    const t = await thread(id);
+    await message(t.id, `${id}-m`, {
+      fromName: e.fromName,
+      fromAddress: e.fromAddress,
+      subject: e.subject,
+      bodyText: e.body,
+    });
+    setModelTransportForTests(fakeTransport([model]).transport);
+    await classifyPending(mailboxId, { now: NOW });
+    const [row] = await database.select().from(threads).where(eq(threads.id, t.id));
+    return row!;
+  }
+
+  it("the status robot and the outage are not junk", async () => {
+    const status = await sortOne("u1", UTILITY_EMAILS.status, noise());
+    expect(status.category).toBe("customer_question");
+    expect(status.priority).not.toBe("low");
+    expect((status.extracted as { utility?: boolean }).utility).toBe(true);
+    const outage = await sortOne("u2", UTILITY_EMAILS.outage, noise(["Tuesday 10/21 9am-1pm"]));
+    expect(outage.category).toBe("scheduling");
+    expect(outage.needsOwner).toBe(true);
+    expect(outage.needsOwnerReason).toBe(UTILITY_DATE_REASON);
+  });
+
+  it("a utility in the Promotions tab is still read", async () => {
+    const t = await thread("u-promo");
+    await message(t.id, "u-promo-m", {
+      ...UTILITY_EMAILS.status,
+      bodyText: UTILITY_EMAILS.status.body,
+      labelIds: ["INBOX", "CATEGORY_PROMOTIONS"],
+    });
+    const { transport, calls } = fakeTransport([noise()]);
+    setModelTransportForTests(transport);
+    await classifyPending(mailboxId, { now: NOW });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("the planner's email is under Needs you and gets no job draft", async () => {
+    const row = await sortOne(
+      "u3",
+      UTILITY_EMAILS.planner,
+      classification({
+        category: "scheduling",
+        extracted: { ...classification().extracted, dates: ["Wednesday 10/22 8am"] },
+      }),
+    );
+    expect(row).toMatchObject({ needsOwner: true, needsOwnerReason: UTILITY_DATE_REASON });
+    expect(await createDraftForThread(row.id, { trigger: "auto", now: () => NOW })).toEqual({
+      status: "skipped",
+      reason: "utility",
+    });
+    expect((await queueMembership(workspaceId, NOW)).needsYou.map((m) => m.threadId)).toContain(
+      row.id,
+    );
+  });
+
+  it("the fake disconnect demand gets the plain warning and no draft", async () => {
+    const row = await sortOne(
+      "u4",
+      UTILITY_EMAILS.fake,
+      classification({ category: "invoice_payment", priority: "high" }),
+    );
+    expect(row).toMatchObject({
+      needsOwner: true,
+      needsOwnerReason: UTILITY_SCAM_REASON,
+      priority: "high",
+    });
+    const x = row.extracted as { utility_scam?: boolean; payment_change?: boolean };
+    expect(x).toMatchObject({ utility_scam: true, payment_change: true });
+    expect(await createDraftForThread(row.id, { trigger: "auto", now: () => NOW })).toEqual({
+      status: "skipped",
+      reason: "payment_change",
+    });
+  });
+});
+
+describe("Check 36 P4 + Check 37 P2: town emails", () => {
+  const westford = (
+    permit: Partial<NonNullable<ReturnType<typeof classification>["extracted"]["permit"]>>,
+  ) =>
+    classification({
+      category: "customer_question",
+      summary: "Inspection update.",
+      signals: { ...classification().signals, from_building_department: true },
+      extracted: {
+        ...classification().extracted,
+        permit: {
+          issuing_body: "Town of Westford Building Dept.",
+          permit_number: "E-26-0412",
+          inspection_at: null,
+          result: "other",
+          corrections: [],
+          ...permit,
+        },
+      },
+    });
+  const town = { fromAddress: "inspections@westfordma.gov", fromName: "Building Dept" };
+
+  it("a failed inspection is under Needs you with its count, and no job drafts it", async () => {
+    const t = await thread("w1");
+    await message(t.id, "w1-a", { ...town, bodyText: "Result: FAILED" });
+    setModelTransportForTests(
+      fakeTransport([
+        westford({
+          result: "failed",
+          corrections: ["T&P discharge within 6 inches", "Expansion tank required"],
+        }),
+      ]).transport,
+    );
+    await classifyPending(mailboxId, { now: NOW });
+    const [row] = await database.select().from(threads).where(eq(threads.id, t.id));
+    expect(row).toMatchObject({
+      needsOwner: true,
+      needsOwnerReason: "From the town: inspection failed, 2 things to fix.",
+    });
+    expect((await queueMembership(workspaceId, NOW)).needsYou.map((m) => m.threadId)).toContain(
+      t.id,
+    );
+    expect(await createDraftForThread(t.id, { trigger: "auto", now: () => NOW })).toEqual({
+      status: "skipped",
+      reason: "municipal",
+    });
+  });
+
+  it("the re-inspection email keeps the three corrections (the Westford case)", async () => {
+    const t = await thread("w2");
+    await message(t.id, "w2-a", { ...town, sentAt: daysAgo(3), bodyText: "Result: FAILED" });
+    setModelTransportForTests(
+      fakeTransport([
+        westford({
+          result: "failed",
+          corrections: [
+            "Bonding jumper at water meter missing",
+            "AFCI protection missing on bedroom circuits",
+            "Box fill exceeded",
+          ],
+        }),
+      ]).transport,
+    );
+    await classifyPending(mailboxId, { now: daysAgo(3) });
+    await message(t.id, "w2-b", {
+      ...town,
+      sentAt: daysAgo(1),
+      bodyText: "Re-inspection scheduled for Thursday 10/23 9-11",
+    });
+    setModelTransportForTests(
+      fakeTransport([westford({ result: "scheduled", inspection_at: "Thursday 10/23 9-11" })])
+        .transport,
+    );
+    await classifyPending(mailboxId, { now: NOW });
+    const [row] = await database.select().from(threads).where(eq(threads.id, t.id));
+    const permit = (row!.extracted as { permit: { result: string; corrections: string[] } }).permit;
+    expect(permit.result).toBe("scheduled");
+    expect(permit.corrections).toHaveLength(3);
+    expect(row!.needsOwnerReason).toBe("From the town: inspection scheduled.");
   });
 });

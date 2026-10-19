@@ -25,11 +25,18 @@ export async function registerScenario(
   request: APIRequestContext,
   ownerEmail: string,
   grant: FakeGrant = {},
-  opts: { lead?: FakeLead } = {},
+  opts: { lead?: FakeLead; noGmail?: boolean; chooser?: boolean } = {},
 ): Promise<{ id: string; ref: string }> {
   const id = randomUUID();
   const res = await request.post(`${fakesUrl()}/__scenarios`, {
-    data: { id, ownerEmail, grant, lead: opts.lead ?? "direct" },
+    data: {
+      id,
+      ownerEmail,
+      grant,
+      lead: opts.lead ?? "direct",
+      noGmail: opts.noGmail ?? false,
+      chooser: opts.chooser ?? false,
+    },
   });
   if (res.status() !== 201) throw new Error(`Fake scenario not registered (${res.status()}).`);
   return (await res.json()) as { id: string; ref: string };
@@ -70,7 +77,8 @@ export async function routeGoogleConsent(page: Page, context: BrowserContext) {
 export type HookStep =
   | { step: "backfill" | "sync" | "classify" | "draft"; mailboxId: string }
   | { step: "voice"; workspaceId: string }
-  | { step: "deliver"; draftId: string };
+  | { step: "deliver"; draftId: string }
+  | { step: "quote-upkeep"; mailboxId: string };
 
 export type HookResult = { ok: boolean; status?: string; reason?: string } & Record<
   string,

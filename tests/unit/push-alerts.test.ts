@@ -2,7 +2,14 @@ import { generateKeyPairSync, randomBytes, verify } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Database } from "@/db";
-import { activityLog, messages, pushSubscriptions, threads, workspaces } from "@/db/schema";
+import {
+  activityLog,
+  businessProfiles,
+  messages,
+  pushSubscriptions,
+  threads,
+  workspaces,
+} from "@/db/schema";
 import { sendPush, vapidAuthorization } from "@/lib/web-push";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { saveConnectedMailbox } from "@/server/mailboxes";
@@ -103,6 +110,13 @@ describe("#36 phone notifications", () => {
       "1 reply ready to check",
     );
     expect(pushSummaryText({ replies: 0, needsYou: 0 })).toBe("Your queue is up to date.");
+  });
+
+  it("Check 19 P7: quote requests from before midnight are 'waiting on you'", () => {
+    expect(pushSummaryText({ replies: 0, needsYou: 0, newQuotes: 45, waiting: true })).toBe(
+      "45 quote requests are waiting on you",
+    );
+    expect(pushSummaryText({ replies: 0, needsYou: 0, newQuotes: 1 })).toBe("1 new quote request");
   });
 
   it("leads at risk come first, as a count (plan #34)", () => {
@@ -214,6 +228,146 @@ describe("#36 phone notifications", () => {
       await sendPushAlerts(NOON_NY, { push });
       const left = await database.select().from(pushSubscriptions);
       expect(left.map((s) => s.endpoint)).toEqual([FCM]);
+    });
+
+    it("Check 19 P2: no phone took it → no Activity row, cursor and slot handed back", async () => {
+      await lead(new Date(NOON_NY.getTime() - 60_000));
+      const failed = async () => "failed" as const;
+      expect(await sendPushAlerts(NOON_NY, { push: failed })).toEqual({ sent: 0 });
+      expect(
+        await database.select().from(activityLog).where(eq(activityLog.action, "push_alert_sent")),
+      ).toHaveLength(0);
+      const [p] = await database.select().from(businessProfiles);
+      expect(p?.pushAlertCursor ?? null).toBeNull();
+      expect(p?.pushLastSentAt ?? null).toBeNull();
+      // A run 11 minutes later with a working phone buzzes about the same lead.
+      expect(await sendPushAlerts(new Date(NOON_NY.getTime() + 11 * 60_000), { push })).toEqual({
+        sent: 1,
+      });
+      const [row] = await database
+        .select()
+        .from(activityLog)
+        .where(eq(activityLog.action, "push_alert_sent"));
+      expect(row!.detail).toMatchObject({ quotes: 1, phones: 1 });
+    });
+
+    it("Check 19 P2: one owner's push throwing doesn't stop the next owner's", async () => {
+      await lead(new Date(NOON_NY.getTime() - 60_000));
+      const { workspace: second } = await ensureUserAndWorkspace({ email: "second@shop2.com" });
+      await database
+        .update(workspaces)
+        .set({ status: "active", setupPaidVia: "stripe" })
+        .where(eq(workspaces.id, second.id));
+      const box = await saveConnectedMailbox(second, {
+        email: "second@shop2.com",
+        refreshToken: "rt",
+        grantedScopes: [],
+      });
+      const theirs = "https://fcm.googleapis.com/fcm/send/second";
+      await savePushSubscription(second.id, theirs);
+      const [t] = await database
+        .insert(threads)
+        .values({
+          mailboxId: box.id,
+          gmailThreadId: "second-t",
+          inInbox: true,
+          category: "quote_request",
+          classifiedAt: new Date(NOON_NY.getTime() - 60_000),
+          lastMessageAt: new Date(NOON_NY.getTime() - 60_000),
+        })
+        .returning();
+      await database.insert(messages).values({
+        threadId: t!.id,
+        mailboxId: box.id,
+        gmailMessageId: "second-m",
+        direction: "in",
+        fromAddress: "lee@x.com",
+        sentAt: new Date(NOON_NY.getTime() - 60_000),
+      });
+      const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+      const flaky = async (endpoint: string) => {
+        if (endpoint === FCM) throw new TypeError("boom");
+        pushed.push(endpoint);
+        return "sent" as const;
+      };
+      expect(await sendPushAlerts(NOON_NY, { push: flaky })).toEqual({ sent: 1 });
+      expect(pushed).toEqual([theirs]);
+      expect(JSON.stringify(errors.mock.calls)).not.toMatch(/boom|fcm/);
+      errors.mockRestore();
+    });
+
+    it("Check 19 P5: a refusing phone is counted, reset by a delivered push, and forgotten after 7 days", async () => {
+      const row = async () =>
+        (
+          await database.select().from(pushSubscriptions).where(eq(pushSubscriptions.endpoint, FCM))
+        )[0];
+      const failed = async () => "failed" as const;
+      const day = 24 * 60 * 60_000;
+      let t = NOON_NY.getTime();
+      for (let i = 0; i < 3; i++) {
+        await lead(new Date(t - 60_000));
+        await sendPushAlerts(new Date(t), { push: failed });
+        t += 11 * 60_000;
+      }
+      expect(await row()).toMatchObject({ failCount: 3, firstFailedAt: NOON_NY });
+      // A delivered push clears the run.
+      await lead(new Date(t - 60_000));
+      expect(await sendPushAlerts(new Date(t), { push })).toEqual({ sent: 1 });
+      expect(await row()).toMatchObject({ failCount: 0, firstFailedAt: null });
+
+      // Failing every day for a week: the row goes.
+      const start = t + day;
+      for (let d = 0; d <= 7; d++) {
+        const at = new Date(start + d * day);
+        await lead(new Date(at.getTime() - 60_000));
+        await sendPushAlerts(at, { push: failed });
+        if (d < 7) expect(await row(), `day ${d}`).toMatchObject({ failCount: d + 1 });
+      }
+      expect(await row()).toBeUndefined();
+    });
+
+    it("Check 19 P5: a push service answering 403 is a failure, not a dead phone", async () => {
+      const k = vapidKeys();
+      process.env.VAPID_PUBLIC_KEY = k.pub;
+      process.env.VAPID_PRIVATE_KEY = k.priv;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => new Response(null, { status: 403 })),
+      );
+      expect(await sendPush(FCM)).toBe("failed");
+    });
+
+    it("Check 19 P8: the push may wait only until the owner's 9pm", async () => {
+      const k = vapidKeys();
+      process.env.VAPID_PUBLIC_KEY = k.pub;
+      process.env.VAPID_PRIVATE_KEY = k.priv;
+      const fetchMock = vi.fn(async () => new Response(null, { status: 201 }));
+      vi.stubGlobal("fetch", fetchMock);
+      const ttl = (i: number) =>
+        (fetchMock.mock.calls[i] as unknown as [string, RequestInit])[1].headers as Record<
+          string,
+          string
+        >;
+      await lead(new Date(NOON_NY.getTime() - 60_000));
+      expect(await sendPushAlerts(NOON_NY)).toEqual({ sent: 1 });
+      expect(ttl(0).TTL).toBe("14400");
+      const fiveToNine = new Date("2026-10-11T00:55:00Z"); // 8:55pm Eastern
+      await lead(new Date(fiveToNine.getTime() - 60_000));
+      expect(await sendPushAlerts(fiveToNine)).toEqual({ sent: 1 });
+      expect(ttl(1).TTL).toBe("300");
+    });
+
+    it("Check 19 P7: ten buzzes a local day, counted from the owner's midnight", async () => {
+      const step = 11 * 60_000;
+      let t = NOON_NY.getTime();
+      for (let i = 0; i < 12; i++, t += step) {
+        await lead(new Date(t - 60_000));
+        await sendPushAlerts(new Date(t), { push });
+      }
+      expect(pushed).toHaveLength(10);
+      // 7:05am Eastern the next day: under 24 hours since the first, but a new day.
+      const morning = new Date("2026-10-11T11:05:00Z");
+      expect(await sendPushAlerts(morning, { push })).toEqual({ sent: 1 });
     });
 
     it("refuses an endpoint that isn't a push service", async () => {

@@ -1,4 +1,3 @@
-import { timingSafeEqual } from "node:crypto";
 import { and, sql } from "drizzle-orm";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
@@ -6,6 +5,7 @@ import { db } from "@/db";
 import { mailboxes } from "@/db/schema";
 import { enqueue, mailboxSyncRequested } from "@/jobs/client";
 import { mailboxRunning } from "@/server/mailbox-plan";
+import { pushAuthorized } from "@/server/pubsub-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -15,21 +15,14 @@ const notification = z.object({
   historyId: z.union([z.string(), z.number()]),
 });
 
-function tokenOk(received: string | null): boolean {
-  const expected = process.env.GMAIL_PUSH_VERIFICATION_TOKEN;
-  if (!expected || !received) return false;
-  const a = Buffer.from(expected);
-  const b = Buffer.from(received);
-  return a.length === b.length && timingSafeEqual(a, b);
-}
-
 /**
  * Google Pub/Sub push for Gmail `watch`. The notification only says "something
  * changed for this address" — we never trust it for content, we just kick an
  * incremental sync. Always 204 on valid-but-useless pushes so Pub/Sub doesn't retry.
  */
 export async function POST(request: NextRequest) {
-  if (!tokenOk(request.nextUrl.searchParams.get("token"))) {
+  // Check 26 P10: Pub/Sub's signed ID token (src/server/pubsub-auth.ts).
+  if (!(await pushAuthorized(request))) {
     return new NextResponse(null, { status: 403 });
   }
   const parsed = pushBody.safeParse(await request.json().catch(() => null));

@@ -21,11 +21,15 @@ import {
   ownerSenderRules,
   priceHistory,
   pushSubscriptions,
+  smsDeliveries,
   rateLimits,
+  gmailUnits,
+  jobRuns,
   referralCredits,
   rules,
   seasonalNotes,
   stripeEvents,
+  stripeMoneyEvents,
   threads,
   usage,
   voiceProfiles,
@@ -77,6 +81,10 @@ const KEPT: Record<string, string> = {
     "global settings and markers; deleteAccount deletes the workspace's cost-alert and sent-email markers. Left: the per-mailbox done markers `cleanup:draft-messages-v1:<mailbox id>` and `backfill:reply-to-v1:<mailbox id>` (content-free uuids, never read once the mailbox is gone)",
   rate_limits: "counters keyed by workspace or hashed IP; purged daily after 2 days",
   stripe_events: "Stripe event ids and types only, for webhook idempotency",
+  job_runs:
+    "background job run and step counts per job name and day (Check 25 P4); no workspace, no content; purged after about four months",
+  stripe_money_events:
+    "refund and dispute amounts and dates from Stripe (no card details), workspace id cleared (SET NULL), like Stripe's own payment records",
   referral_credits:
     "salted email fingerprint with the workspace ids cleared (SET NULL), so a referral is paid once",
 };
@@ -91,6 +99,8 @@ const SET_NULL: Record<string, string> = {
     "an invite outlives the referrer's account; the invitee still signs in, unlinked",
   "referral_credits.referred_workspace_id":
     "the credit record outlives the referred account so the same email is never paid twice",
+  "stripe_money_events.workspace_id":
+    "a refund or dispute record outlives the account, like Stripe's own payment records",
   "referral_credits.beneficiary_workspace_id":
     "the credit record outlives the referrer's account (it was already paid or is skipped)",
 };
@@ -194,11 +204,14 @@ async function seedMailbox(
   email: string,
   tag: string,
 ): Promise<Box> {
-  const mb = await saveConnectedMailbox(workspace, {
-    email,
-    refreshToken: `rt-${tag}`,
-    grantedScopes: ["x"],
-  });
+  const mb = await saveConnectedMailbox(
+    { ...workspace, freePlan: null, freePlanUntil: null },
+    {
+      email,
+      refreshToken: `rt-${tag}`,
+      grantedScopes: ["x"],
+    },
+  );
   const [t] = await database
     .insert(threads)
     .values({
@@ -307,6 +320,10 @@ async function seedOwner(email: string, tag: string, extra: { referredBy?: strin
   await database
     .insert(pushSubscriptions)
     .values({ workspaceId: ws, endpoint: `https://fcm.googleapis.com/fcm/send/${tag}` });
+  // Check 19 P6: Twilio delivery reports go with the workspace.
+  await database
+    .insert(smsDeliveries)
+    .values({ workspaceId: ws, messageSid: `SM-${tag}`, kind: "alert" });
   // Ideas H3 / G7: sender rules go with the workspace; private notes with the mailbox too.
   await database
     .insert(ownerSenderRules)
@@ -331,11 +348,18 @@ async function seedOwner(email: string, tag: string, extra: { referredBy?: strin
     .values({ growthClientId: gc!.id, month: "2026-10", newLeads: 3 });
   await database.insert(appSettings).values([
     { key: `cost_alert:${ws}:2026-10`, value: "1" },
+    { key: `stripe-ws:open-checkout:${ws}`, value: `cs_${tag}` },
     { key: `email-sent:digest-${ws}-2026-10-12`, value: NOW.toISOString() },
     { key: `email-sent:access-lost-${a.mailboxId}-1-1`, value: NOW.toISOString() },
   ]);
   await database.insert(rateLimits).values({ key: `send:${ws}`, windowStart: NOW, count: 1 });
   await database.insert(stripeEvents).values({ id: `evt_${tag}`, type: "invoice.paid" });
+  // Check 25 P1 / P4: Gmail unit minutes (go with the mailbox) and job counts (global).
+  await database.insert(gmailUnits).values({ mailboxId: a.mailboxId, minute: NOW, units: 20 });
+  await database.insert(jobRuns).values({ functionId: `${tag}-job`, day: "2026-10-12", runs: 1 });
+  await database
+    .insert(stripeMoneyEvents)
+    .values({ id: `re_${tag}`, workspaceId: ws, kind: "refund", amountCents: 49_900 });
   return { userId: user.id, workspaceId: ws, a, b };
 }
 
@@ -371,6 +395,20 @@ describe("delete my account", () => {
       amountCents: 2_500,
       status: "applied",
     });
+    // Plan #47: the owner's own free month, booked on their (now canceled) subscription.
+    await database.insert(referralCredits).values({
+      beneficiaryWorkspaceId: owner.workspaceId,
+      referredEmailSha256: "e".repeat(64),
+      side: "referrer",
+      amountCents: 0,
+      reward: "free_month_up",
+      status: "scheduled",
+      stripeMode: "live",
+      stripeSubscriptionId: "sub_owner",
+      stripeCouponId: "sa_ref_x",
+      stripeDiscountId: "di_x",
+      paidPriceId: "price_x",
+    });
     const seeded = await snapshot();
     // One row in EVERY table: a new table fails here until it is seeded above.
     const notSeeded = Object.keys(seeded).filter(
@@ -388,7 +426,14 @@ describe("delete my account", () => {
     expect(canceled).toEqual(["sub_owner"]);
 
     const after = await snapshot();
-    const kept = new Set(["waitlist", "rate_limits", "stripe_events", "referral_credits"]);
+    const kept = new Set([
+      "waitlist",
+      "rate_limits",
+      "stripe_events",
+      "referral_credits",
+      "job_runs",
+      "stripe_money_events",
+    ]);
     for (const name of Object.keys(after)) {
       if (kept.has(name)) continue;
       // The owner's rows are all gone (invites and the cost-alert / sent-email markers too),
@@ -407,9 +452,26 @@ describe("delete my account", () => {
     ).toHaveLength(1); // purged within 2 days
     expect(await database.select().from(stripeEvents)).toHaveLength(2);
     const credits = await database.select().from(referralCredits);
-    expect(credits).toHaveLength(1);
-    expect(credits[0]!.referredWorkspaceId).toBeNull();
-    expect(credits[0]!.beneficiaryWorkspaceId).toBe(other.workspaceId);
+    expect(credits).toHaveLength(2);
+    const asReferred = credits.find((c) => c.referredEmailSha256 === "f".repeat(64))!;
+    expect(asReferred.referredWorkspaceId).toBeNull();
+    expect(asReferred.beneficiaryWorkspaceId).toBe(other.workspaceId);
+    // Their own free month keeps only the fingerprint row: no workspace, no Stripe ids.
+    const own = credits.find((c) => c.referredEmailSha256 === "e".repeat(64))!;
+    expect(own).toMatchObject({
+      beneficiaryWorkspaceId: null,
+      stripeSubscriptionId: null,
+      stripeCouponId: null,
+      stripeDiscountId: null,
+      paidPriceId: null,
+    });
+    // Check 17 P8: the owner's refund record stays, with no workspace id.
+    const money = await database
+      .select()
+      .from(stripeMoneyEvents)
+      .where(eq(stripeMoneyEvents.id, "re_owner"));
+    expect(money).toHaveLength(1);
+    expect(money[0]!.workspaceId).toBeNull();
   });
 
   it("a deleted owner's waitlist entry offers Invite again, and inviting lets them back in", async () => {
@@ -475,6 +537,7 @@ describe("disconnect a Gmail address", () => {
       voiceSuggestions,
       seasonalNotes,
       pushSubscriptions,
+      smsDeliveries,
       rules,
       ownerSenderRules,
     ];

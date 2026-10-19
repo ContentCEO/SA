@@ -1,3 +1,4 @@
+import { stripeFeeCents } from "@/config/fees";
 import { pricing, type PlanId } from "@/config/pricing";
 
 /** Plan #45: alert Davi when one account's AI cost passes this share of its plan price. */
@@ -11,9 +12,14 @@ export type CostInput = {
   plan: PlanId | null;
   /** This month's estimated AI cost, in hundredths of a cent. */
   costCentiCents: number;
+  /** Check 16 P10: Davi's own house account pays nothing, whatever its plan. */
+  setupPaidVia?: "stripe" | "house" | null;
 };
 
-export function planRevenueCents(w: Pick<CostInput, "status" | "plan">): number {
+export function planRevenueCents(
+  w: Pick<CostInput, "status" | "plan"> & { setupPaidVia?: CostInput["setupPaidVia"] },
+): number {
+  if (w.setupPaidVia === "house") return 0;
   if (!w.plan || !(PAYING as readonly string[]).includes(w.status)) return 0;
   return pricing.plans[w.plan].amountCents;
 }
@@ -21,10 +27,15 @@ export function planRevenueCents(w: Pick<CostInput, "status" | "plan">): number 
 export function costLine(w: CostInput) {
   const costCents = Math.round(w.costCentiCents / 100);
   const revenueCents = planRevenueCents(w);
+  // Check 29 P8: what Stripe keeps from each monthly charge (paying rows only).
+  const feesCents = stripeFeeCents(revenueCents);
   return {
     costCents,
     revenueCents,
+    /** Kept for the alert rule (COST_ALERT_SHARE is against the plan price, unchanged). */
     marginCents: revenueCents - costCents,
+    feesCents,
+    marginAfterFeesCents: revenueCents - feesCents - costCents,
     /** Cost as a share of the plan price; null when there's no paying plan. */
     costShare: revenueCents ? costCents / revenueCents : null,
   };

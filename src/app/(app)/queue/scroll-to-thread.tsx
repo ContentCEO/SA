@@ -45,7 +45,12 @@ export function ScrollToThread() {
       const hash = linkedHash();
       if (!THREAD_HASH.test(hash)) return setMissing(false);
       const card = document.getElementById(hash.slice(1).toLowerCase());
-      setMissing(!card);
+      // Check 9 P5: after a tap the page lands on the next card; if that one has gone too (the
+      // last card), the tap's own notice says what happened — no "not on your queue" as well.
+      // (Only for the action's own `?t=`; a `#t-` link still says it's gone.)
+      const afterTap =
+        !window.location.hash && /[?&](done|error|sent)=/.test(window.location.search);
+      setMissing(!card && !afterTap);
       if (!card) return;
       // A re-render of the same URL (Sunlight, "Never say this") must not pull the owner back
       // to the card they've already landed on and scrolled away from.

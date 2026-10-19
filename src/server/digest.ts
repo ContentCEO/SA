@@ -7,18 +7,26 @@ import {
   businessProfiles,
   drafts,
   mailboxes,
+  rules,
   threads,
   users,
   workspaces,
 } from "@/db/schema";
 import { appUrl } from "@/lib/app-url";
-import { sendEmail, type EmailSender } from "@/lib/email";
+import { sendEmail, type EmailSender, emailErrorFields } from "@/lib/email";
+import { BRAND } from "@/config/brand";
+import { emailHtml, emailParagraph, escapeHtml } from "@/lib/email-layout";
 import {
+  byAutopilot,
+  footerLine,
+  greetingFor,
   moreInQueue,
+  nothingWaitingSubject,
   needsYouHeader,
   NOTHING_NEEDS_YOU,
   queueThreadUrl,
   toNeedsYouItem,
+  TRIAL_LINE,
   type NeedsYouItem,
 } from "./digest-rules";
 import { MONEY_SO_FAR_NOTE, moneySoFarLines, type MoneySoFar } from "./activity-rules";
@@ -26,7 +34,8 @@ import { moneySoFar } from "./activity";
 import { actionableQueue, queueMembership } from "./drafts";
 import { leadsAtRisk } from "./leads-at-risk";
 import { atRiskDigestLine, atRiskOffQueueLine } from "./leads-at-risk-rules";
-import { jobsAllowed } from "./lifecycle";
+import { effectiveStatus, jobsAllowed } from "./lifecycle";
+import { stopHeaders, stopLinkFor } from "./trial-email-links";
 import { weeklyScorecard } from "./scorecard";
 import { notAnsweredYet } from "./never-answered";
 import { notAnsweredLine } from "./never-answered-rules";
@@ -79,7 +88,23 @@ export type DigestCounts = {
    * invoices paid, still owed), the same numbers as Activity. Optional for older callers.
    */
   money?: MoneySoFar;
+  /**
+   * Check 18 P6 / Check 20 P12: of the sent count, how many autopilot sent in the last 24 hours
+   * (activity `reply_sent` with `autopilot: true`), and whether any category is on autopilot now.
+   */
+  sentByAutopilot?: number;
+  autopilotOn?: boolean;
 };
+
+/** Whether any of the workspace's categories is on autopilot (the `rules` table). */
+export async function autopilotOnFor(workspaceId: string): Promise<boolean> {
+  const [row] = await db()
+    .select({ category: rules.category })
+    .from(rules)
+    .where(and(eq(rules.workspaceId, workspaceId), eq(rules.mode, "autopilot")))
+    .limit(1);
+  return Boolean(row);
+}
 
 /**
  * What the summary counts. Who is waiting comes from the queue's own content-free membership
@@ -132,6 +157,18 @@ export async function digestCounts(
     .select({ n: count() })
     .from(threads)
     .where(and(inArray(threads.mailboxId, boxes), gte(threads.classifiedAt, dayAgo)));
+  // Check 20 P12: autopilot's sends, from the activity row sendDraft(…, by: "autopilot") writes.
+  const [auto] = await db()
+    .select({ n: count() })
+    .from(activityLog)
+    .where(
+      and(
+        eq(activityLog.workspaceId, workspaceId),
+        eq(activityLog.action, "reply_sent"),
+        sql`${activityLog.detail} ->> 'autopilot' = 'true'`,
+        gte(activityLog.createdAt, dayAgo),
+      ),
+    );
 
   // Plan #34: shown whether or not the owner has phone notifications — the summary is the
   // morning catch-up, and a count is harmless. Counts only.
@@ -156,6 +193,8 @@ export async function digestCounts(
       )
     ).length,
     money: await moneySoFar(workspaceId, now, tz),
+    sentByAutopilot: auto?.n ?? 0,
+    autopilotOn: await autopilotOnFor(workspaceId),
   };
 }
 
@@ -168,6 +207,8 @@ export type DigestLinks = {
   settingsUrl: string;
   /** A deep link to one card on the queue (`<queue>#t-<uuid>`). */
   threadUrl: (threadId: string) => string;
+  /** Check 18 P6: where a trial owner chooses a plan (the trial line links it). */
+  billingUrl?: string;
 };
 
 /**
@@ -181,7 +222,13 @@ export type DigestLinks = {
 export function buildDigest(
   c: DigestCounts,
   links: DigestLinks,
-  extras: { now: Date; timeZone: string; lastWeek?: string[] },
+  extras: {
+    now: Date;
+    timeZone: string;
+    lastWeek?: string[];
+    /** Check 18 P6: the account is in its three days, so sending to customers is off. */
+    trial?: boolean;
+  },
 ) {
   const header = needsYouHeader(c.needsYou, extras.now, extras.timeZone, links.threadUrl);
   // A lead going cold with no card on the queue still needs the owner: it goes under "Needs
@@ -194,8 +241,13 @@ export function buildDigest(
     ? { text: notAnsweredLine(c.notAnswered), href: links.queueUrl }
     : null;
   const needsNothing = header.empty && !offQueue && !notAnswered;
+  // Check 18 P8: the local hour picks the greeting and the quiet subject (a catch-up run can
+  // land in the afternoon). A waiting quote is said once: the "has waited" line counts only
+  // leads with a card on the queue; the off-queue ones are already under Needs you.
+  const hour = localParts(extras.now, extras.timeZone).hour;
+  const hello = greetingFor(hour);
   const lines = [
-    atRiskDigestLine(c.leadsAtRisk),
+    atRiskDigestLine(c.leadsAtRisk - c.leadsAtRiskOffQueue),
     c.repliesReady
       ? `${plural(c.repliesReady, "reply", "replies")} drafted and waiting for your okay.`
       : null,
@@ -203,9 +255,18 @@ export function buildDigest(
       ? `${plural(c.nudgesReady, "follow-up")} ready for quiet quotes or invoices.`
       : null,
     c.sentYesterday || c.sortedYesterday
-      ? `Yesterday: ${plural(c.sortedYesterday, "email")} sorted, ${plural(c.sentYesterday, "reply", "replies")} sent.`
+      ? // Check 14 P11: the 24 hours before this email (not the calendar day), conversations
+        // (threads), and drafted replies and follow-ups together.
+        `In the last day: ${plural(c.sortedYesterday, "conversation")} sorted, ${c.sentYesterday} ${
+          c.sentYesterday === 1 ? "reply or follow-up" : "replies and follow-ups"
+        } sent${byAutopilot(c.sentByAutopilot)}.`
       : null,
   ].filter((l): l is string => !!l);
+  const footer = footerLine(Boolean(c.autopilotOn));
+  // Check 18 P6: under the headline, fixed words with the billing link.
+  const trial = extras.trial
+    ? { text: TRIAL_LINE, href: links.billingUrl ?? links.queueUrl }
+    : null;
   const lastWeek = extras.lastWeek ?? [];
   // This month's money so far (totals only); the section is left out when all of it is zero.
   // It never makes a quiet morning worth an email on its own (`worthSending` ignores it).
@@ -214,10 +275,11 @@ export function buildDigest(
   const waiting = onQueue + c.leadsAtRiskOffQueue + (c.notAnswered ?? 0);
   const subject = waiting
     ? `${plural(waiting, "thing")} waiting on you`
-    : "Nothing waiting on you this morning";
+    : nothingWaitingSubject(hour);
 
   const text = [
-    "Good morning.",
+    hello.text,
+    ...(trial ? ["", `${trial.text} ${trial.href}`] : []),
     "",
     "Needs you:",
     ...(needsNothing
@@ -233,45 +295,53 @@ export function buildDigest(
     ...(lastWeek.length ? ["", ...lastWeek] : []),
     "",
     ...(onQueue ? [`Open your queue: ${links.queueUrl}`, ""] : []),
-    `Nothing is sent without your okay. Change or turn off this email: ${links.settingsUrl}`,
+    `${footer} Change or turn off this email: ${links.settingsUrl}`,
     siteConfig.copyright,
   ].join("\n");
 
-  const esc = (s: string) =>
-    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-  const para = (l: string) =>
-    `<p style="margin:0 0 12px;font-size:17px;line-height:1.45">${esc(l)}</p>`;
+  const esc = escapeHtml;
+  const para = emailParagraph;
   const needsLink = (l: { href: string; text: string }) =>
-    `<p style="margin:0"><a href="${esc(l.href)}" style="display:block;padding:12px 0;color:#1b1b1b;font-size:17px;font-weight:700;line-height:1.35;text-decoration:underline">${esc(l.text)}</a></p>`;
+    `<p style="margin:0"><a href="${esc(l.href)}" style="display:block;padding:12px 0;color:${BRAND.charcoal};font-size:17px;font-weight:700;line-height:1.35;text-decoration:underline">${esc(l.text)}</a></p>`;
   const needsHtml = needsNothing
     ? para(NOTHING_NEEDS_YOU)
     : [
         ...header.lines.map(needsLink),
         header.more
-          ? `<p style="margin:0"><a href="${esc(links.queueUrl)}" style="display:block;padding:12px 0;color:#5e5d59;font-size:16px;line-height:1.35">${esc(moreInQueue(header.more))}</a></p>`
+          ? `<p style="margin:0"><a href="${esc(links.queueUrl)}" style="display:block;padding:12px 0;color:${BRAND.slate};font-size:16px;line-height:1.35">${esc(moreInQueue(header.more))}</a></p>`
           : "",
         offQueue ? needsLink(offQueue) : "",
         notAnswered ? needsLink(notAnswered) : "",
       ].join("\n");
-  const html = `<!doctype html><html><body style="margin:0;background:#f7f6f3;color:#1b1b1b;font-family:Inter,Helvetica,Arial,sans-serif">
-<div style="max-width:480px;margin:0 auto;padding:24px 16px">
-<p style="margin:0;font-family:Georgia,serif;font-style:italic;font-size:24px">good morning,</p>
-<p style="margin:0 0 20px;font-weight:900;font-size:30px;letter-spacing:-0.02em">${esc(waiting ? `${plural(waiting, "thing")} waiting.` : "all clear.")}</p>
-<p style="margin:0 0 4px;font-weight:900;font-size:19px">Needs you</p>
-${needsHtml}
-<div style="margin:20px 0 0">
-${lines.map(para).join("\n")}
-</div>
-${money.length ? `<div style="margin:20px 0 0;padding:16px 0 0;border-top:1px solid #1b1b1b">\n${money.map(para).join("\n")}\n<p style="margin:0;font-size:14px;color:#5e5d59">${esc(MONEY_SO_FAR_NOTE)}</p>\n</div>` : ""}
-${lastWeek.length ? `<div style="margin:20px 0 0;padding:16px 0 0;border-top:1px solid #1b1b1b">\n${lastWeek.map(para).join("\n")}\n</div>` : ""}
-${
-  onQueue
-    ? `<p style="margin:24px 0"><a href="${esc(links.queueUrl)}" style="display:inline-block;background:#1b1b1b;color:#efeeea;text-decoration:none;font-weight:700;font-size:17px;padding:14px 22px;border-radius:10px">Open your queue</a></p>`
-    : ""
-}
-<p style="margin:24px 0 4px;font-size:14px;color:#5e5d59">Nothing is sent without your okay. <a href="${esc(links.settingsUrl)}" style="color:#5e5d59">Change or turn off this email</a>.</p>
-<p style="margin:0;font-size:14px;color:#5e5d59">${esc(siteConfig.copyright)}</p>
-</div></body></html>`;
+  // Check 18 P7 / Check 7 P10: the one email shell (brandEmail's), with the summary's own
+  // sections as its body. Every word, link and the subject are as before.
+  const section = (inner: string) =>
+    `<div style="margin:20px 0 0;padding:16px 0 0;border-top:1px solid ${BRAND.charcoal}">\n${inner}\n</div>`;
+  const html = emailHtml({
+    serif: hello.serif,
+    heavy: waiting ? `${plural(waiting, "thing")} waiting.` : "all clear.",
+    lines: [],
+    preheader: subject,
+    htmlBody: [
+      trial
+        ? `<p style="margin:0 0 20px;font-size:17px;line-height:1.45;font-weight:700">${esc(trial.text)} <a href="${esc(trial.href)}" style="color:${BRAND.charcoal}">Choose a plan</a>.</p>`
+        : "",
+      `<p style="margin:0 0 4px;font-weight:900;font-size:19px">Needs you</p>`,
+      needsHtml,
+      `<div style="margin:20px 0 0">\n${lines.map(para).join("\n")}\n</div>`,
+      money.length
+        ? section(
+            `${money.map(para).join("\n")}\n<p style="margin:0;font-size:14px;color:${BRAND.slate}">${esc(MONEY_SO_FAR_NOTE)}</p>`,
+          )
+        : "",
+      lastWeek.length ? section(lastWeek.map(para).join("\n")) : "",
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    ...(onQueue ? { button: { label: "Open your queue", url: links.queueUrl } } : {}),
+    footer,
+    footerLink: { label: "Change or turn off this email", url: links.settingsUrl },
+  });
 
   // "No emails need a decision from you today." on its own doesn't make a quiet day worth an email.
   return {
@@ -295,6 +365,39 @@ export async function lastWeekLines(
   const bounds = weekBounds(now, timeZone);
   const lastWeek = await weeklyScorecard(workspaceId, bounds.lastStart, bounds.start, now);
   return scorecardIsEmpty(lastWeek) ? [] : scorecardLines(lastWeek, "Last week");
+}
+
+/**
+ * Check 18 P9: the one-click unsubscribe (List-Unsubscribe-Post) for the morning email. Turns off
+ * only `digest_enabled` (the monthly summary follows it); logs one activity row the first time.
+ * Returns whether anything changed.
+ */
+export async function turnOffDigest(workspaceId: string): Promise<boolean> {
+  return db().transaction(async (tx) => {
+    const [row] = await tx
+      .insert(businessProfiles)
+      .values({ workspaceId, digestEnabled: false })
+      .onConflictDoUpdate({
+        target: businessProfiles.workspaceId,
+        set: { digestEnabled: false },
+        setWhere: sql`${businessProfiles.digestEnabled} = true`,
+      })
+      .returning({ workspaceId: businessProfiles.workspaceId });
+    if (!row) return false;
+    await tx.insert(activityLog).values({
+      workspaceId,
+      actor: "owner",
+      action: "digest_turned_off",
+      detail: { via: "unsubscribe" },
+    });
+    return true;
+  });
+}
+
+/** Check 18 P9: List-Unsubscribe for the morning and monthly emails (none without AUTH_SECRET). */
+export function digestStopHeaders(workspaceId: string): Record<string, string> | undefined {
+  const link = stopLinkFor(workspaceId, "digest");
+  return link ? stopHeaders(link) : undefined;
 }
 
 export type DigestRun = { sent: number; skipped: number; failed: number; notConfigured: boolean };
@@ -351,8 +454,14 @@ export async function sendDigests(
           quotesUrl: appUrl("/quotes"),
           settingsUrl: appUrl("/settings/morning-email"),
           threadUrl: (id) => queueThreadUrl(queueUrl, id),
+          billingUrl: appUrl("/billing"),
         },
-        { now, timeZone, lastWeek: await lastWeekLines(r.workspace.id, now, timeZone) },
+        {
+          now,
+          timeZone,
+          lastWeek: await lastWeekLines(r.workspace.id, now, timeZone),
+          trial: effectiveStatus(r.workspace, now) === "evaluating",
+        },
       );
       if (digest.worthSending) {
         const outcome = await send({
@@ -361,6 +470,7 @@ export async function sendDigests(
           html: digest.html,
           text: digest.text,
           idempotencyKey: `digest-${r.workspace.id}-${localDate}`,
+          headers: digestStopHeaders(r.workspace.id),
         });
         if (outcome === "not_configured") {
           run.notConfigured = true;
@@ -400,7 +510,7 @@ export async function sendDigests(
       run.failed++;
       console.error("digest_failed", {
         workspaceId: r.workspace.id,
-        error: err instanceof Error ? err.name : "unknown",
+        ...emailErrorFields(err),
       });
     }
   }

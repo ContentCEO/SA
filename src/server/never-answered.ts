@@ -67,6 +67,8 @@ export async function notAnsweredYet(
         or(isNull(threads.snoozedUntil), lte(threads.snoozedUntil, now)),
         sql`coalesce(${threads.extracted}->>'injection', '') <> 'true'`,
         sql`coalesce(${threads.extracted}->>'municipal', '') <> 'true'`,
+        // Check 37 P3 (integrator, merge C): the electric company isn't a lead.
+        sql`coalesce(${threads.extracted}->>'utility', '') <> 'true'`,
         sql`coalesce(${threads.extracted}->>'job_done', '') <> 'true'`,
         sql`${waitingSince} between ${oldest}::timestamptz and ${newest}::timestamptz`,
         sql`not ${noReplySql(replyTo)}`,

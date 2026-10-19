@@ -160,6 +160,15 @@ export function anthropicClientOptions(env: Env = process.env): AnthropicClientO
   };
 }
 
+/**
+ * Check 47 P3 (CI fix 2026-10-19): the waitlist's mail-host lookup asks real DNS. In e2e mode it
+ * makes no lookup at all (the host is "unknown"), like every other outside service there, so a
+ * test's result never depends on who really hosts example domains' mail.
+ */
+export function mxLookupAllowed(env: Env = process.env): boolean {
+  return !e2eMode(env);
+}
+
 /** The test-hooks secret: only in e2e mode and only if it's at least 32 characters. */
 export function e2eHookSecret(env: Env = process.env): string | null {
   if (!e2eMode(env)) return null;
