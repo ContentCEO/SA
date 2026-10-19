@@ -177,11 +177,11 @@ sets it, in `.env.example`).
 | `INNGEST_DEV`                                                                         | Local only                   | `1` = use the local Inngest dev server.                                                                                                                                                                                                                                                                                                                                     | —                                                                                                                                        | Local                                    |
 | `GMAIL_PUBSUB_TOPIC`, `GMAIL_PUSH_AUDIENCE`, `GMAIL_PUSH_SERVICE_ACCOUNT`             | No                           | Gmail instant notifications, checked by Pub/Sub's signed token; without them the 5-minute poll picks up mail.                                                                                                                                                                                                                                                               | §6a.                                                                                                                                     | Prod                                     |
 | `GMAIL_PUSH_VERIFICATION_TOKEN`                                                       | No (old way)                 | The old shared secret in the push URL. Accepted only while the two settings above are unset; remove it after switching.                                                                                                                                                                                                                                                     | —                                                                                                                                        | Prod (sensitive), during the switch only |
-| `RESEND_API_KEY`, `EMAIL_FROM`                                                        | No                           | Morning and monthly summaries, Gmail-access-lost emails, cost and Growth notices. Without both, nothing is emailed.                                                                                                                                                                                                                                                         | §7b.                                                                                                                                     | Prod (key sensitive)                     |
+| `RESEND_API_KEY`, `EMAIL_FROM`                                                        | No                           | Every app email: invites, "Your first drafts are ready", morning and monthly summaries, Gmail-access-lost alert and reminder, waitlist and trial emails, Davi's notices. Without both, nothing is emailed; until a domain is verified, only the Resend account's own address gets them (§7b).                                                                               | §7b.                                                                                                                                     | Prod (key sensitive)                     |
 | `STRIPE_SECRET_KEY`                                                                   | For payments                 | Checkout, billing portal, webhook, Connect Stripe in `/admin`.                                                                                                                                                                                                                                                                                                              | §7c.                                                                                                                                     | Prod (sensitive)                         |
 | `STRIPE_WEBHOOK_SECRET`                                                               | No                           | Overrides the signing secret Connect Stripe stores. Leave unset in Vercel (a stale test value breaks every live webhook).                                                                                                                                                                                                                                                   | `stripe listen` locally.                                                                                                                 | Local only                               |
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`                                             | No                           | Text alerts to the owner's own phone (both plus one sender below).                                                                                                                                                                                                                                                                                                          | §6c.                                                                                                                                     | Prod (token sensitive)                   |
-| `TWILIO_MESSAGING_SERVICE_SID`, `TWILIO_FROM_NUMBER`                                  | One of them, for texts       | The sender: a Messaging Service (preferred: STOP/HELP and A2P 10DLC) or, for quick tests, a number in E.164.                                                                                                                                                                                                                                                                | §6c.                                                                                                                                     | Prod                                     |
+| `TWILIO_MESSAGING_SERVICE_SID`, `TWILIO_FROM_NUMBER`                                  | One of them, for texts       | The sender: a Messaging Service (preferred: STOP/HELP, and it carries the A2P 10DLC campaign once one is approved) or, for quick tests, a number in E.164.                                                                                                                                                                                                                  | §6c.                                                                                                                                     | Prod                                     |
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`                                               | No                           | Phone notifications (web push). Public key alone shows the switch; both are needed to send.                                                                                                                                                                                                                                                                                 | §6e.                                                                                                                                     | Prod (private key sensitive)             |
 | `VAPID_SUBJECT`                                                                       | No (default `APP_URL`)       | Contact the push services can reach.                                                                                                                                                                                                                                                                                                                                        | `mailto:` address or https URL.                                                                                                          | Prod                                     |
 | `NEXT_PUBLIC_SENTRY_DSN`                                                              | No                           | Error alerts (scrubbed). Read at build time: redeploy after setting.                                                                                                                                                                                                                                                                                                        | §6b.                                                                                                                                     | Prod                                     |
@@ -298,8 +298,20 @@ no heat, no power, a gas smell) is the one exception while the owner leaves "Eme
 night" on (it's on by default): "An emergency email just came in." right away, night or day, once
 per conversation, at most 3 a night and 6 a day (phone notifications follow the same switch). A
 voicemail or text message emailed by a phone service (Google Voice) counts, though its sender is
-no-reply. Costs: about $1.15/month
-for the number plus about $0.01 per text, and a one-time US carrier (A2P 10DLC) registration.
+no-reply.
+
+Costs (Twilio's listed US prices, checked 2026-10-19; **check the current price before
+budgeting**):
+
+- The number: $1.15 a month for a Twilio local number, and $0.0083 per text segment sent, plus a
+  carrier fee per segment of $0.0035 (AT&T), $0.0045 (T-Mobile) or $0.005 (Verizon)
+  ([twilio.com/en-us/sms/pricing/us](https://www.twilio.com/en-us/sms/pricing/us)).
+- US carrier registration (A2P 10DLC), per Twilio's "A2P 10DLC Campaign Vetting FAQ"
+  ([support.twilio.com](https://support.twilio.com/hc/en-us/articles/11587910480155)):
+  a $4.50 brand fee and a $15 campaign vetting fee, once each, and then a **monthly** campaign fee
+  of $1.50 to $10 depending on the use case ($2 for a sole proprietor). The monthly fee is not
+  one-time. (An older Twilio page, `pages.twilio.com/10DLC-HelpArticles-WW`, still says $4 for the
+  brand: another reason to check in the Twilio console before registering.)
 
 1. twilio.com → sign up → upgrade the account (add a card).
 2. Phone Numbers → Buy a number (local, SMS-capable).
@@ -310,7 +322,9 @@ for the number plus about $0.01 per text, and a one-time US carrier (A2P 10DLC) 
    owner enters their own mobile number in Settings and confirms a texted code". Approval takes
    days; texts may be blocked by carriers until it's approved.
 4. Messaging → Services → Create → add the number to the service. Opt-out (STOP/HELP) handling is
-   on by default.
+   on by default. The service only carries the campaign once the campaign is approved and linked
+   to it: until then Twilio blocks texts to US numbers with error 30034 ("Message from an
+   Unregistered Number", [twilio.com/docs/api/errors/30034](https://www.twilio.com/docs/api/errors/30034)).
 5. Vercel → sa → Environment Variables (Production): `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`
    (sensitive), `TWILIO_MESSAGING_SERVICE_SID`. Redeploy.
 6. Nothing else to set (Check 19 P6): every text asks Twilio to report its delivery to
@@ -511,17 +525,36 @@ pnpm invite owner@shop.com electrical "note for Davi"
 
 Runs against whatever `DATABASE_URL` is in `.env.local`. Day to day, use `/admin` → Invite an owner.
 
-## 7b. Morning summary email (Resend)
+## 7b. App emails (Resend)
 
-The digest is sent through Resend's HTTP API (`src/lib/email.ts`). Without `RESEND_API_KEY` and
-`EMAIL_FROM`, nothing is sent — the job reports "not configured" and tries again next hour.
+Every email the app sends goes through Resend's HTTP API (`src/lib/email.ts`). Without
+`RESEND_API_KEY` and `EMAIL_FROM`, nothing is sent — each job reports "not configured" and tries
+again on its next run.
+
+Until a domain is verified, `onboarding@resend.dev` only delivers to the Resend account's own
+address, so these never reach anyone else: the invite email with the sign-in link
+(`src/server/invite-email.ts`), "Your first drafts are ready to check"
+(`src/server/first-week.ts`), the morning and monthly summaries, "Squared Away lost access to your
+Gmail" and its reminder (`src/server/alerts.ts`), and "You're on the Squared Away list"
+(`src/server/waitlist-emails.ts`); the trial emails and the Growth confirmation too. Davi's own
+notices reach him only if the Resend account uses `ADMIN_EMAIL`. Owner-facing emails carry
+`Reply-To: SUPPORT_EMAIL` (else `ADMIN_EMAIL`), so that address needs a real inbox.
 
 1. resend.com → API Keys → Create API Key (sending access is enough).
-2. Until a domain is verified, Resend only delivers to the email address on the Resend account,
-   from `onboarding@resend.dev`. For testing: `EMAIL_FROM="Squared Away <onboarding@resend.dev>"`.
-3. For real owners: resend.com → Domains → add the production domain, add the DNS records it shows,
-   then set `EMAIL_FROM="Squared Away <hello@thatdomain>"`.
-4. Put both in Vercel (Production) and redeploy.
+2. For testing: `EMAIL_FROM="Squared Away <onboarding@resend.dev>"`.
+3. For real owners: resend.com → Domains → add a subdomain such as `mail.<domain>` (Resend
+   recommends a subdomain), add every DNS record it shows, and a DMARC TXT record
+   `_dmarc.<domain>` = `v=DMARC1; p=none; rua=mailto:<an address Davi reads>`. Then set
+   `EMAIL_FROM="Squared Away <hello@mail.<domain>>"` and `SUPPORT_EMAIL` to an address with a
+   real inbox.
+4. Put them in Vercel (Production) and redeploy.
+5. Check: Resend shows Verified; /admin → Email says "Sending from …"; an invite to a second Gmail
+   address arrives and Gmail's Show original reads SPF, DKIM and DMARC PASS; then the /admin
+   catch-up buttons re-send the waitlist confirmations and invites that never went out
+   (`docs/LAUNCH.md` step 6).
+
+Resend's free plan: 100 emails a day, 3,000 a month (resend.com/pricing). The morning email alone
+is about one email per active shop per day.
 
 The digest carries counts and categories only — no customer names, subjects or email text.
 
@@ -653,6 +686,24 @@ everyone who connected then reconnects once after the switch (`/connect` → the
 `docs/LAUNCH.md` step 0c). See `docs/google-verification.md` for why we ask for each scope,
 the demo-video script and the reviewer account.
 
+## 8b. Adding a second mailbox provider
+
+Gmail is the only provider today. Another one (Outlook, plan #49 in `docs/FEATURE-PLAN.md`) is
+added beside it, never by editing shared sync, draft or voice code:
+
+1. `src/mailbox/<provider>/`: `connector.ts` (a `MailboxConnector`: consent URL, code exchange,
+   revoke), `api.ts` (the `MailboxReader` and `MailboxWriter`, mapping its folders onto
+   `MAIL_LABELS`) and `scopes.ts` (the permissions it must have; missing any refuses the
+   connection).
+2. A new value in `mailboxProviderEnum` (`src/db/schema.ts`, an additive migration) and one more
+   case in `mailboxClientFor` (`src/mailbox/clients.ts`), the only place a client is built.
+3. Sending stays "send this draft" only; any new send path needs Davi's okay and a row in
+   `tests/unit/security-surface.test.ts` ("Only two places can send mail").
+4. The shared tests it must pass: `tests/unit/mailbox-clients.test.ts` (one provider switch),
+   `tests/unit/mime.test.ts` (the replies it sends are the MIME the app builds),
+   `tests/unit/security-surface.test.ts`, and a `<provider>-connector` / `<provider>-api` pair
+   like `tests/unit/gmail-connector.test.ts` and `tests/unit/gmail-api.test.ts`.
+
 ## 9. Deploys (Vercel)
 
 The Vercel project is `sa` in the **DAC** team. To make every push deploy automatically:
@@ -681,6 +732,28 @@ if anything is worse than `tests/evals/baseline.json`. Needs `ANTHROPIC_API_KEY`
 - First time (or after an intended improvement): `pnpm eval --update-baseline`, then commit the file.
 - From GitHub: Actions → **Prompt evals** → Run workflow. Add `ANTHROPIC_API_KEY` as a repository
   secret first (Settings → Secrets and variables → Actions). It never runs on its own.
+- Another model, without changing production: `pnpm eval --no-drafts --model classify=<id>`
+  (also `draft=` and `voice=`). Only ids in `EVAL_MODEL_IDS` (`src/config/models.ts`) are taken;
+  `--update-baseline` is refused with `--model` (the baseline is production's models). What each
+  model accepts (effort, thinking) is `modelCapabilities` in the same file.
+
+### When Anthropic emails about a model
+
+Each model's keep-until date is `modelLifecycle` in `src/config/models.ts`, copied from Anthropic's
+model deprecations page (platform.claude.com/docs/en/about-claude/model-deprecations) with the day
+it was read. `tests/unit/model-lifecycle.test.ts` fails when a date is within 30 days (or past)
+and the page hasn't been read in 14 days. Anthropic promises at least 60 days' notice by email
+before a retirement. When that email comes, or the test fails:
+
+1. Re-read the deprecations page. Update `notBefore` and `checkedOn` (never guess a date; write
+   "none announced" if the page gives none). If nothing changed, that's the whole job.
+2. If a retirement is announced, add the recommended replacement to `modelFallbacks`,
+   `modelPricing` (from Anthropic's pricing page), `modelCapabilities` and `modelLifecycle`.
+3. Run `pnpm eval --model <role>=<replacement>` (with `--no-drafts` for sorting) and compare the
+   table with `tests/evals/baseline.json`. Note anything worse, and the token cost.
+4. Davi decides, from those numbers, whether to switch.
+5. Then switch `models` (and keep `modelPricing` right), run `pnpm eval --update-baseline` on the
+   new model, commit both, and deploy before the retirement date.
 
 ## 11. Phone checks (by hand, on real phones)
 

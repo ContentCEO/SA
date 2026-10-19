@@ -1,7 +1,10 @@
 /**
  * The only place model IDs and model prices live.
- * Verified against the Anthropic model list on 2026-09-28.
  * `claude-haiku-4-5-20251001` is the dated snapshot of the `claude-haiku-4-5` alias.
+ * Check 48 P2: each model's keep-until date is in `modelLifecycle` below, with the day it was
+ * last checked against Anthropic's model deprecations page; tests/unit/model-lifecycle.test.ts
+ * fails when a date is near or past and nobody has re-checked it (docs/SETUP.md "When Anthropic
+ * emails about a model").
  */
 export const models = {
   /** Classification and extraction — cheap, fast. */
@@ -27,6 +30,64 @@ export const modelFallbacks = {
 } as const satisfies Record<ModelRole, { model: string; fallbackApproved: boolean }>;
 
 export type ModelId = (typeof models)[ModelRole] | (typeof modelFallbacks)[ModelRole]["model"];
+
+/**
+ * Check 48 P2: how long Anthropic says each pinned model stays. `notBefore` is the page's
+ * "Tentative retirement date" ("Not sooner than …"), never a guess; `checkedOn` is the day
+ * someone last read the page. A passed `notBefore` that was re-checked is fine (the model still
+ * works, and Anthropic promises at least 60 days' notice by email before a retirement); a
+ * forgotten one fails the lifecycle test. If a model ever shows no announced date, write that
+ * plainly in `notBefore` ("none announced") rather than inventing one.
+ */
+export const MODEL_DEPRECATIONS_PAGE =
+  "https://platform.claude.com/docs/en/about-claude/model-deprecations";
+export const modelLifecycle: Record<
+  ModelId,
+  { notBefore: string; checkedOn: string; source: string }
+> = {
+  "claude-haiku-4-5-20251001": {
+    notBefore: "2026-10-15",
+    checkedOn: "2026-10-19",
+    source: MODEL_DEPRECATIONS_PAGE,
+  },
+  "claude-sonnet-5": {
+    notBefore: "2027-06-30",
+    checkedOn: "2026-10-19",
+    source: MODEL_DEPRECATIONS_PAGE,
+  },
+  "claude-haiku-5-5": {
+    notBefore: "2027-10-07",
+    checkedOn: "2026-10-19",
+    source: MODEL_DEPRECATIONS_PAGE,
+  },
+  "claude-sonnet-5-5": {
+    notBefore: "2027-09-28",
+    checkedOn: "2026-10-19",
+    source: MODEL_DEPRECATIONS_PAGE,
+  },
+};
+
+/**
+ * Check 48 P2: what each model accepts, so the request is built from the model and not from
+ * comments. `effort`: whether `output_config.effort` may be sent (Haiku 4.5 rejects it).
+ * `thinking`: what the request says about thinking — "omit" sends nothing (the model's own
+ * default: none on Haiku 4.5, adaptive on Sonnet 5 and Sonnet 5.5), "disabled" sends
+ * `{ type: "disabled" }`. Haiku 5.5 thinks by default (effort defaults to medium); a sorting trial
+ * turns thinking off so the sorter's short answer limit holds (Haiku 5.5 accepts "disabled" at
+ * effort high or below). Sonnet 5.5 refuses "disabled", so it stays "omit".
+ */
+export const modelCapabilities: Record<
+  ModelId,
+  { effort: boolean; thinking: "omit" | "disabled" }
+> = {
+  "claude-haiku-4-5-20251001": { effort: false, thinking: "omit" },
+  "claude-sonnet-5": { effort: true, thinking: "omit" },
+  "claude-haiku-5-5": { effort: true, thinking: "disabled" },
+  "claude-sonnet-5-5": { effort: true, thinking: "omit" },
+};
+
+/** Check 48 P2: the only model ids `pnpm eval --model role=<id>` accepts. */
+export const EVAL_MODEL_IDS: readonly ModelId[] = Object.keys(modelCapabilities) as ModelId[];
 
 /**
  * US dollars per million tokens. Cache writes bill at 1.25x input, reads at 0.1x.

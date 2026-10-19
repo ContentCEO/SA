@@ -11,7 +11,7 @@ server-side and tested).
    milestone it rides on. Build that milestone's brief scope first, then that milestone's features
    here, in the order listed.
 2. One milestone per session. At the end, tick the boxes here and in `CLAUDE.md`, write down
-   decisions in `CLAUDE.md` → Decisions, and report: what's done, how to see it, what's next, what's
+   decisions in the matching `docs/decisions/*.md` file (CLAUDE.md → Decisions lists them), and report: what's done, how to see it, what's next, what's
    needed from Davi.
 3. Every feature ships with tests. Anything that touches sending, approval or a gate has a guardrail
    test that fails if the rule is broken.
@@ -218,9 +218,27 @@ _Re-checked 2026-10-10: brief scope complete with tests; nothing else filed here
 
 - [ ] **#49 Outlook / Microsoft 365.** ASK DAVI: needs an Azure app registration and Microsoft
       publisher verification. Implement `src/mailbox/outlook/` against the existing connector
-      interface using Microsoft Graph (delta queries for sync, `createReply` drafts, subscriptions
-      for push). Same encryption, same revoke-and-delete rules. Connector contract tests run against
-      both.
+      interfaces (`src/mailbox/connector.ts`; built in `src/mailbox/clients.ts`) using Microsoft
+      Graph: delta queries for sync, subscriptions for push. Same encryption, same
+      revoke-and-delete rules, and the same shared tests (docs/SETUP.md §8b, "Adding a second mailbox
+      provider"). Facts checked on Microsoft Learn on 2026-10-19: - **Drafts from our own MIME, not `createReply`.** `createReply` lets Microsoft write its own
+      quoted reply; the app builds the reply in `src/mailbox/mime.ts`. Graph creates a draft from
+      base64 MIME (`POST /me/messages` with `Content-Type: text/plain`;
+      [user-post-messages](https://learn.microsoft.com/en-us/graph/api/user-post-messages)). - **Updating a draft takes JSON fields only** (subject, body, recipients…, only while
+      `isDraft`; [message-update](https://learn.microsoft.com/en-us/graph/api/message-update)),
+      so `updateDraft(raw)` needs a parts-based path (or delete and re-create from MIME). - **Sending a draft returns 202 with no body**
+      ([message-send](https://learn.microsoft.com/en-us/graph/api/message-send)), so
+      `sendDraft` returns the draft's own id, fetched with `Prefer: IdType="ImmutableId"`: that
+      id stays the same when the draft becomes the copy in Sent Items
+      ([outlook-immutable-id](https://learn.microsoft.com/en-us/graph/outlook-immutable-id)).
+      Every request needs the header. - **Subscriptions last at most 10,080 minutes** (under seven days) for Outlook messages and
+      must be renewed before then
+      ([resources/subscription](https://learn.microsoft.com/en-us/graph/api/resources/subscription)). - **A new refresh token on each refresh**: Microsoft says to keep the new one and delete the
+      old ([refresh-tokens](https://learn.microsoft.com/en-us/entra/identity-platform/refresh-tokens));
+      `MailboxClientOptions.onRefreshTokenRotated` is the hook for it. - **Permissions:** `Mail.ReadWrite` (drafts), `Mail.Send` (send), `offline_access` (a
+      refresh token), `User.Read` (the address). - **Publisher verification** needs a verified Microsoft AI Cloud Partner Program account and
+      a publisher domain that isn't `*.onmicrosoft.com`
+      ([publisher-verification-overview](https://learn.microsoft.com/en-us/entra/identity-platform/publisher-verification-overview)).
 - [ ] **#50 Text me a summary.** _(Partly done 2026-10-09: opt-in, code-verified number, content-free new-lead alerts, quiet hours, caps — off until Twilio env is set. Still to do: digest summary by text, leads-at-risk by text.)_ ASK DAVI: needs a Twilio account, A2P 10DLC registration, and has a
       per-message cost. Opt-in per owner, verified phone number, digest summary + leads-at-risk
       alerts by SMS. Content-free like push ("2 quote requests need you — open Squared Away").

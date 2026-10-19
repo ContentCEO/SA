@@ -842,8 +842,9 @@ describe("LAUNCH.md structure", () => {
       expect(now, text).toContain(text);
     expect(now).not.toMatch(/\bDo it now\b/);
     const step1 = flat(sections.find((x) => x.n === 1)!.body);
-    expect(step1).toContain('**Not in this merge: the "I agree" boxes**');
+    // Check 1 P1: both merges are live (PR #10 = 8cfb749, PR #11 = c1bf580, 2026-10-16).
     expect(step1).toContain("`claude/squared-away-mvp-ddxl7s`");
+    expect(step1).toContain("`c1bf580`");
     expect(step1).not.toContain("Everything waiting is in **one** pull request");
     expect(launch).not.toContain("live with the next merge");
     const line = TERMS_BOX_OFF_LINE;
@@ -863,6 +864,45 @@ describe("LAUNCH.md structure", () => {
     );
     expect(d).toContain("Settings → Business → **Public details**");
     expect(d).toContain(flat(line));
+  });
+
+  it("the 'I agree' boxes are recorded as live, and the legal text leads the open list (Check 1 P1)", () => {
+    // Production has asked owners to agree since c1bf580 (PR #11), so the notes may never say the
+    // boxes are still waiting for a merge.
+    expect(flat(launch)).not.toMatch(/Not in this merge:? (?:the )?"?I agree"? boxes/i);
+    expect(flat(launch)).not.toContain("live with the second merge");
+    const { open } = step13Parts();
+    const start = open.indexOf("- **");
+    expect(start, "the first open item").toBe(open.indexOf("- **First: finish the legal text"));
+    const first = open.slice(start, open.indexOf("- **", start + 4));
+    expect(first).toContain("Owners are agreeing to the draft");
+    // Check 49 P5: the decisions moved from CLAUDE.md to docs/decisions/, so read both.
+    const claude = flat(
+      ["CLAUDE.md", ...readdirSync(join(ROOT, "docs/decisions")).map((f) => `docs/decisions/${f}`)]
+        .map((f) => readFileSync(join(ROOT, f), "utf8"))
+        .join("\n"),
+    );
+    expect(claude).not.toContain("the gate isn't live yet");
+    expect(claude).not.toContain("live only after the **second merge**");
+  });
+
+  it("step 7 has 7g: Stripe's customer emails, retries and statement descriptor (Check 17 P10)", () => {
+    const heading = "### 7g. Customer emails, retries and your name on card statements";
+    expect(sections[7]!.body).toContain(heading);
+    const g = flat(sections[7]!.body.slice(sections[7]!.body.indexOf(heading)));
+    for (const text of [
+      "Customer emails",
+      "Retries",
+      "statement descriptor",
+      "**Successful payments** and **Refunds** on",
+      "Send emails when card payments fail",
+      "8 tries within 2 weeks",
+      "Worked when:",
+    ])
+      expect(g, text).toContain(text);
+    // In the contents and in step 13's open decisions.
+    expect(launch).toContain("(#7g-customer-emails-retries-and-your-name-on-card-statements)");
+    expect(step13Parts().open).toContain("**After Stripe's last retry**");
   });
 
   it("the referral reward is recorded as decided, with Davi's seven answers", () => {

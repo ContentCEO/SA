@@ -8,6 +8,8 @@ Where a step says "the engineers", they do that part and tell you when it's done
 here is yours to do or decide: merging, deploying and every other switch. Engineering details live
 in [SETUP.md](SETUP.md); this page links to it where a step needs more. Every outside account
 (its plan, the limit that bites and whose login holds it) is listed in [VENDORS.md](VENDORS.md).
+When something stops working after launch, [RUNBOOK.md](RUNBOOK.md) says where to look and what
+to do.
 
 `/admin` → **Ready for paying owners** lists what's left; tick the hand rows there as you finish
 them.
@@ -18,6 +20,7 @@ Contents:
 - [Protect main (before the next merge)](#protect-main-before-the-next-merge)
 - [Hold production for CI (right after Protect main)](#hold-production-for-ci-right-after-protect-main)
 - [Start your sales tax registration now (it takes days)](#start-your-sales-tax-registration-now-it-takes-days)
+- [Register the name Squared Away (this month)](#register-the-name-squared-away-this-month)
 - [Add your terms link in Stripe (right after step 1)](#add-your-terms-link-in-stripe-right-after-step-1)
 - [0. Start now: Google verification (takes weeks)](#0-start-now-google-verification-takes-weeks)
 - [1. Merge the launch branch](#1-merge-the-launch-branch)
@@ -25,8 +28,9 @@ Contents:
 - [3. Change the passwords that were pasted in chat](#3-change-the-passwords-that-were-pasted-in-chat)
 - [4. Settings in Vercel, per environment](#4-settings-in-vercel-per-environment)
 - [5. Support email and the production domain](#5-support-email-and-the-production-domain)
-- [6. Morning emails from your own domain (Resend)](#6-morning-emails-from-your-own-domain-resend)
+- [6. Emails from your own domain (Resend)](#6-emails-from-your-own-domain-resend)
 - [7. Stripe live mode](#7-stripe-live-mode)
+  - [7g. Customer emails, retries and your name on card statements](#7g-customer-emails-retries-and-your-name-on-card-statements)
 - [8. Error alerts (Sentry, optional)](#8-error-alerts-sentry-optional)
 - [9. Phone notifications (VAPID keys)](#9-phone-notifications-vapid-keys)
 - [10. Optional: text alerts and instant Gmail notifications](#10-optional-text-alerts-and-instant-gmail-notifications)
@@ -194,13 +198,51 @@ whatever your sales total.
 
 - Where: MassTaxConnect (mass.gov/masstaxconnect) → Register a New Business → sales and use tax.
 - Have ready: your SSN if you're a sole owner with no employees (otherwise an EIN), your business
-  and mailing addresses, and the start date your accountant picks (the questions for your
-  accountant are in [step 7e](#7-stripe-live-mode)).
+  certificate ([Register the name Squared Away](#register-the-name-squared-away-this-month)), and
+  the LLC's EIN if you formed one, your business and mailing addresses, and the start date your
+  accountant picks (the questions for your accountant are in [step 7e](#7-stripe-live-mode)).
 - Cost and time: guides say it's free and takes about 3–10 business days. The state's own site
   wouldn't load for the engineers, so check both in MassTaxConnect.
 - Paste: nothing.
 - Worked when: you have a Massachusetts sales tax account and its registration certificate (Form
   ST-1). The Stripe part comes later, in step 7e.
+
+## Register the name Squared Away (this month)
+
+"Squared Away" isn't your own name, so Massachusetts law asks you to register it. Anyone
+"conducting business in the commonwealth under any title other than the real name" files a
+business certificate with the clerk of every city or town where they have an office, renews it
+every four years, and can be fined up to $300 for each month it's missing (M.G.L. c.110 §5:
+malegislature.gov → Laws → General Laws → Chapter 110, Section 5).
+
+**This isn't legal advice, and every amount and office below is "check before you go; fees
+change".** The order matters: an LLC has to exist before the business certificate, the sales tax
+registration and Stripe's business details, or each is done twice.
+
+1. **Decide: sole owner or LLC, first.** It's one of the questions for the lawyer
+   ([step 13](#13-decisions-waiting-on-you), "A lawyer's review"). The terms name you personally
+   today.
+2. **If LLC:** Secretary of the Commonwealth → Corporations Division → certificate of
+   organization: $500 (plus any fee for filing online), then an annual report, $500 each year, due
+   on or before the anniversary of the date the LLC was formed (M.G.L. c.156C §12, on
+   malegislature.gov;
+   [sec.state.ma.us](https://www.sec.state.ma.us/divisions/corporations/filing-by-subject/limited-liability/corporations-limited-liability-company.htm)).
+   Put that date in your calendar. Check before you go; fees change.
+3. **If you work from home:** a Home Occupation Permit first, applied for in person at Concord's
+   Building Department, 141 Keyes Road. The clerk asks for a copy of it with the certificate.
+   Check before you go; fees change.
+4. **The business certificate:** Concord Town Clerk, 22 Monument Square. $40; each person named
+   signs in person at the clerk's office (with ID) or has the signature notarized; renew every 4
+   years ([concordma.gov FAQ](https://concordma.gov/FAQ.aspx?QID=160),
+   [concordma.gov Business Certificates](https://www.concordma.gov/366/Business-Certificates)).
+   Check before you go; fees change.
+5. **Use the same legal name and address everywhere:** MassTaxConnect, Stripe (Settings →
+   Business) and the terms (today `/terms` names "Davi Chaves, Massachusetts, United States", from
+   `src/config/site.ts`; a change there goes through the one legal release, step 13).
+
+- Paste: nothing.
+- Worked when: you have the stamped business certificate (and, for an LLC, the filed certificate
+  of organization and the annual report date in your calendar).
 
 ## Add your terms link in Stripe (right after step 1)
 
@@ -210,7 +252,10 @@ too. Stripe only shows that box once your terms address is saved in Stripe. Unti
 still works, just without the box (owners have already agreed at sign-in), and `/admin` tells you
 so.
 
-**This comes in two merges, so it is done in two parts.**
+**This came in two merges, and both are live.** Step 1's merge went to production as PR #10
+(commit `8cfb749`) and the "I agree" boxes as PR #11 (commit `c1bf580`), both on 2026-10-16.
+`https://sa-dac3.vercel.app/signin` shows the box. What's left is saving the links in Stripe
+below.
 
 - **Step 1's merge** (`claude/launch-integration`) puts the `/terms` and `/privacy` pages live.
   Today both addresses show "page not found" on production, so don't save them in Stripe before
@@ -323,8 +368,8 @@ that doesn't open and a reviewer would see old screens. Each rejection costs wee
 
 **0d. Record the demo video.** (After steps 1 and 5, on the merged production app.)
 
-The video's sign-in shows the "I agree" box, which goes live with the second merge (see
-[step 1](#1-merge-the-launch-branch)), so record after that one too.
+The video's sign-in shows the "I agree" box, which is live in production since the second merge
+(`c1bf580`, see [step 1](#1-merge-the-launch-branch)).
 
 - Branding is published (0b): Google's consent screen shows Squared Away, not the domain. If it
   shows the domain, stop and finish 0b.
@@ -440,12 +485,13 @@ The merge also puts the homepage's About section live. Its wording changed on 20
 "The homepage's About section" in [step 13](#13-decisions-waiting-on-you)); tell the engineers
 before you tap Merge if you want different words.
 
-**Not in this merge: the "I agree" boxes** (decided on 2026-10-15, [step 13](#13-decisions-waiting-on-you)).
-They are on a second branch, `claude/squared-away-mvp-ddxl7s`, built on top of this one. The
-engineers open its pull request once this merge is live, and you merge it the same way (another
-production deploy, checked the same way as below). This merge does put the `/terms` and `/privacy`
-pages live, so right after it, save them in Stripe:
-[Add your terms link in Stripe](#add-your-terms-link-in-stripe-right-after-step-1).
+**Done.** This merge went to production as PR #10 (commit `8cfb749`) on 2026-10-16. The "I agree"
+boxes (decided on 2026-10-15, [step 13](#13-decisions-waiting-on-you)) followed the same day in a
+second merge, of `claude/squared-away-mvp-ddxl7s`: PR #11, commit `c1bf580`. They are live:
+owners tick "I agree to the Terms of Service and the Privacy Policy" at sign-in today. The
+`/terms` and `/privacy` pages are live too, so save them in Stripe:
+[Add your terms link in Stripe](#add-your-terms-link-in-stripe-right-after-step-1). The steps
+below are kept for the record and for the next merge.
 
 - Before you tap Merge (one minute, optional but only possible now): the **Gmail draft check**.
   It tells the engineers whether Gmail keeps a draft's id when it's sent. The app is safe either
@@ -829,27 +875,50 @@ within 5 business days and help; until then these steps are still the right way 
    owner that plainly, and ask the engineers if a per-sender delete is wanted.
 5. Reply to the person in writing with what was done, and keep the note of the date.
 
-## 6. Morning emails from your own domain (Resend)
+## 6. Emails from your own domain (Resend)
 
-Until this is done, morning and monthly summaries only reach the Resend account's own address,
-and the "You're on the list" email never reaches people who join the waitlist (your own "New
-waitlist sign-up" notice still arrives; people who joined before this step get it when you tap
-the catch-up button below). The pricing cards list "morning summary" for every plan:
-this step is what makes that true for owners other than you.
+Until this is done, these emails reach only the Resend account's own address, and nobody else gets
+them: the invite email with the sign-in link ("You're in: your Squared Away invite"), "Your first
+drafts are ready to check", the morning and monthly summaries, "Squared Away lost access to your
+Gmail" and its reminder, and "You're on the Squared Away list" for people who join the waitlist.
+The trial emails wait on it too. Your own notices (new waitlist sign-ups, jobs stopped, costs)
+reach you only if your Resend account uses the same address as `ADMIN_EMAIL`. The pricing cards
+list "morning summary" for every plan: this step is what makes that true for owners other than
+you.
 
-- Where: resend.com → **Domains** → Add domain → add the DNS records it shows at your registrar.
-  Steps in [SETUP.md](SETUP.md) §7b.
-- Paste: Vercel → `EMAIL_FROM` (Production) = `Squared Away <hello@your domain>` (any address on
-  the verified domain) → Redeploy. `RESEND_API_KEY` stays as it is; check it's in the `sa`
-  project, not `contractorflow`.
-- Worked when: Resend → Domains shows **Verified**, and the next morning summary to an owner other
-  than you shows as **Delivered** in Resend → Emails. A test sign-up on the waitlist with a
-  second address of yours gets "You're on the Squared Away list".
-- Then catch up: `/admin` → the **Email** box says "Sending from <your address>" (tap **Send me a
-  test email** once). Then `/admin` → Waitlist → **Send the list email to people who never got
-  it** (it shows only once the sender is real); tap it until it says 0 to go (8 per tap). Then,
-  under the invites, tap **Email the sign-in link again** on each invite that never got its email.
-  Worked when: the catch-up button is gone and the Email box shows no refusals this week.
+Resend's free plan sends at most 100 emails a day and 3,000 a month
+([resend.com/pricing](https://resend.com/pricing)). The morning email alone is about one email
+per active shop per day; with the other emails the daily limit comes somewhere past 50 shops
+([Check your free plans now](#resend-the-apps-emails)), so move to a paid plan before that.
+
+- Where: resend.com → **Domains** → **Add domain**. Use a subdomain such as
+  `mail.<your domain>` (Resend recommends sending from a subdomain, so its reputation is kept
+  apart from your own mail). More in [SETUP.md](SETUP.md) §7b.
+- Add records at your domain registrar's DNS page:
+  1. Every record Resend shows for the subdomain, exactly as shown.
+  2. A DMARC record: type TXT, name `_dmarc.<your domain>`, value
+     `v=DMARC1; p=none; rua=mailto:<an address you read>`. `p=none` only asks for reports; it
+     never blocks mail.
+- Paste in Vercel (Production), then **Redeploy**:
+  - `EMAIL_FROM` = `Squared Away <hello@mail.<your domain>>`. `RESEND_API_KEY` stays as it is;
+    check it's in the `sa` project, not `contractorflow`.
+  - `SUPPORT_EMAIL` = an address with a real inbox that you read (step 5). Owners' replies to any
+    of these emails go to it (to `ADMIN_EMAIL` while it isn't set).
+- Worked when:
+  1. Resend → Domains shows **Verified**.
+  2. `/admin` → the **Email** box says "Sending from hello@mail.<your domain>." Tap **Send me a
+     test email** once.
+  3. Invite yourself at a second Gmail address of yours in `/admin`: the invite email arrives
+     there.
+  4. In that Gmail, open the invite → ⋮ → **Show original**: SPF, DKIM and DMARC all say
+     **PASS**.
+  5. The next morning summary to an owner other than you shows as **Delivered** in Resend →
+     Emails.
+- Then catch up on what never went out: `/admin` → Waitlist → **Send the list email to people
+  who never got it** (it shows only once the sender is real); tap it until it says 0 to go (8 per
+  tap). Then, under the invites, tap **Email the sign-in link again** on each invite that never
+  got its email. Worked when: the catch-up button is gone and the Email box shows no refusals
+  this week.
 
 ## 7. Stripe live mode
 
@@ -1027,6 +1096,51 @@ mode and test mode are set up separately. In this order:
   on its own: decide in Stripe and /admin what a refund means (here, cancel its subscription in
   Stripe too; the account then shows as canceled).
 
+### 7g. Customer emails, retries and your name on card statements
+
+The app sends no receipt of its own. Without these settings an owner can pay $499 plus a plan and
+get nothing in writing, and a card that fails at renewal is never mentioned to them. Do this in
+live mode (Test mode off), any time after 7a.
+
+**Customer emails (receipts).**
+
+- Where: Stripe → Settings → Business → **Customer emails**.
+- Set: under Payments, **Successful payments** and **Refunds** on.
+- Worked when: both switches show on.
+
+**Retries and failed-card emails.**
+
+- Where: Stripe → Billing → Revenue recovery → **Emails**: turn on **Send emails when card
+  payments fail** and **Send emails about expiring cards** (sent a month before the card on file
+  expires).
+- Then Revenue recovery → **Retries**: keep **Smart Retries** on. Stripe's recommended default is
+  8 tries within 2 weeks
+  ([docs.stripe.com/billing/revenue-recovery/smart-retries](https://docs.stripe.com/billing/revenue-recovery/smart-retries)).
+- What happens after the last retry is a choice on the same page: **cancel the subscription**,
+  **mark it as unpaid**, **leave it past-due** or **pause it**. The app moves an account on what
+  Stripe reports: "unpaid" and "past_due" become **Past due** (read-only: nothing is sorted,
+  drafted or sent, nothing is deleted, and the banner asks the owner to update their card), and
+  "canceled" becomes **Canceled** (read-only, nothing deleted; choosing a plan again starts over
+  without the setup fee). A **paused** subscription doesn't move the account at all, so with that
+  choice an owner who stopped paying could keep sending. Which one is your decision
+  ([step 13](#13-decisions-waiting-on-you)).
+- Worked when: the Retries page shows your choice saved, and both email switches show on.
+
+**Your name on card statements.**
+
+- Where: Stripe → Settings → Business → **Public details**.
+- Set: the **statement descriptor**, for example `SQUAREDAWAY`: 5 to 22 Latin characters, at least
+  one letter, none of `<` `>` `\` `'` `"` `*`, and it must match the name you do business under
+  ([docs.stripe.com/get-started/account/statement-descriptors](https://docs.stripe.com/get-started/account/statement-descriptors)).
+  Also the **support phone** and support email (Stripe prints them on receipts). Then Settings →
+  Business → **Branding** → the **Email receipts** tab: your colors and icon.
+- Worked when: Public details shows the statement descriptor saved.
+
+**Check it.** Stripe doesn't send these emails on its own in test mode. Its check is a test-mode
+purchase with the email of a member of your Stripe team: Transactions → Payments → that payment →
+Receipt history → ⋯ → **Send receipt**. Worked when: the receipt email arrives with your name and
+colors, and after the real purchase in 7f the receipt arrives by itself.
+
 ## 8. Error alerts (Sentry, optional)
 
 - Where: [SETUP.md](SETUP.md) §6b (sentry.io → new Next.js project → Client Keys (DSN)).
@@ -1053,9 +1167,11 @@ mode and test mode are set up separately. In this order:
 
 - First: US carriers require registration before texts are delivered. In Twilio → Messaging →
   Regulatory compliance → **A2P 10DLC**: register the brand and a campaign (or verify a toll-free
-  number). Approval **takes days**; until then texts may be blocked with no clear error.
+  number). Approval **takes days**. Until the campaign is approved, texts fail with error 30034.
   Twilio asks for a screenshot of where people agree to the texts: use Settings → Text alerts
-  (`/settings/texts`) at the phone-number step. That screen already says how many texts, "Msg &
+  (`/settings/texts`) at the phone-number step. The screen only shows once the Twilio settings
+  below are in Vercel (before that, Settings hides the row), so add them first; texts still won't
+  go out until the campaign is approved. That screen already says how many texts, "Msg &
   data rates may apply", HELP and STOP, and that tapping **Text me a code** agrees to the texts,
   the Terms and the Privacy Policy.
 - Then: [SETUP.md](SETUP.md) §6c → Vercel → `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` (sensitive),
@@ -1166,7 +1282,7 @@ Waiting on you from that review (nothing here is built or changed until you say 
 - The domain ([step 5](#5-support-email-and-the-production-domain)) and `SUPPORT_EMAIL`; a
   business phone number for support, if you want one.
 - Your photo for the About section, and the legal answers that let the "Draft" banners come off.
-- Verify the Resend domain ([step 6](#6-morning-emails-from-your-own-domain-resend)), so the
+- Verify the Resend domain ([step 6](#6-emails-from-your-own-domain-resend)), so the
   pricing cards' "morning summary" is true for owners and waitlist confirmations reach people.
   The pricing cards weren't changed.
 - Turn on Web Analytics ([step 4](#4-settings-in-vercel-per-environment)) and let search engines
@@ -1200,7 +1316,7 @@ Waiting on you from that review (nothing here is built or changed until you say 
   still here"). Day 1 is the "your first drafts are ready" email that already existed. Counts
   only, at or after the owner's morning-email hour in their own time zone, never at night, each
   once. Every one has a **Stop these emails** link (and a switch in Settings → Morning email).
-  Like every email from the app they need Resend ([step 6](#6-morning-emails-from-your-own-domain-resend)).
+  Like every email from the app they need Resend ([step 6](#6-emails-from-your-own-domain-resend)).
 - **A lower plan pauses extra Gmail addresses, and the owner picks which.** When a plan covers
   fewer Gmail addresses than are connected (your plan change in `/admin`, or a cheaper plan
   chosen on Stripe's page), the oldest-connected stay on and the rest are paused: nothing in
@@ -1252,7 +1368,8 @@ Waiting on you from that review (nothing here is built or changed until you say 
      waiting one by hand).
   7. No reminder email; the banner says what changes three days before the end.
 
-- **"I agree to the Terms": yes, built** (live with the second merge, after step 1's; see
+- **"I agree to the Terms": yes, built** (live in production since the second merge, `c1bf580`,
+  2026-10-16; see
   [Add your terms link in Stripe](#add-your-terms-link-in-stripe-right-after-step-1)).
   Massachusetts' top court said
   online terms only bind people who were properly shown them and agreed to them (Kauders v. Uber,
@@ -1282,7 +1399,7 @@ Waiting on you from that review (nothing here is built or changed until you say 
   a payment with a real card. Details under "Reviewer test account" in
   [google-verification.md](google-verification.md). It's recorded after the live check in the
   next item.
-- **Drop `gmail.send`: yes, built** (live with the second merge, after step 1's). Connect Gmail now
+- **Drop `gmail.send`: yes, built** (live in production since the second merge, `c1bf580`). Connect Gmail now
   asks Google for two permissions, which Google's screen calls "View your email messages and
   settings" (`gmail.readonly`) and "Manage drafts and send emails" (`gmail.compose`). Google's own
   reference says `gmail.compose` can send a draft and a new email, which covers every reply and the
@@ -1335,6 +1452,11 @@ Recorded here so nobody asks again.
 
 Nothing below is switched on or changed until you say so.
 
+- **First: finish the legal text and take the "Draft" banners off.** Owners are agreeing to the
+  draft terms and privacy policy now: the "I agree" box has been live at sign-in since
+  2026-10-16 (`c1bf580`), and both documents still open with the Draft banner. The wording waiting
+  for your okay, and the lawyer's review, are the items under "Wave 3 merge A" ("One legal
+  release") and "A lawyer's review" below.
 - **Wave 3 merge A (2026-10-19): prompt versions, legal text, Google review.** Built the safe way;
   say if you want it different:
   - **One legal release.** Every wording change for the terms and the privacy policy waits in
@@ -1473,6 +1595,14 @@ Nothing below is switched on or changed until you say so.
   quiet inbox adds about 17,300, so one shop already needs the paid plan.
 - **Vercel Pro** ([check it this week](#vercel-hosting)): Hobby is for non-commercial use only;
   move to Pro (about $20 a month) before the first paying customer.
+- **After Stripe's last retry** ([7g](#7g-customer-emails-retries-and-your-name-on-card-statements)):
+  cancel the subscription, mark it unpaid, or leave it past-due? With "unpaid" or "past-due" the
+  account stays **Past due** (read-only) until the card is fixed; with "cancel" it becomes
+  **Canceled** and a new plan doesn't charge the setup fee again. Don't pick "pause": the app
+  doesn't treat a paused subscription as unpaid.
+- **Who is your backup person?** Someone who can call owners back if you can't be reached for a
+  week. Fill in their name and phone in [AWAY.md](AWAY.md) ("For the backup person"), which also
+  lists what carries on without you and what to do before you leave.
 - **Terms: the three [To confirm] items.** The wording in `docs/terms.md` stays as it is until
   you pick. Recommended (option A for each):
   - Refunds: monthly plans can be cancelled any time and stay on to the end of the paid month, with
@@ -1495,7 +1625,8 @@ Nothing below is switched on or changed until you say so.
   estimate from published averages). A cheap first step: the Boston Bar Association's lawyer
   referral service gives a first 30-minute talk for $25 at most. Questions to bring: the three
   options above; whether the "I agree" boxes make the terms binding; whether to form an LLC (the
-  terms name you personally; a Massachusetts LLC costs about $500 to start and $500 a year);
+  terms name you personally; a Massachusetts LLC costs about $500 to start and $500 a year; check
+  before you go, fees change; see [Register the name Squared Away](#register-the-name-squared-away-this-month));
   whether any insurance is worth having; and whether the homepage's "Month to month, no contract."
   should say "no long-term contract".
 - **The Google security test (CASA):** no decision yet. Don't pay until Google's email names the
@@ -1526,6 +1657,30 @@ Nothing below is switched on or changed until you say so.
   Growth call request carrying a referral: decided, see "Decided on 2026-10-16".) Built on 2026-10-16 (ships with its merge): the Growth client dashboard,
   the "You own everything" pledge, the More screen's Growth line, and Remove on a waitlist card's
   Growth request.
+- **Growth, two more of yours:** should a Growth client whose service has ended still see their
+  dashboard (`/my-growth`)? Today it shows "page not found" to anyone who isn't an active or
+  paused client. And only the newest Growth request per email address is kept, so anyone who
+  knows a lead's email could replace the phone number on it: check an unfamiliar number before
+  you call.
+- **Lead websites and voicemail emails (2026-10-16 leads package).** (1) The privacy policy
+  already has the lines for it (where a lead came from, done / fixed marks, towns, Call / Text
+  reading the number without storing it, no drafts to lead sites, voicemails or email-to-text
+  addresses): read them with the rest of the legal text. (2) Real samples, with the customer's
+  details blurred, of each lead site's email (Thumbtack, Angi / HomeAdvisor, Houzz, Yelp,
+  Nextdoor, Porch, Bark, Networx, Google Local Services) and of RingCentral, Grasshopper and
+  OpenPhone voicemail emails: does each arrive in Primary or Promotions, does any site take an
+  email reply, and does each "Open <site>" button land on your inbox there? They were built from
+  made-up samples.
+- **Your calls from the ideas package (2026-10-16), built the safe way:** what a VIP means
+  (today: always "needs you", never drafted on its own); whether away mode should also pause
+  autopilot, texts, phone alerts and the morning email (today: no); remembered "not junk" /
+  "always a supplier" rules were left out. Say if you want any of them different.
+- **The privacy policy's lines from Milestones 5 and 7** (in the draft since the launch merge):
+  price memory (never sent to the AI), invoice "paid" / "not owed to me" marks, the complaint
+  marker, review requests and your review link, seasonal notes, phone notifications, the
+  per-phone display settings and the offline approvals copy, and that these stay after the
+  30-day email-text purge until the Gmail address or account goes. Read them with the rest of
+  the legal text.
 - **Growth agreement: a lawyer's review.** The draft is [docs/growth-agreement.md](growth-agreement.md)
   ("not legal advice"). Bring it with the app's terms. Its **[To confirm]** items are yours: who
   signs (you or an LLC), the notice to cancel, refunds, the liability limit, the hand-back time,
@@ -1576,7 +1731,7 @@ Nothing below is switched on or changed until you say so.
   - The "Buzzes you when it matters" card is left off until phone notifications are on (the
     VAPID keys, [step 9](#9-phone-notifications-vapid-keys)). Add it back then?
   - The homepage still says "morning summary", but until the Resend domain is verified
-    ([step 6](#6-morning-emails-from-your-own-domain-resend)) it only reaches the Resend
+    ([step 6](#6-emails-from-your-own-domain-resend)) it only reaches the Resend
     account's own address. Keep it, or take it off until then?
   - The Autopilot card was dropped to keep nine cards (autopilot is described three other times
     on the page). Fine, or swap it back in for another card?
@@ -1623,7 +1778,9 @@ Nothing below is switched on or changed until you say so.
     is stopped".
 - **Gmail draft check (counts only, for the engineers):** whether Gmail keeps a draft's id when
   it's sent. The app is safe either way. The query is in [step 1](#1-merge-the-launch-branch);
-  run it **before merging**: after the merge it always reads 0.
+  run it **before merging**: after the merge it always reads 0. The launch merge went live on
+  2026-10-16 (PR #10), so unless someone ran it before then, it can no longer tell anything;
+  nothing for you to do.
 - **Wave 2 merge A (2026-10-18): questions from the Voice, Inbox, Sync and Queue changes.** Each
   is built with the safe choice below; nothing changes until you say so.
   - **How far back the sorter looks.** Mail from 15 to 30 days ago that was never sorted is now
@@ -1769,6 +1926,21 @@ Nothing below is switched on or changed until you say so.
 
 ### Still needed from you
 
+- [Protect main](#protect-main-before-the-next-merge) and
+  [Hold production for CI](#hold-production-for-ci-right-after-protect-main): only your GitHub
+  and Vercel admin rights can do them.
+- Your terms and privacy links in Stripe
+  ([Add your terms link in Stripe](#add-your-terms-link-in-stripe-right-after-step-1)): both
+  merges are live, so this can be done now.
+- The two passwords pasted in chat ([step 3](#3-change-the-passwords-that-were-pasted-in-chat)):
+  the Neon password and the Google client secret, then delete the old Google secret.
+- While Google is in Testing: add each invited owner as a Google test user (Google Auth Platform
+  → Audience). Ends when the app is published ([0c](#0-start-now-google-verification-takes-weeks)).
+- The preview guard's fingerprints, or skip them once previews have their own database
+  ([step 2](#2-give-previews-their-own-database), "The preview guard").
+- Optional: instant Gmail notifications and error alerts
+  ([step 10](#10-optional-text-alerts-and-instant-gmail-notifications),
+  [step 8](#8-error-alerts-sentry-optional)).
 - The production domain and `SUPPORT_EMAIL` ([step 5](#5-support-email-and-the-production-domain)).
 - The icon pack, and for the homepage's About section (PR #9) your photo and the exact license
   wording.
