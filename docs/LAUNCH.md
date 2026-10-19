@@ -1128,9 +1128,11 @@ colors, and after the real purchase in 7f the receipt arrives by itself.
 
 - First: US carriers require registration before texts are delivered. In Twilio → Messaging →
   Regulatory compliance → **A2P 10DLC**: register the brand and a campaign (or verify a toll-free
-  number). Approval **takes days**; until then texts may be blocked with no clear error.
+  number). Approval **takes days**. Until the campaign is approved, texts fail with error 30034.
   Twilio asks for a screenshot of where people agree to the texts: use Settings → Text alerts
-  (`/settings/texts`) at the phone-number step. That screen already says how many texts, "Msg &
+  (`/settings/texts`) at the phone-number step. The screen only shows once the Twilio settings
+  below are in Vercel (before that, Settings hides the row), so add them first; texts still won't
+  go out until the campaign is approved. That screen already says how many texts, "Msg &
   data rates may apply", HELP and STOP, and that tapping **Text me a code** agrees to the texts,
   the Terms and the Privacy Policy.
 - Then: [SETUP.md](SETUP.md) §6c → Vercel → `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` (sensitive),

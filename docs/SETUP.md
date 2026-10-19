@@ -181,7 +181,7 @@ sets it, in `.env.example`).
 | `STRIPE_SECRET_KEY`                                                                   | For payments                 | Checkout, billing portal, webhook, Connect Stripe in `/admin`.                                                                                                                                                                                                                                                                                                              | §7c.                                                                                                                                     | Prod (sensitive)                         |
 | `STRIPE_WEBHOOK_SECRET`                                                               | No                           | Overrides the signing secret Connect Stripe stores. Leave unset in Vercel (a stale test value breaks every live webhook).                                                                                                                                                                                                                                                   | `stripe listen` locally.                                                                                                                 | Local only                               |
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`                                             | No                           | Text alerts to the owner's own phone (both plus one sender below).                                                                                                                                                                                                                                                                                                          | §6c.                                                                                                                                     | Prod (token sensitive)                   |
-| `TWILIO_MESSAGING_SERVICE_SID`, `TWILIO_FROM_NUMBER`                                  | One of them, for texts       | The sender: a Messaging Service (preferred: STOP/HELP and A2P 10DLC) or, for quick tests, a number in E.164.                                                                                                                                                                                                                                                                | §6c.                                                                                                                                     | Prod                                     |
+| `TWILIO_MESSAGING_SERVICE_SID`, `TWILIO_FROM_NUMBER`                                  | One of them, for texts       | The sender: a Messaging Service (preferred: STOP/HELP, and it carries the A2P 10DLC campaign once one is approved) or, for quick tests, a number in E.164.                                                                                                                                                                                                                  | §6c.                                                                                                                                     | Prod                                     |
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`                                               | No                           | Phone notifications (web push). Public key alone shows the switch; both are needed to send.                                                                                                                                                                                                                                                                                 | §6e.                                                                                                                                     | Prod (private key sensitive)             |
 | `VAPID_SUBJECT`                                                                       | No (default `APP_URL`)       | Contact the push services can reach.                                                                                                                                                                                                                                                                                                                                        | `mailto:` address or https URL.                                                                                                          | Prod                                     |
 | `NEXT_PUBLIC_SENTRY_DSN`                                                              | No                           | Error alerts (scrubbed). Read at build time: redeploy after setting.                                                                                                                                                                                                                                                                                                        | §6b.                                                                                                                                     | Prod                                     |
@@ -298,8 +298,20 @@ no heat, no power, a gas smell) is the one exception while the owner leaves "Eme
 night" on (it's on by default): "An emergency email just came in." right away, night or day, once
 per conversation, at most 3 a night and 6 a day (phone notifications follow the same switch). A
 voicemail or text message emailed by a phone service (Google Voice) counts, though its sender is
-no-reply. Costs: about $1.15/month
-for the number plus about $0.01 per text, and a one-time US carrier (A2P 10DLC) registration.
+no-reply.
+
+Costs (Twilio's listed US prices, checked 2026-10-19; **check the current price before
+budgeting**):
+
+- The number: $1.15 a month for a Twilio local number, and $0.0083 per text segment sent, plus a
+  carrier fee per segment of $0.0035 (AT&T), $0.0045 (T-Mobile) or $0.005 (Verizon)
+  ([twilio.com/en-us/sms/pricing/us](https://www.twilio.com/en-us/sms/pricing/us)).
+- US carrier registration (A2P 10DLC), per Twilio's "A2P 10DLC Campaign Vetting FAQ"
+  ([support.twilio.com](https://support.twilio.com/hc/en-us/articles/11587910480155)):
+  a $4.50 brand fee and a $15 campaign vetting fee, once each, and then a **monthly** campaign fee
+  of $1.50 to $10 depending on the use case ($2 for a sole proprietor). The monthly fee is not
+  one-time. (An older Twilio page, `pages.twilio.com/10DLC-HelpArticles-WW`, still says $4 for the
+  brand: another reason to check in the Twilio console before registering.)
 
 1. twilio.com → sign up → upgrade the account (add a card).
 2. Phone Numbers → Buy a number (local, SMS-capable).
@@ -310,7 +322,9 @@ for the number plus about $0.01 per text, and a one-time US carrier (A2P 10DLC) 
    owner enters their own mobile number in Settings and confirms a texted code". Approval takes
    days; texts may be blocked by carriers until it's approved.
 4. Messaging → Services → Create → add the number to the service. Opt-out (STOP/HELP) handling is
-   on by default.
+   on by default. The service only carries the campaign once the campaign is approved and linked
+   to it: until then Twilio blocks texts to US numbers with error 30034 ("Message from an
+   Unregistered Number", [twilio.com/docs/api/errors/30034](https://www.twilio.com/docs/api/errors/30034)).
 5. Vercel → sa → Environment Variables (Production): `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`
    (sensitive), `TWILIO_MESSAGING_SERVICE_SID`. Redeploy.
 6. Nothing else to set (Check 19 P6): every text asks Twilio to report its delivery to
