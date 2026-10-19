@@ -389,6 +389,8 @@ const ELECTRICAL_HAZARD_PATTERNS: RegExp[] = [
   /\b(meter|mast|service|service drop) (box )?(was |got |has been )?(pulled|ripped|torn|came|fell) (off|down|away)\b/,
   // Lights surging.
   /\blights? (keep |are |is )?(going|go|goes|get|getting|flicker(ing)?)( really)? (bright and dim|dim and bright|bright then dim)\b/,
+  // Check 37 P8: half the house bright, the other half dim (a lost neutral).
+  /\blights?\b.{0,30}\b(go|goes|going|get|gets|getting|turn|turns)( really| very| super)? bright\b.{0,50}\b(others?|other half|rest)\b.{0,20}\bdim\b/,
   // Spanish and Portuguese.
   /\bolor a quemado\b|\bchispas\b|\bhumo (del|de la) (enchufe|toma|panel|caja)\b|\bcheiro de queimado\b|\bfa[ií]scas?\b|\btomada quente\b/,
 ];
@@ -408,7 +410,7 @@ export const ELECTRICAL_HAZARD_REASON =
  * suing, a lien filed or threatened against the property, small claims, regulators.
  */
 const REAL_LEGAL =
-  /\b(attorney|attorneys|lawyer|lawyers|legal action|lawsuit|law suit|sue|suing|sued|small claims|litigation|demand letter|cease and desist|better business bureau|bbb|attorney general|consumer protection|93a|licensing board|report you|chargebacks?|charge back)\b|\b(place|put|file|filed|filing|placing|record|recorded|slap)\b.{0,20}\blien\b|\blien (on|against) (the|my|our|your) (house|home|property)\b|\b(take|taking|see|seeing) (you|them|him|her|us) (to|in) court\b|\bcourt (date|case|filing|order)\b|\b(dispute|disputing|disputed) (the|this|that|your|a|his|her) (charge|charges|bill|invoice|payment|transaction)\b|\bdisputing (the|your|this|that)\b|\bfiled (a |the )?dispute\b/;
+  /\b(attorney|attorneys|lawyer|lawyers|legal action|lawsuit|law suit|sue|suing|sued|small claims|litigation|demand letter|cease and desist|better business bureau|bbb|attorney general|consumer protection|93a|licensing board|report you|chargebacks?|charge back)\b|\b(place|put|file|filed|filing|placing|record|recorded|slap)\b.{0,20}\blien\b|\blien (on|against) (the|my|our|your) (house|home|property)\b|\b(take|taking|see|seeing) (you|them|him|her|us) (to|in) court\b|\bcourt (date|case|filing|order)\b|\b(dispute|disputing|disputed) (the|this|that|your|a|his|her) (charge|charges|bill|invoice|payment|transaction)\b|\bdisputing (the|your|this|that) (?!(depreciation|claim|supplement|adjuster'?s?|estimate|scope|denial|carrier|insurance|deductible)\b)|\bfiled (a |the )?dispute\b/;
 
 /**
  * Check 45 P4: other states' consumer-protection laws and licensing boards (whole words; "roc"

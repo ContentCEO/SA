@@ -292,6 +292,7 @@ describe("evaluation set (#46)", () => {
           invoice_direction: c.expect.billOwedByBusiness ? "owed_by_business" : "unknown",
           // Check 22 P6: every $ figure in the email, as a real model lists them, so the amount
           // rule is exercised.
+          urgency: c.expect.urgency ?? "normal",
           dollar_amounts: [
             ...`${c.subject}\n${c.body}`.matchAll(/\$\s?(\d[\d,]*(?:\.\d{1,2})?)(\s?k\b)?/gi),
           ].map((m) => Number(m[1]!.replace(/,/g, "")) * (m[2] ? 1000 : 1)),
@@ -512,6 +513,7 @@ describe("evaluation set (#46)", () => {
       paymentChangeFalseAlarms: 0,
       municipalFalseAlarms: 0,
       nonEnglishAccuracy: 1,
+      emergencyUrgencyAccuracy: 1,
       openingAccuracy: 1,
     });
     expect(run.purposeProblems).toEqual({});

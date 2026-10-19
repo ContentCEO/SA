@@ -215,6 +215,7 @@ export async function runEvals(
         r.category === "invoice_payment" && r.extracted.invoice_direction !== "owed_by_business",
       disputed: r.extracted.disputed === true,
       owedDollars: carried ? owedCents(carried) / 100 : null,
+      urgency: typeof r.extracted.urgency === "string" ? r.extracted.urgency : undefined,
       contractRights: r.extracted.contract_rights === true,
       fakeBill: r.extracted.fake_bill === true,
       notThePayer: r.extracted.not_the_payer === true,

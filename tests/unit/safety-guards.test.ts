@@ -277,6 +277,8 @@ export const ELECTRICAL_HAZARDS = [
 
 describe("electrical fire signs (Check 37 P1)", () => {
   it.each([
+    // Check 37 P8 (wave 2): a lost neutral.
+    "Half the lights in the house go really bright and the other half go dim when the fridge starts.",
     ...ELECTRICAL_HAZARDS,
     "burning plastic smell from the outlet by the toaster, cover plate brown and warm",
     "lights keep going bright and dim",

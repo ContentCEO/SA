@@ -28,6 +28,8 @@ export type EvalResult = {
   onMoneyOwed: boolean;
   /** Read as legal or a dispute (extracted.disputed: the complaint mark). */
   disputed: boolean;
+  /** Check 39 P8: the sorter's urgency. */
+  urgency?: string;
   /** Check 12 P2: what the thread owes after this email (dollars), or null with no invoice. */
   owedDollars?: number | null;
   /** Check 38 P5. */
@@ -124,6 +126,8 @@ export type Scores = {
   paymentChangeFalseAlarms: number;
   /** Check 22 P12: an inspector or sprinkler company read as the town. */
   municipalFalseAlarms: number;
+  /** Check 39 P8: emergencies (no heat with an elder, CO, AC out with a baby) read as emergencies. */
+  emergencyUrgencyAccuracy: number;
   /** Check 22 P12: category accuracy on emails not in English. */
   nonEnglishAccuracy: number;
   /** Check 24 P8 (voice-examples.v1): sample sets that followed the stored settings. 1 when not run. */
@@ -258,6 +262,10 @@ export function score(cases: EvalCase[], results: EvalResult[]): Scores {
     ).length,
     municipalFalseAlarms: pairs.filter(([c, r]) => c.expect.municipalFalse === true && r!.municipal)
       .length,
+    emergencyUrgencyAccuracy: among(
+      where((c) => c.expect.urgency === "emergency"),
+      (_c, r) => r.urgency === "emergency",
+    ),
     nonEnglishAccuracy: among(
       where((c) => !!c.language && c.language !== "en"),
       (c, r) => cats(c).includes(r.category as never),

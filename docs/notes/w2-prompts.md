@@ -397,3 +397,26 @@ text off that card).
 - Add the `ANTHROPIC_API_KEY` repository secret (GitHub → Settings → Secrets and variables →
   Actions), run "Prompt evals" once with drafts on, and commit the baseline it records
   (`pnpm eval --update-baseline` locally does the same). From 2026-10-26 CI fails until then.
+
+## Step 10: an electrical year, a heating-and-cooling year, roofing insurance mail (Check 37 P8 + 39 P8 + 40 P6)
+
+- `tests/evals/cases-trade-years.ts` (spread into `EVAL_CASES`): electrical (burning outlet,
+  sparks at the panel, lights bright and dim, meter pulled, work-request robot, planned outage,
+  fake disconnect notice, permit approval with a fee, inspection time, a general contractor's
+  12-unit bid, "what's your license number?"); HVAC H03, H04, H05, H08, H10, H12, H13, H15, H22,
+  H24 (H07 is wave 1's `w1-heat-pump-rebates`; H09 and H23 came at step 6); roofing (adjuster
+  sets an inspection, RCV/ACV estimate over the limit, supplement approved, partial denial with no
+  complaint mark, public adjuster asking for photos — not an attack, mortgage loss-draft
+  documents, "claim approved, when can you start?", a door-to-door solicitor using the company's
+  name). Hazards and scams are scored by the existing strict recalls; `EvalCase.expect.urgency`
+  and the new `emergencyUrgencyAccuracy` line score emergencies (no heat with an 84-year-old, CO,
+  AC out with a baby, a tenant with no heat). A draft that states a rebate or refrigerant rule
+  already counts as a draft failure (Check 39 P4's flag in run.ts). `p-failed` / `p-scheduled`
+  already expect needs-you (Check 36 P4 landed in wave 1).
+- **Code:** `REAL_LEGAL`'s "disputing the …" no longer counts when it's the depreciation, the
+  claim, a supplement, the estimate, scope, denial, carrier, insurance or deductible ("We are
+  disputing the depreciation on the claim."); a billing dispute still counts. The electrical
+  hazard check gains "half the lights go bright and the other half dim" (a lost neutral) — it was
+  the one must-catch case the code missed. Guard rows for every roofing sentence of Check 40 P6
+  (not an attack; not real legal) with the controls kept (lien, attorney, "ignore your previous
+  instructions"). **Evals not run.**

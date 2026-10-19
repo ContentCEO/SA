@@ -12,6 +12,7 @@ import type { FirstContactOpening } from "@/server/first-contact-rules";
 import type { InvoiceFacts } from "@/server/money-rules";
 import { DRAFT_V9_CASES } from "./cases-draft-v9";
 import { PIPELINE_CASES } from "./cases-pipeline";
+import { TRADE_YEAR_CASES } from "./cases-trade-years";
 
 export type EvalCase = {
   id: string;
@@ -91,6 +92,8 @@ export type EvalCase = {
     summaryEnglish?: boolean;
     /** Check 22 P12: false = the sender must NOT be read as a town office. */
     municipalFalse?: boolean;
+    /** Check 39 P8: the urgency the sorter should read (emergencies scored on their own line). */
+    urgency?: "emergency" | "high" | "normal" | "low";
     /** classify.v3 signals; undefined = not scored for this case. */
     acceptsQuote?: boolean;
     jobDone?: boolean;
@@ -3069,4 +3072,6 @@ export const EVAL_CASES: EvalCase[] = [
   ...DRAFT_V9_CASES,
   // ── wave 2, Prompt versions step 9: the real sorting path and what owners care about ──
   ...PIPELINE_CASES,
+  // ── wave 2, Prompt versions step 10: electrical and HVAC years, roofing insurance mail ──
+  ...TRADE_YEAR_CASES,
 ];
