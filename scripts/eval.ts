@@ -36,6 +36,8 @@ async function main() {
     console.log(`revise ${id}: ${problems.join("; ")}`);
   for (const [id, problems] of Object.entries(run.purposeProblems))
     console.log(`purpose ${id}: ${problems.join("; ")}`);
+  for (const [id, problems] of Object.entries(run.followupProblems))
+    console.log(`followup ${id}: ${problems.join("; ")}`);
 
   if (args.has("--update-baseline")) {
     const next: Baseline = {

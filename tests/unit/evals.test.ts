@@ -6,6 +6,7 @@ import { TRADES } from "@/config/trades";
 import { EVAL_CASES, type EvalCase } from "../evals/cases";
 import { OPENING_TWEAKS } from "@/ai/prompts/opening-tweaks.v1";
 import { REVISE_CASES, TONE_CASES } from "../evals/edits";
+import { FOLLOWUP_CASES } from "../evals/followups";
 import { PURPOSE_CASES } from "../evals/purposes";
 import { runEvals } from "../evals/run";
 import { regressions, score, type Baseline, type EvalResult, type Scores } from "../evals/score";
@@ -161,6 +162,22 @@ describe("evaluation set (#46)", () => {
     }
   });
 
+  it("covers the nudge writer (followup.v5, Check 21 P7 + 12 P7)", () => {
+    expect(FOLLOWUP_CASES.length).toBeGreaterThanOrEqual(12);
+    expect(new Set(FOLLOWUP_CASES.map((c) => c.id)).size).toBe(FOLLOWUP_CASES.length);
+    const n = (f: (c: (typeof FOLLOWUP_CASES)[number]) => boolean) =>
+      FOLLOWUP_CASES.filter(f).length;
+    expect(n((c) => c.kind === "invoice")).toBeGreaterThanOrEqual(3);
+    expect(n((c) => c.nudgeNumber === 2)).toBeGreaterThanOrEqual(2);
+    for (const skip of ["declined", "asked_to_wait", "already_answered", "paid"] as const)
+      expect(
+        n((c) => c.expect.skip === skip),
+        skip,
+      ).toBeGreaterThanOrEqual(1);
+    expect(n((c) => c.acknowledged === true)).toBeGreaterThanOrEqual(1);
+    for (const c of FOLLOWUP_CASES) expect(c.messages.length, c.id).toBeGreaterThanOrEqual(2);
+  });
+
   it("covers the draft-editing prompts too", () => {
     expect(REVISE_CASES.length).toBeGreaterThanOrEqual(8);
     expect(TONE_CASES.length).toBeGreaterThanOrEqual(5);
@@ -276,12 +293,40 @@ describe("evaluation set (#46)", () => {
     };
     let i = -1;
     let tone = -1;
+    let nudge = -1;
     const transport: Transport = async (req) => {
       const sys = req.system[0]!.text;
       const isDraft = sys.startsWith("You write email replies");
       const isRevise = sys.startsWith("You revise a reply");
       const isTone = sys.startsWith("You compare two versions");
-      if (!isDraft && !isRevise && !isTone) i++;
+      const isFollowup = sys.startsWith("You write a short follow-up");
+      if (!isDraft && !isRevise && !isTone && !isFollowup) i++;
+      // followup.v5: a good writer declines exactly when the key says, else writes a short nudge
+      // about the job with no new figure, no guilt phrase and no easy out.
+      if (isFollowup) {
+        const f = FOLLOWUP_CASES[++nudge]!;
+        return {
+          parsed: f.expect.skip
+            ? {
+                skip: f.expect.skip,
+                body: "",
+                reason: "They said so.",
+                flags: [],
+                confidence: 0.9,
+                used_facts: [],
+              }
+            : {
+                skip: null,
+                body: `Hi ${f.customer.split(" ")[0]},\n\nFollowing up on the ${f.kind === "invoice" ? "invoice" : "quote"} I sent over. Let me know if you have any questions.\n\nAlex`,
+                reason: "Nudge.",
+                flags: [],
+                confidence: 0.9,
+                used_facts: [],
+              },
+          usage: { inputTokens: 100, outputTokens: 20, cacheReadTokens: 0, cacheWriteTokens: 0 },
+          stopReason: "end_turn",
+        };
+      }
       const revised = req.user.includes("{{price}}")
         ? "Hi Sam,\n\nIt's {{price}} and I can come {{date}}.\n\nAlex"
         : req.user.includes("out loud")
@@ -383,9 +428,12 @@ describe("evaluation set (#46)", () => {
       revisePassRate: 1,
       toneAccuracy: 1,
       purposePassRate: 1,
+      followupPassRate: 1,
+      followupSkipAccuracy: 1,
       openingAccuracy: 1,
     });
     expect(run.purposeProblems).toEqual({});
+    expect(run.followupProblems).toEqual({});
     expect(run.reviseProblems).toEqual({});
     // Every first-contact case was drafted and named its shape.
     const fc = EVAL_CASES.filter((c) => c.firstContact).map((c) => c.id);

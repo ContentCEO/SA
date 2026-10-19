@@ -50,6 +50,7 @@ import {
   type ModelDraft,
   type Opening,
   type WorkspaceContext,
+  localDay,
 } from "@/ai/prompts/draft.v9";
 import {
   OPENING_TWEAKS,
@@ -66,8 +67,10 @@ import {
 import {
   FOLLOWUP_INSTRUCTIONS,
   FOLLOWUP_PROMPT_VERSION,
+  followupSchema,
   followupTask,
-} from "@/ai/prompts/followup.v4";
+  type FollowupSkip,
+} from "@/ai/prompts/followup.v5";
 import {
   closingQuestionTask,
   depositTask,
@@ -252,6 +255,8 @@ export type CreateOutcome =
         | "payment_change"
         /** Check 48 P1: "is this a bot?" — only the owner's tap drafts it. */
         | "asks_if_ai"
+        /** Check 21 P7: the nudge writer declined (they said no, asked to wait, paid…). */
+        | "writer_declined"
         /** Check 38 P5: cancelling the contract / their rights under it — the owner's tap only. */
         | "contract_rights"
         // Round 2 (FW E11): the owner said they called after the newest email.
@@ -636,6 +641,43 @@ async function customerOf(threadId: string) {
     .orderBy(desc(messages.sentAt))
     .limit(1);
   return m ? { name: customerReplyName(m), address: customerReplyAddress(m) } : null;
+}
+
+/**
+ * Check 21 P7: the nudge writer declined on this thread and nothing has been written since
+ * (`extracted.nudge_skip_at` is newer than the thread's newest message). Pure.
+ */
+export function nudgeSkipStands(extracted: unknown, lastMessageAt: Date | null): boolean {
+  const x = (extracted ?? {}) as { nudge_skip?: unknown; nudge_skip_at?: unknown };
+  if (typeof x.nudge_skip !== "string" || typeof x.nudge_skip_at !== "string") return false;
+  const at = Date.parse(x.nudge_skip_at);
+  if (!Number.isFinite(at)) return false;
+  return lastMessageAt == null || at > lastMessageAt.getTime();
+}
+
+/** Check 21 P7: the writer's decline, as a code on the thread and a content-free Activity row. */
+async function recordNudgeSkip(
+  threadId: string,
+  workspaceId: string,
+  code: FollowupSkip,
+  now: Date,
+) {
+  await db()
+    .update(threads)
+    .set({
+      extracted: sql`coalesce(${threads.extracted}, '{}'::jsonb) || ${JSON.stringify({
+        nudge_skip: code,
+        nudge_skip_at: now.toISOString(),
+      })}::jsonb`,
+    })
+    .where(eq(threads.id, threadId));
+  await db().insert(activityLog).values({
+    workspaceId,
+    actor: "squared_away",
+    action: "followup_skipped",
+    threadId,
+    detail: { code },
+  });
 }
 
 /** Check 40 P2: a stored email's attachment counts for the drafter's "Attached:" line, or null. */
@@ -1120,6 +1162,9 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
     // Check 21 P2: they asked us to wait ("after the holidays"): not before that day.
     if (thread.nudgeAfter && thread.nudgeAfter.getTime() > now.getTime())
       return { status: "skipped", reason: "wait_requested" };
+    // Check 21 P7: the writer declined on this conversation and nobody has written since.
+    if (nudgeSkipStands(thread.extracted, thread.lastMessageAt))
+      return { status: "skipped", reason: "writer_declined" };
     const sentNudges = await countSentFollowups(threadId);
     if (sentNudges >= MAX_FOLLOWUPS) return { status: "skipped", reason: "followup_cap" };
     nudgeNumber = sentNudges === 0 ? 1 : 2;
@@ -1370,7 +1415,14 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
   const dispute = !safety && disputeThread(thread);
   const wsBlock = workspaceBlock(ctx);
   const baseTask = followup
-    ? followupTask({ nudgeNumber, daysQuiet })
+    ? followupTask({
+        nudgeNumber,
+        daysQuiet,
+        // Check 12 P7: an invoice reminder is a different job from a quote nudge.
+        kind: isInvoiceThread(thread) ? "invoice" : "quote",
+        // Check 21 P1: "The customer said they'd look it over on Thursday, October 16."
+        acknowledgedOn: onlyAcksSince ? localDay(last.sentAt, ctx.timeZone) : null,
+      })
     : purpose === "deposit"
       ? depositTask({ paymentTerms: ctx.paymentTerms })
       : purpose === "review_request"
@@ -1426,6 +1478,8 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
   ];
   const checkContext = {
     replyLanguage: language.reply,
+    // Check 12 P7: an invoice reminder never offers an easy out.
+    invoiceReminder: followup && isInvoiceThread(thread),
     sourceText: [withText.map((x) => x.text).join("\n"), ...ownerFacts, opts.ownerNote]
       .filter(Boolean)
       .join("\n"),
@@ -1483,7 +1537,7 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
     ? `${basePromptVersion}+${DISPUTE_CAUTION_PROMPT_VERSION}`
     : basePromptVersion;
 
-  let result: (ModelDraft & { opening?: Opening }) | null = null;
+  let result: (ModelDraft & { opening?: Opening; skip?: FollowupSkip | null }) | null = null;
   if (safety && safetyKind) result = SAFETY_NOTES[safetyKind].note(ctx);
   else if (opts.beforeModelCall && !(await opts.beforeModelCall()))
     return { status: "skipped", reason: "rate_limited" };
@@ -1502,11 +1556,18 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
           { text: wsBlock, cache: true },
         ],
         user: convo,
-        // Replies (and purpose notes) carry draft.v7's `opening`; nudges keep their own output.
-        schema: followup ? draftSchema : replyDraftSchema,
+        // Replies (and purpose notes) carry draft.v7's `opening`; nudges carry `skip`.
+        schema: followup ? followupSchema : replyDraftSchema,
         now,
       };
       result = (await callStructured(request)) ?? (await callStructured(request));
+      // Check 21 P7: the writer declined ("they said no", "they asked to wait"): no draft, no
+      // Gmail draft, a content-free log, and the thread remembers it until someone writes.
+      const skip = followup ? (result as { skip?: FollowupSkip | null } | null)?.skip : null;
+      if (skip) {
+        await recordNudgeSkip(threadId, workspace.id, skip, now);
+        return { status: "skipped", reason: "writer_declined" };
+      }
       if (result?.body.trim()) {
         // Something the owner explicitly banned slipped in: one fresh attempt, then flag (plan #23).
         const first = checkDraft(result.body.trim(), checkContext);

@@ -259,6 +259,8 @@ export type CheckContext = {
   ownerInstruction?: string | null;
   /** Check 43 P8: the language the reply should be in (decided in code). Left out: no check. */
   replyLanguage?: ReplyLanguage;
+  /** Check 12 P7: an invoice reminder — an easy out ("no worries if not") is flagged. */
+  invoiceReminder?: boolean;
 };
 
 /** What kind of problem each flag is, so the caller can decide to regenerate. */
@@ -290,6 +292,8 @@ export type CheckHit =
    * flags without a rewrite (it is not in REGENERATE_ON).
    */
   | "payment_terms"
+  /** Check 12 P7: an invoice reminder offers an easy out. Flag only. */
+  | "easy_out"
   /** Check 38 P2: asks a Massachusetts customer for more than a one-third deposit. Flag only. */
   | "deposit_cap"
   /** Check 23 P6: a phone number, link, email address or name nobody gave. */
@@ -1124,5 +1128,16 @@ export function checkDraft(draftBody: string, ctx: CheckContext): CheckResult {
     hits.push("language");
   }
 
+  // Check 12 P7: an invoice reminder never tells someone who owes money that skipping it is fine.
+  if (ctx.invoiceReminder && EASY_OUT.test(body)) {
+    flags.push(EASY_OUT_FLAG);
+    cap = Math.min(cap, 0.5);
+    hits.push("easy_out");
+  }
+
   return { flags, confidenceCap: cap, hits };
 }
+
+const EASY_OUT =
+  /\b(no worries|no rush|no pressure|not a good time|isn't a good time|if it's not a good time|gone another way|went another way|go another way|whenever you get (a chance|to it)|totally fine if|that's fine too|if you'd rather not|if you've decided against|feel free to ignore)\b/i;
+export const EASY_OUT_FLAG = "Offers an easy out on an unpaid invoice. Take that out.";

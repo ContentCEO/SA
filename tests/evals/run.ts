@@ -25,6 +25,7 @@ import { carryInvoiceFacts, invoiceOf, owedCents } from "@/server/money-rules";
 import { createTestDb } from "../support/db";
 import type { EvalCase } from "./cases";
 import { runEditEvals } from "./edits";
+import { runFollowupEvals } from "./followups";
 import { DEFAULT_PAYMENT_TERMS, runPurposeEvals } from "./purposes";
 import { score, type EvalResult } from "./score";
 
@@ -233,7 +234,13 @@ export async function runEvals(
   const scores = score(cases, results);
   let reviseProblems: Record<string, string[]> = {};
   let purposeProblems: Record<string, string[]> = {};
+  let followupProblems: Record<string, string[]> = {};
   if (opts.drafts !== false) {
+    // Check 21 P7 + 12 P7: the nudge writer (followup.v5), skips and invoice reminders.
+    const nudges = await runFollowupEvals(workspace.id);
+    scores.followupPassRate = nudges.followupPassRate;
+    scores.followupSkipAccuracy = nudges.followupSkipAccuracy;
+    followupProblems = nudges.followupProblems;
     const edits = await runEditEvals(workspace.id);
     scores.revisePassRate = edits.revisePassRate;
     scores.toneAccuracy = edits.toneAccuracy;
@@ -257,6 +264,7 @@ export async function runEvals(
     scores,
     reviseProblems,
     purposeProblems,
+    followupProblems,
     costDollars: (cost?.centiCents ?? 0) / 10_000,
     tokens: { input: tokens?.in ?? 0, output: tokens?.out ?? 0 },
   };

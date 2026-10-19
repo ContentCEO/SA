@@ -116,6 +116,10 @@ export type Scores = {
    * run.
    */
   purposePassRate: number;
+  /** Check 21 P7 + 12 P7 (followup.v5): nudges that kept every rule. 1 when not run. */
+  followupPassRate: number;
+  /** Check 21 P7: the writer declined exactly when the key says (strict). 1 when not run. */
+  followupSkipAccuracy: number;
   /**
    * draft.v7: of drafted cases, the first-reply shape named right — details / vague / urgent /
    * price_only on a first contact, "not_first" on every ordinary reply. 1 when not run.
@@ -232,6 +236,8 @@ export function score(cases: EvalCase[], results: EvalResult[]): Scores {
     revisePassRate: 1,
     toneAccuracy: 1,
     purposePassRate: 1,
+    followupPassRate: 1,
+    followupSkipAccuracy: 1,
     openingAccuracy: ratio(
       opened.filter(([c, r]) => r!.opening === (c.firstContact ?? "not_first")).length,
       opened.length,
@@ -257,6 +263,8 @@ const STRICT: (keyof Scores)[] = [
   // Check 38 P5: a wrong "you can cancel within three days" is a confident legal answer.
   "contractRightsRecall",
   "fakeBillRecall",
+  // Check 21 P7: a nudge sent to someone who said no is the one thing the writer must not do.
+  "followupSkipAccuracy",
 ];
 
 /** Every way the new scores are worse than the baseline. Empty = good to release. */

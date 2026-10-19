@@ -20,6 +20,9 @@ import { localParts } from "@/server/snooze-rules";
 import { guessNoAnswers, listQuotes } from "@/server/quotes";
 import { saveConnectedMailbox } from "@/server/mailboxes";
 import { followupSettingsInput, saveFollowupSettings } from "@/server/profile";
+import { checkDraft, EASY_OUT_FLAG } from "@/ai/draft-checks";
+import { FOLLOWUP_INSTRUCTIONS, followupSchema, followupTask } from "@/ai/prompts/followup.v5";
+import { nudgeSkipStands } from "@/server/drafts";
 import { createTestDb } from "../support/db";
 import { fakeTransport } from "../support/fake-model";
 import { FakeWriter } from "../support/fake-writer";
@@ -414,7 +417,7 @@ describe("writing and sending a nudge", () => {
       toAddress: "dana@customer.com",
       status: "pending",
     });
-    expect(d!.promptVersion).toBe("followup.v4");
+    expect(d!.promptVersion).toBe("followup.v5");
     const raw = [...writer.drafts.values()][0]!.raw;
     expect(FakeWriter.headersOf(raw)).toMatch(/In-Reply-To: <g\d+-out@shop.com>/);
     expect(FakeWriter.headersOf(raw)).toMatch(/To: dana@customer.com/);
@@ -1283,5 +1286,152 @@ describe("big quotes wait longer before nudges and 'no answer' (Check 38 P4)", (
   it("a $900 quote keeps today's timing: days 7 and 14, guessed on day 21", async () => {
     const t = await quoteOf(90_000);
     expect(await run(t, 30)).toEqual({ nudged: [7, 14], guessed: 21 });
+  });
+});
+
+describe("followup.v5 (wave 2, Prompt versions step 4: Check 12 P7 + Check 21 P7)", () => {
+  it("the prompt carries each rule, and the task tells quotes from invoices", () => {
+    for (const line of [
+      "## First, decide whether to write one",
+      "set skip to the matching value and leave body empty",
+      "Open with something specific to the job",
+      'never "just checking in"',
+      "## Invoice reminders",
+      "Never offer an easy out",
+      "never mention a late fee, interest or a discount the owner didn't state",
+      "Never claim the email was written without an assistant",
+      'Write the reply in the language named on the "Reply language" line',
+    ])
+      expect(FOLLOWUP_INSTRUCTIONS, line).toContain(line);
+    expect(followupTask({ nudgeNumber: 1, daysQuiet: 5, kind: "invoice" })).toMatch(
+      /INVOICE reminder.*hasn't paid or replied for 5 days.*Don't add a deadline, late fee or discount/,
+    );
+    expect(followupTask({ nudgeNumber: 2, daysQuiet: 4, kind: "invoice" })).toMatch(
+      /second and final reminder.*ask for a date.*Don't offer an easy out/,
+    );
+    expect(followupTask({ nudgeNumber: 2, daysQuiet: 4, kind: "invoice" })).not.toMatch(
+      /easy out\.$/,
+    );
+    expect(followupTask({ nudgeNumber: 1, daysQuiet: 3, kind: "quote" })).toMatch(
+      /QUOTE follow-up.*hasn't replied for 3 days/,
+    );
+    expect(followupTask({ nudgeNumber: 2, daysQuiet: 3, kind: "quote" })).toMatch(
+      /second and final follow-up, and give the customer an easy out/,
+    );
+    // Check 21 P1: the acknowledgement's day.
+    expect(
+      followupTask({
+        nudgeNumber: 1,
+        daysQuiet: 3,
+        kind: "quote",
+        acknowledgedOn: "Thursday, October 16",
+      }),
+    ).toContain("The customer said they'd look it over on Thursday, October 16.");
+    // The output may decline; a missing or odd value reads as null.
+    expect(followupSchema.parse({ ...nudge(), skip: "declined" }).skip).toBe("declined");
+    expect(followupSchema.parse({ ...nudge(), skip: "bogus" }).skip).toBeNull();
+    expect(followupSchema.parse(nudge()).skip).toBeNull();
+  });
+
+  it("an invoice thread's nudge uses the invoice task; a quote's uses the quote task", async () => {
+    const q = await quietThread({ ownerRepliedDaysAgo: 4 });
+    const inv = await quietThread({
+      category: "invoice_payment",
+      ownerRepliedDaysAgo: 4,
+      extracted: {
+        invoice: { invoice_number: "318", amount: 1450, due_date: null, status: "unpaid" },
+      },
+    });
+    const { transport, calls } = fakeTransport([nudge(), nudge()]);
+    setModelTransportForTests(transport);
+    expect((await createDraftForThread(q, { trigger: "followup", ...deps() })).status).toBe(
+      "created",
+    );
+    expect((await createDraftForThread(inv, { trigger: "followup", ...deps() })).status).toBe(
+      "created",
+    );
+    expect(calls[0]!.user).toMatch(/QUOTE follow-up/);
+    expect(calls[0]!.user).not.toMatch(/INVOICE reminder/);
+    expect(calls[1]!.user).toMatch(/INVOICE reminder/);
+    expect(calls[1]!.user).toMatch(/Reply language: English/);
+    const rows = await database.select().from(drafts);
+    expect(rows.map((d) => d.promptVersion)).toEqual(["followup.v5", "followup.v5"]);
+  });
+
+  it("checkDraft flags an easy out on invoice reminders only", () => {
+    const ctx = { sourceText: "", doNotPromise: [], phrasesAvoided: [] };
+    const body = "Hi Dana, a quick note on invoice 318. No worries if it's not a good time.";
+    const flagged = checkDraft(body, { ...ctx, invoiceReminder: true });
+    expect(flagged.hits).toContain("easy_out");
+    expect(flagged.flags).toContain(EASY_OUT_FLAG);
+    expect(flagged.confidenceCap).toBeLessThanOrEqual(0.5);
+    expect(checkDraft(body, ctx).hits).not.toContain("easy_out");
+    expect(
+      checkDraft("Hi Dana, when do you expect to pay invoice 318? Happy to resend it.", {
+        ...ctx,
+        invoiceReminder: true,
+      }).hits,
+    ).not.toContain("easy_out");
+  });
+
+  it("the writer declines: no draft, no Gmail draft, a content-free log, and no re-ask until someone writes", async () => {
+    const t = await quietThread({ ownerRepliedDaysAgo: 4 });
+    expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([t]);
+    const { transport, calls } = fakeTransport([
+      { ...nudge({ body: "" }), skip: "declined", reason: "They went with someone else." },
+    ]);
+    setModelTransportForTests(transport);
+    expect(await createDraftForThread(t, { trigger: "followup", ...deps() })).toEqual({
+      status: "skipped",
+      reason: "writer_declined",
+    });
+    expect(calls).toHaveLength(1);
+    expect(writer.drafts.size).toBe(0);
+    expect(await database.select().from(drafts)).toEqual([]);
+    const logs = await database
+      .select()
+      .from(activityLog)
+      .where(eq(activityLog.action, "followup_skipped"));
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toMatchObject({
+      threadId: t,
+      actor: "squared_away",
+      detail: { code: "declined" },
+    });
+    expect(JSON.stringify(logs[0]!.detail)).not.toMatch(/Dana|someone else|panel/i);
+    const [row] = await database.select().from(threads).where(eq(threads.id, t));
+    expect(row!.extracted).toMatchObject({
+      nudge_skip: "declined",
+      nudge_skip_at: NOW.toISOString(),
+    });
+    // The scan and the drafter leave it alone now…
+    expect(await threadsToFollowUp(mailboxId, NOW)).toEqual([]);
+    setModelTransportForTests(fakeTransport([nudge()]).transport);
+    expect(await createDraftForThread(t, { trigger: "followup", ...deps() })).toEqual({
+      status: "skipped",
+      reason: "writer_declined",
+    });
+    // …until someone writes again: the owner's new email is newer than the decline.
+    const later = new Date(NOW.getTime() + 5 * DAY);
+    await database.insert(messages).values({
+      threadId: t,
+      mailboxId,
+      gmailMessageId: `${t}-again`,
+      rfc822MessageId: `<${t}-again@shop.com>`,
+      direction: "out",
+      fromAddress: "owner@shop.com",
+      toAddresses: ["dana@customer.com"],
+      subject: "Re: Panel upgrade",
+      bodyText: "Hi Dana, I can also do the outlets if you'd like. Davi",
+      sentAt: new Date(NOW.getTime() + 1 * DAY),
+    });
+    await database
+      .update(threads)
+      .set({ lastMessageAt: new Date(NOW.getTime() + 1 * DAY) })
+      .where(eq(threads.id, t));
+    expect(nudgeSkipStands(row!.extracted, new Date(NOW.getTime() + 1 * DAY))).toBe(false);
+    expect(nudgeSkipStands(row!.extracted, daysAgo(1))).toBe(true);
+    expect(nudgeSkipStands({}, null)).toBe(false);
+    expect(await threadsToFollowUp(mailboxId, later)).toEqual([t]);
   });
 });

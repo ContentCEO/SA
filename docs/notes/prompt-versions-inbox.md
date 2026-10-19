@@ -49,39 +49,10 @@ The code already sets `voice_profile.examples_stale` and drafts stop using stale
   starts with the greeting and ends with the sign-off, the avoided phrase absent, no digits
   except in placeholders, length within ±50% of the average.
 
-## From `w2-sync` (Check 21 P1): acknowledgements (followup part)
+## From `w2-settings` (Check 24 P11): voice notes (optional)
 
-The classify part (`signals.acknowledgment_only`, its eval cases) was written in classify.v6
-(Prompt versions step 1). Still waiting:
-
-- followup (next version): when the customer's newest email is an acknowledgement, add to the
-  task: "The customer said they'd look it over on <weekday, Month D>." (`drafts.ts` knows it:
-  `last` is the acknowledgement when `onlyAcksSince` is true; pass `last.sentAt` in the owner's
-  zone.)
-
-## From `w2-followups` (Check 21 P4 / Check 12 P7): followup.v5 invoice reminders
-
-`followupTask({ nudgeNumber, daysQuiet, invoice })`, the drafter passing
-`isInvoiceThread(thread)`; task lines for invoice threads:
-
-- nudge 1: "The customer hasn't paid or replied for ${daysQuiet} days since the owner sent the
-  invoice. Write the owner's first, friendly reminder about the invoice. Don't add a deadline,
-  late fee or discount the owner didn't write."
-- nudge 2 (the second-reminder line): "The invoice is still unpaid, ${daysQuiet} days after the
-  last reminder. Write the owner's second and final reminder: polite and clear that payment is
-  still due. Don't offer an easy out or suggest it's fine not to pay."
-
-Until then the second invoice reminder still uses followup.v4's "give the customer an easy out".
-
-## From `w2-settings` (Check 43 P8, Check 24 P11): the reply language (followup part) and voice notes
-
-The draft.v9 part (the "Reply language" line in the conversation block and the instruction) is
-written (Prompt versions step 2). Still waiting:
-
-- followup.v5's conversation block carries the same `replyLanguageLine(choice)` line (shared
-  `conversationBlock` from draft.v9, so it comes for free) and the instruction line "Write the
-  reply in the language named on the 'Reply language' line, whatever language the customer wrote
-  in."
-- Voice (optional, Check 24 P11): with a ready voice and a null greeting / sign-off, the voice
-  block prints "Usual greeting: not given"; it could say "none — they jump straight in" /
-  "none — they don't sign off".
+Check 43 P8's draft.v9 and followup.v5 parts are written (Prompt versions steps 2 and 4). Still
+open, optional: with a ready voice and a null greeting / sign-off, the voice block prints "Usual
+greeting: not given"; it could say "none — they jump straight in" / "none — they don't sign
+off". That block is draft.v6's `workspaceBlock` (shared by every later version); changing its
+wording means a new draft version, so it waits for the next one.

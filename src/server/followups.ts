@@ -143,7 +143,7 @@ export async function threadsToFollowUp(
   // Check 12 P3: SQL twin of `saidSentBlocksNudge`: "the check is in the mail" holds nudges for
   // SAID_SENT_WAIT_DAYS from that email (never NULL: a bad date reads as no hold).
   const saidSentHold = sql`(coalesce(${threads.extracted}->'invoice'->>'status', '') = 'said_sent'
-    and (${threads.extracted}->'invoice'->>'said_sent_at') ~ '^\\d{4}-\\d{2}-\\d{2}T'
+    and coalesce(${threads.extracted}->'invoice'->>'said_sent_at', '') ~ '^\\d{4}-\\d{2}-\\d{2}T'
     and (${threads.extracted}->'invoice'->>'said_sent_at')::timestamptz > ${new Date(now.getTime() - SAID_SENT_WAIT_DAYS * 86_400_000).toISOString()}::timestamptz)`;
   // Check 21 P5: the customer answered in a NEW email (new subject, same address) after the
   // owner's last message: the old conversation only looks quiet. SQL twin of
@@ -188,6 +188,9 @@ export async function threadsToFollowUp(
         sql`not ${purposeSent}`,
         sql`not ${saidPaid}`,
         sql`not ${saidSentHold}`,
+        // Check 21 P7: the writer declined and nobody has written since (SQL twin of
+        // `nudgeSkipStands`; a bad date reads as no decline).
+        sql`not (coalesce(${threads.extracted}->>'nudge_skip_at', '') ~ '^\\d{4}-\\d{2}-\\d{2}T' and (${threads.extracted}->>'nudge_skip_at')::timestamptz > coalesce(${threads.lastMessageAt}, '-infinity'::timestamptz))`,
         sql`not ${wroteElsewhere}`,
         // Check 36 P3: an emergency answered "On my way" with no price is a service call, not an
         // estimate to check in on. SQL twin of `isServiceCall`; the drafter's check decides.

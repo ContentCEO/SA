@@ -194,7 +194,7 @@ meant for it). draft.v9's header names the step.
   Assessment" are Massachusetts program names, so they live in `prompts/states/ma.ts` (plumbing
   and hvac) and reach only Massachusetts shops' blocks — names only, never an amount.
 - **`other.ts`** lost "whether a permit is involved" now (the new test `no trade file asks the
-  customer whether a permit is needed` covers every trade), so Check 41 P4's "(only for building
+customer whether a permit is needed` covers every trade), so Check 41 P4's "(only for building
   work)" rewording in step 8 is not needed: the question is gone.
 - Tests: `trades.test.ts` (no permit question in any trade; the new words and questions present,
   Mass Save absent for a shop with no state); `draft-v9.test.ts` (MA hvac words, no amounts).
@@ -202,3 +202,41 @@ meant for it). draft.v9's header names the step.
   approves), a well-water question, an EV charger and a service upgrade (must ask the town, never
   a permit), an oil boiler to heat pumps (zones, backup, assessment, no dollar figure), a one-room
   mini-split (panel, no square footage), central AC on existing ducts. **Evals not run.**
+
+## Step 4: followup.v5 (Check 12 P7 + 21 P7, plus the inbox's followup lines)
+
+**followup.v5** (`src/ai/prompts/followup.v5.ts`, `ACTIVE.followup`): followup.v4 plus:
+
+- **Check 12 P7:** `followupTask({ nudgeNumber, daysQuiet, kind, acknowledgedOn })`; `kind` is
+  `isInvoiceThread(thread) ? "invoice" : "quote"` in `createDraftForThread`. Invoice reminders:
+  name the number, the amount still open and the due date only when the conversation does, ask
+  when they expect to pay or what's holding it up, offer to resend, the second one firmer and
+  asking for a date — never an easy out, never a late fee, interest or discount the owner didn't
+  state (the task lines are the follow-ups group's words from the inbox). Quotes keep today's
+  wording. `checkDraft` gains `invoiceReminder` → hit `easy_out` (`EASY_OUT_FLAG` "Offers an easy
+  out on an unpaid invoice. Take that out.", cap 0.5; flag only, not regenerated) for "no worries",
+  "not a good time", "gone another way" and the like — on invoice reminders only.
+- **Check 21 P7:** output field `skip` (`followupSchema` = draftSchema + `skip: declined |
+asked_to_wait | already_answered | paid | other | null`, `.catch(null)`). "Open with something
+  specific to the job, not 'just checking in'"; "never 'haven't heard from you'". When the model
+  sets `skip`: no draft, no Gmail draft, Activity `followup_skipped` `{ code }` (content-free;
+  `describeActivity` hides unknown actions, so nothing shows), the thread gets
+  `extracted.nudge_skip` / `nudge_skip_at`, and `createDraftForThread` answers
+  `{ status: "skipped", reason: "writer_declined" }`. Until someone writes (`nudge_skip_at` newer
+  than `threads.last_message_at`) the scan leaves the thread out (SQL twin in
+  `threadsToFollowUp`) and the drafter's followup branch refuses (`nudgeSkipStands`, pure).
+- **Inbox lines written:** Check 21 P1 ("The customer said they'd look it over on Thursday,
+  October 16." when `onlyAcksSince`, via `localDay`), Check 21 P4 / 12 P7 (the invoice task
+  lines), Check 43 P8 ("Write the reply in the language named on the 'Reply language' line"; the
+  shared conversation block from draft.v9 carries the line). Check 43 P1: "Never claim the email
+  was written without an assistant, and never deny that one helped."
+- **Evals:** `tests/evals/followups.ts` — 15 quiet conversations (quiet quote, quiet invoice,
+  second nudge on each, "after the holidays" → asked_to_wait, "went with someone else" →
+  declined, "paid by check yesterday" → paid, already booked → already_answered, owner asked for
+  photos, price objection, Portuguese-speaking customer, a general contractor's bid, a big
+  remodel, a $150 repair, an acknowledgement). Scored: `skip` matches (strict
+  `followupSkipAccuracy`), body under 60 words, no dollar figure outside the conversation, no
+  guilt phrase, no new date, no easy out on invoices (`followupPassRate`). `pnpm eval` prints
+  `followup <id>: …` problems. **Evals not run.**
+- Open (not built): Check 24 P11's optional "none — they jump straight in" wording is in
+  draft.v6's shared block; it waits for the next draft version.
