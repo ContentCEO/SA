@@ -4,7 +4,7 @@ import { and, count, desc, eq, gt, gte, isNull, lt, or, sql } from "drizzle-orm"
 import { db } from "@/db";
 import { activityLog, businessProfiles, mailboxes, threads, workspaces } from "@/db/schema";
 import { appUrl } from "@/lib/app-url";
-import { sendSms, TwilioError, type SmsSender } from "@/lib/sms";
+import { sendSms, TwilioError, type SmsSender, type SmsSendResult } from "@/lib/sms";
 import { queueCardIds, queueMembership } from "./drafts";
 import { atLocalHour, localParts, usableTimeZone } from "./snooze-rules";
 import { jobsAllowed } from "./lifecycle";
@@ -123,9 +123,13 @@ export function secondsUntilQuiet(now: Date, timeZone: string, max = 4 * 60 * 60
   return Math.max(60, Math.min(max, left > 0 ? left : max));
 }
 
+/** The refusals the Text alerts screen has a notice for (settings/messages.ts: `sms_<code>`). */
+export type SmsErrorCode =
+  "phone" | "busy" | "not_configured" | "code" | "not_verified" | "send_failed" | "opted_out";
+
 export class SmsError extends Error {
   constructor(
-    readonly code: "phone" | "busy" | "not_configured" | "code" | "not_verified" | "send_failed",
+    readonly code: SmsErrorCode,
     message: string,
   ) {
     super(message);
@@ -189,6 +193,16 @@ export async function startPhoneVerification(
   if (r === "not_configured") {
     await forget();
     throw new SmsError("not_configured", "Texting isn't set up yet.");
+  }
+  if (r === "opted_out") {
+    // Check 27 P6: this number replied STOP to us before. Twilio won't deliver until it texts
+    // START; the screen says so. No code is held.
+    await forget();
+    await upsertProfile(workspaceId, { smsStoppedReason: "opted_out" });
+    throw new SmsError(
+      "opted_out",
+      "That number replied STOP to our texts. Text START to the number, then try again.",
+    );
   }
   await recordSmsDelivery(workspaceId, r, "code", now);
   return phone;
@@ -375,84 +389,145 @@ export async function sendLeadAlerts(
 
   let sent = 0;
   for (const { profile: p, workspace: w } of profiles) {
-    if (!jobsAllowed(w, now)) continue;
-    if (inQuietHours(now, p.timeZone)) continue;
-    if (p.smsLastSentAt && now.getTime() - p.smsLastSentAt.getTime() < SMS.minGapMs) continue;
+    // Check 27 P6: one owner's refusal (Twilio down, a STOP) never stops the next owner's text.
+    try {
+      const r = await alertOne(p, w, now, send);
+      if (r === "not_configured") return { sent, notConfigured: true };
+      if (r === "sent") sent++;
+    } catch (err) {
+      // Twilio's numeric status and the error's name only — never the number or the text.
+      console.error("sms_alert_failed", {
+        workspaceId: w.id,
+        status: err instanceof TwilioError ? err.status : null,
+        error: err instanceof Error ? err.name : "unknown",
+      });
+    }
+  }
+  return { sent, notConfigured: false };
+}
 
-    // Check 19 P7: ten a local day, counted from the owner's midnight (as the at-risk pushes).
-    const dayStart = atLocalHour(now, usableTimeZone(p.timeZone), 0, 0);
-    const [today] = await db()
-      .select({ n: count() })
-      .from(activityLog)
-      .where(
-        and(
-          eq(activityLog.workspaceId, w.id),
-          eq(activityLog.action, "sms_alert_sent"),
-          gte(activityLog.createdAt, dayStart),
-        ),
-      );
-    if ((today?.n ?? 0) >= SMS.dailyCap) continue;
+/** Give a claimed slot back, so nothing is lost: the next run sees the same leads. */
+async function handBackSlot(p: typeof businessProfiles.$inferSelect) {
+  await db()
+    .update(businessProfiles)
+    .set({ smsLastSentAt: p.smsLastSentAt, smsAlertCursor: p.smsAlertCursor })
+    .where(eq(businessProfiles.workspaceId, p.workspaceId));
+}
 
-    const fresh = await freshLeads(w.id, p.smsAlertCursor, now);
-    if (!fresh.length) continue;
+/**
+ * One owner's text for this run: "sent", "skipped" (nothing new, quiet hours, the cap, the gap,
+ * a slot another run claimed), "not_configured" (no Twilio: the slot is handed back and the
+ * caller stops) or "opted_out" (the owner replied STOP: texts switched off, slot handed back).
+ */
+async function alertOne(
+  p: typeof businessProfiles.$inferSelect,
+  w: typeof workspaces.$inferSelect,
+  now: Date,
+  send: SmsSender,
+): Promise<"sent" | "skipped" | "not_configured" | "opted_out"> {
+  if (!jobsAllowed(w, now)) return "skipped";
+  if (inQuietHours(now, p.timeZone)) return "skipped";
+  if (p.smsLastSentAt && now.getTime() - p.smsLastSentAt.getTime() < SMS.minGapMs) return "skipped";
 
-    const counts = leadCounts(fresh);
-    // Check 19 P1: the link lands where the lead is — Quotes when a quote request has no
-    // reply on the queue yet.
-    const noCard = await quotesWithoutCard(w.id, fresh, now);
-    const url = appUrl(noCard.length ? "/quotes" : "/queue");
-    const newest = fresh[0]!.classifiedAt!;
-    // Claim the slot first so two runs can't both text.
-    const claimed = await db()
-      .update(businessProfiles)
-      .set({ smsLastSentAt: now, smsAlertCursor: newest })
-      .where(
-        and(
-          eq(businessProfiles.workspaceId, w.id),
-          or(
-            isNull(businessProfiles.smsLastSentAt),
-            lt(businessProfiles.smsLastSentAt, new Date(now.getTime() - SMS.minGapMs)),
-          ),
-        ),
-      )
-      .returning({ id: businessProfiles.workspaceId });
-    if (!claimed.length) continue;
-
-    const body = leadAlertBody(counts, url, {
-      waiting: arrivedBeforeToday(
-        fresh.map((f) => f.lastMessageAt),
-        now,
-        p.timeZone,
+  // Check 19 P7: ten a local day, counted from the owner's midnight (as the at-risk pushes).
+  const dayStart = atLocalHour(now, usableTimeZone(p.timeZone), 0, 0);
+  const [today] = await db()
+    .select({ n: count() })
+    .from(activityLog)
+    .where(
+      and(
+        eq(activityLog.workspaceId, w.id),
+        eq(activityLog.action, "sms_alert_sent"),
+        gte(activityLog.createdAt, dayStart),
       ),
-      lastToday: (today?.n ?? 0) + 1 >= SMS.dailyCap,
-    });
-    const r = await send({
+    );
+  if ((today?.n ?? 0) >= SMS.dailyCap) return "skipped";
+
+  const fresh = await freshLeads(w.id, p.smsAlertCursor, now);
+  if (!fresh.length) return "skipped";
+
+  const counts = leadCounts(fresh);
+  // Check 19 P1: the link lands where the lead is — Quotes when a quote request has no
+  // reply on the queue yet.
+  const noCard = await quotesWithoutCard(w.id, fresh, now);
+  const url = appUrl(noCard.length ? "/quotes" : "/queue");
+  const newest = fresh[0]!.classifiedAt!;
+  // Claim the slot first so two runs can't both text.
+  const claimed = await db()
+    .update(businessProfiles)
+    .set({ smsLastSentAt: now, smsAlertCursor: newest })
+    .where(
+      and(
+        eq(businessProfiles.workspaceId, w.id),
+        or(
+          isNull(businessProfiles.smsLastSentAt),
+          lt(businessProfiles.smsLastSentAt, new Date(now.getTime() - SMS.minGapMs)),
+        ),
+      ),
+    )
+    .returning({ id: businessProfiles.workspaceId });
+  if (!claimed.length) return "skipped";
+
+  const body = leadAlertBody(counts, url, {
+    waiting: arrivedBeforeToday(
+      fresh.map((f) => f.lastMessageAt),
+      now,
+      p.timeZone,
+    ),
+    lastToday: (today?.n ?? 0) + 1 >= SMS.dailyCap,
+  });
+  let r: SmsSendResult;
+  try {
+    r = await send({
       to: p.alertPhone!,
       body,
       // Check 19 P8: Twilio drops it rather than deliver it after 9pm.
       validitySec: secondsUntilQuiet(now, p.timeZone),
     });
-    if (r === "not_configured") {
-      // Give the slot back so nothing is lost once texting is set up.
-      await db()
-        .update(businessProfiles)
-        .set({ smsLastSentAt: p.smsLastSentAt, smsAlertCursor: p.smsAlertCursor })
-        .where(eq(businessProfiles.workspaceId, w.id));
-      return { sent, notConfigured: true };
-    }
-    // Check 19 P6: remembered by Twilio's message id; Activity says "Texted you" only once
-    // Twilio reports it delivered.
-    const deliveryId = await recordSmsDelivery(w.id, r, "alert", now);
-    await db()
-      .insert(activityLog)
-      .values({
-        workspaceId: w.id,
-        actor: "squared_away",
-        action: "sms_alert_sent",
-        detail: { ...counts, ...(deliveryId ? { deliveryId } : {}) },
-        createdAt: now,
-      });
-    sent++;
+  } catch (err) {
+    // A refusal isn't a text: the slot goes back, and the caller logs and carries on.
+    await handBackSlot(p);
+    throw err;
   }
-  return { sent, notConfigured: false };
+  if (r === "not_configured") {
+    // Give the slot back so nothing is lost once texting is set up.
+    await handBackSlot(p);
+    return "not_configured";
+  }
+  if (r === "opted_out") {
+    // Check 27 P6: the owner replied STOP. Texts go off with the reason the screen shows,
+    // the slot goes back, and the next owner still gets theirs.
+    await handBackSlot(p);
+    const stopped = await db()
+      .update(businessProfiles)
+      .set({ smsAlertsEnabled: false, smsStoppedReason: "opted_out" })
+      .where(
+        and(eq(businessProfiles.workspaceId, w.id), eq(businessProfiles.smsAlertsEnabled, true)),
+      )
+      .returning({ id: businessProfiles.workspaceId });
+    if (stopped.length)
+      await db()
+        .insert(activityLog)
+        .values({
+          workspaceId: w.id,
+          actor: "squared_away",
+          action: "sms_alerts_changed",
+          detail: { enabled: false, reason: "opted_out" },
+          createdAt: now,
+        });
+    return "opted_out";
+  }
+  // Check 19 P6: remembered by Twilio's message id; Activity says "Texted you" only once
+  // Twilio reports it delivered.
+  const deliveryId = await recordSmsDelivery(w.id, r, "alert", now);
+  await db()
+    .insert(activityLog)
+    .values({
+      workspaceId: w.id,
+      actor: "squared_away",
+      action: "sms_alert_sent",
+      detail: { ...counts, ...(deliveryId ? { deliveryId } : {}) },
+      createdAt: now,
+    });
+  return "sent";
 }

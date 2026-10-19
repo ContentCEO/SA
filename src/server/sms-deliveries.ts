@@ -18,7 +18,7 @@ export async function recordSmsDelivery(
   kind: "code" | "alert",
   now: Date = new Date(),
 ): Promise<string | null> {
-  if (result === "not_configured" || !result.sid) return null;
+  if (result === "not_configured" || result === "opted_out" || !result.sid) return null;
   const [row] = await db()
     .insert(smsDeliveries)
     .values({ workspaceId, messageSid: result.sid, kind, createdAt: now, updatedAt: now })

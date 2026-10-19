@@ -21,7 +21,12 @@ import {
   type AdminRow,
 } from "@/server/admin";
 import { requireAdmin } from "@/server/session";
-import { mailboxesLine, mailboxesStuck, systemTroubleLines } from "@/server/admin-mailbox-rules";
+import {
+  mailboxesLine,
+  mailboxesStuck,
+  supportEmailWarning,
+  systemTroubleLines,
+} from "@/server/admin-mailbox-rules";
 import { modelDownLine, stoppedHeading } from "@/server/model-alert-rules";
 import { modelsDownToday } from "@/server/model-alerts";
 import { isAdminEmail } from "@/server/admin";
@@ -665,7 +670,16 @@ export default async function AdminPage(props: PageProps<"/admin">) {
   // Check 16 P1: one stuck inbox inverts the box, even when the others are fine.
   const troubleLines = systemTroubleLines(system);
   // Check 48 P3: a model Anthropic said was missing today. Model names and times only.
-  const systemInverted = system.jobsLookStopped || troubleLines.length > 0 || modelsDown.length > 0;
+  // Check 27 P2: no SUPPORT_EMAIL → the legal pages offer a text link, not an email; say so here.
+  const supportWarning = supportEmailWarning({
+    SUPPORT_EMAIL: process.env.SUPPORT_EMAIL,
+    VERCEL_ENV: process.env.VERCEL_ENV,
+  });
+  const systemInverted =
+    system.jobsLookStopped ||
+    troubleLines.length > 0 ||
+    modelsDown.length > 0 ||
+    (supportWarning?.inverts ?? false);
 
   return (
     <>
@@ -742,6 +756,7 @@ export default async function AdminPage(props: PageProps<"/admin">) {
             {line}
           </p>
         ))}
+        {supportWarning ? <p className="font-semibold">{supportWarning.line}</p> : null}
         <p>
           Background work this month: {system.jobExecutionsThisMonth.toLocaleString("en-US")} steps.
         </p>

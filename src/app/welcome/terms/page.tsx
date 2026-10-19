@@ -17,6 +17,9 @@ import { OFFLINE_COOKIE } from "@/lib/device-prefs";
 import { phoneHref } from "@/lib/phone-href";
 import { listMailboxes } from "@/server/mailboxes";
 import { requireSignedIn } from "@/server/session";
+import { Markdown } from "@/lib/markdown";
+import { legalChangesSince } from "@/server/legal-changes";
+import { changesMarkdown } from "@/server/legal-changes-rules";
 import { termsOf } from "@/server/terms";
 import {
   hasCurrentTerms,
@@ -60,6 +63,8 @@ export default async function TermsAgreementPage(props: PageProps<"/welcome/term
   const terms = (await termsOf(userId)) ?? { termsVersion: null };
   if (hasCurrentTerms(terms)) redirect(back);
   const copy = termsScreenCopy(terms);
+  // Check 27 P3: someone who agreed to an older version is told what changed since.
+  const changed = await legalChangesSince(terms.termsVersion);
   const mailboxes = await listMailboxes(workspace.id);
   const doneMsg = noticeText(done, doneKey);
   const errorMsg = noticeText(errors, errorKey);
@@ -81,6 +86,14 @@ export default async function TermsAgreementPage(props: PageProps<"/welcome/term
         {errorMsg ? <Notice strong>{errorMsg}</Notice> : null}
         {doneMsg ? <Notice>{doneMsg}</Notice> : null}
         <p className="text-lg">{copy.lead}</p>
+        {changed.length > 0 ? (
+          <section aria-labelledby="what-changed" className="flex flex-col gap-3">
+            <h2 id="what-changed" className="text-xl font-black">
+              What changed
+            </h2>
+            <Markdown source={changesMarkdown(changed)} />
+          </section>
+        ) : null}
         <TermsForm
           action={agreeToTermsAction}
           submitLabel="Agree and continue"

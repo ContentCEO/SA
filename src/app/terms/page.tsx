@@ -8,5 +8,11 @@ export const metadata: Metadata = {
 };
 
 export default async function TermsPage() {
-  return <LegalPage source={await loadLegalDoc("terms.md")} />;
+  return (
+    <LegalPage
+      source={await loadLegalDoc("terms.md")}
+      serif="the fine print,"
+      heavy="terms of service."
+    />
+  );
 }

@@ -48,6 +48,22 @@ export function mailboxesLine(m: MailboxCounts, now: Date): string {
   return `${m.total}, ${parts.length ? parts.join(", ") : "healthy"}`;
 }
 
+/**
+ * Check 27 P2: the privacy policy and terms show an email for data requests only when
+ * SUPPORT_EMAIL is set (otherwise a text link). The System box says so: a plain line anywhere it
+ * is missing, and the box inverts in production, where real people read /privacy.
+ */
+export const NO_SUPPORT_EMAIL_LINE =
+  "No support email set. The privacy policy has no email for data requests.";
+
+export function supportEmailWarning(env: {
+  SUPPORT_EMAIL?: string;
+  VERCEL_ENV?: string;
+}): { line: string; inverts: boolean } | null {
+  if (env.SUPPORT_EMAIL?.trim()) return null;
+  return { line: NO_SUPPORT_EMAIL_LINE, inverts: env.VERCEL_ENV === "production" };
+}
+
 /** Plain lines for the System box. */
 export function systemTroubleLines(h: { staleMailboxes: number; stuckFirstReads: number }) {
   const lines: string[] = [];

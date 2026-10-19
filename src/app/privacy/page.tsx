@@ -9,5 +9,11 @@ export const metadata: Metadata = {
 };
 
 export default async function PrivacyPage() {
-  return <LegalPage source={await loadLegalDoc("privacy-policy.md")} />;
+  return (
+    <LegalPage
+      source={await loadLegalDoc("privacy-policy.md")}
+      serif="the fine print,"
+      heavy="privacy policy."
+    />
+  );
 }

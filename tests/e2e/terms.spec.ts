@@ -227,3 +227,31 @@ test("a link back to another site is never followed", async ({ page, context }) 
   await page.getByRole("button", { name: "Agree and continue" }).click();
   await expect(page).toHaveURL(/\/queue$/);
 });
+
+test("an owner on an older version is told what changed (Check 27 P3)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await signInAs(context, owner);
+  // The first version anyone agreed to: every later entry in docs/legal-changes.md applies.
+  await testDb
+    .update(schema.users)
+    .set({ termsVersion: "2026-10-15" })
+    .where(eq(schema.users.id, owner.userId));
+
+  await page.goto("/queue");
+  await expect(page).toHaveURL(/\/welcome\/terms\?next=%2Fqueue$/);
+  const changed = page.getByRole("region", { name: "What changed" });
+  await expect(changed.getByRole("heading", { level: 2, name: "What changed" })).toBeVisible();
+  expect(await changed.getByRole("listitem").count()).toBeGreaterThanOrEqual(2);
+  await expect(changed).toContainText("two Gmail permissions");
+  await noHorizontalScroll(page);
+
+  // Someone who never agreed reads the whole documents: no list.
+  await signInAs(context, owner, { agreedToTerms: false });
+  await page.goto("/queue");
+  await expect(page).toHaveURL(/\/welcome\/terms\?next=%2Fqueue$/);
+  await expect(page.getByRole("heading", { level: 1 })).toContainText("one thing first,");
+  await expect(page.getByRole("heading", { name: "What changed" })).toHaveCount(0);
+});

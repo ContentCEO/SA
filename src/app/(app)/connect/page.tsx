@@ -97,8 +97,10 @@ export default async function ConnectPage(props: PageProps<"/connect">) {
           </li>
           <li>Delete, archive, or move your email.</li>
           <li>
-            Share your email. The only outside service that sees it is Anthropic&apos;s AI, to sort
-            and draft — and it&apos;s never used to train AI.
+            {/* Check 27 P9: the same places the privacy policy names (our servers, then the AI). */}
+            Share your email. It&apos;s stored on our own servers in the US, and the only outside
+            company that reads it is Anthropic&apos;s AI, to sort and draft. It&apos;s never used to
+            train AI.
           </li>
           <li>Keep the text of your emails longer than {bodyRetentionDays()} days.</li>
         </ul>

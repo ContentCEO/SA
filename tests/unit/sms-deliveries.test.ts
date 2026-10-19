@@ -180,7 +180,9 @@ describe("what Twilio reports", () => {
       timeZone: "America/New_York",
       now: NOW,
     });
-    expect(line).toBe("You replied STOP, so texts are off.");
+    expect(line).toBe(
+      "You replied STOP, so texts are off. Text START to the number, then turn them on here.",
+    );
     const changed = await database
       .select()
       .from(activityLog)
