@@ -1,4 +1,6 @@
 import "server-only";
+import { LEAD_RELAY_LOCAL_PATTERN } from "@/config/lead-sources";
+import { leadPlatformOf } from "./monthly-rules";
 import { MAX_FOLLOWUPS } from "@/config/rules";
 import { chaseTiming, isBigQuote, needsOwnerBlocksNudge, nudgeDueDate } from "./followup-rules";
 import { createHash } from "node:crypto";
@@ -255,6 +257,10 @@ export type CreateOutcome =
         | "payment_change"
         /** Check 48 P1: "is this a bot?" — only the owner's tap drafts it. */
         | "asks_if_ai"
+        /** Check 39 P5: rebate letters, registrations, dispatches — only the owner's tap. */
+        | "paperwork"
+        /** Check 40 P4: the reply would go to a lead marketplace's robot (Modernize, eLocal…). */
+        | "lead_platform"
         /** Check 21 P7: the nudge writer declined (they said no, asked to wait, paid…). */
         | "writer_declined"
         /** Check 38 P5: cancelling the contract / their rights under it — the owner's tap only. */
@@ -1070,6 +1076,7 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
     electrical_hazard?: boolean;
     asks_if_ai?: boolean;
     contract_rights?: boolean;
+    routine_paperwork?: boolean;
     bill_direction?: string;
     model_category?: string;
     bounced?: boolean;
@@ -1087,6 +1094,8 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
     if (marks.asks_if_ai) return { status: "skipped", reason: "asks_if_ai" };
     // Check 38 P5: cancelling the contract, the deposit back — the owner answers (their tap).
     if (marks.contract_rights) return { status: "skipped", reason: "contract_rights" };
+    // Check 39 P5: a rebate processor, a registration desk or a dispatch robot reads no reply.
+    if (marks.routine_paperwork) return { status: "skipped", reason: "paperwork" };
     // Ideas H4: a kind the owner chose feeds a job's draft only when the sorter's own kind
     // would have been drafted too ("out of Junk" on something it called junk is a tap only).
     if (
@@ -1335,6 +1344,11 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
   if (isEmailToTextAddress(to)) return { status: "skipped", reason: "text_address" };
   // A thread sorted before lead channels existed: the address itself says it's a lead site.
   if (channelOf(to)?.kind === "site") return { status: "skipped", reason: "lead_site" };
+  // Check 40 P4: a lead marketplace or quote widget with no usable Reply-To (Modernize, eLocal,
+  // Roofle): the reply would reach the robot. Not even on the owner's tap. A per-customer relay
+  // address (reply+…@) reaches one person and still drafts.
+  if (leadPlatformOf(to) && !new RegExp(LEAD_RELAY_LOCAL_PATTERN).test(to.split("@")[0] ?? ""))
+    return { status: "skipped", reason: "lead_platform" };
   // A phone-number-shaped address at a gateway we don't know: jobs skip it; the owner's tap
   // drafts it with a flag first (which also keeps it out of batch and autopilot). An address
   // the owner has written to before is theirs to use.
@@ -4116,7 +4130,12 @@ export async function threadsToAutoDraft(mailboxId: string, limit = 10): Promise
     // A safety note is written whatever the sort; createDraftForThread writes it once per
     // thread, then the thread waits for the owner.
     or(
-      and(eq(threads.needsOwner, false), inArray(threads.category, [...AUTO_DRAFT_CATEGORIES])),
+      and(
+        eq(threads.needsOwner, false),
+        inArray(threads.category, [...AUTO_DRAFT_CATEGORIES]),
+        // Check 39 P5: paperwork robots never take a draft slot.
+        sql`(${threads.extracted}->>'routine_paperwork') is distinct from 'true'`,
+      ),
       and(
         safetyWaiting,
         // Never on junk unless the owner has written on the conversation (the note itself

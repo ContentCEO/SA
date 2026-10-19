@@ -36,8 +36,11 @@ import { classification } from "../support/fake-model";
 describe("lead sites config", () => {
   it("every site but Facebook has a fixed https link on an allow-listed host", () => {
     const keys = new Set<string>();
+    // Check 40 P4: recognised for the label and the no-draft rule only, until a real sample
+    // shows where the owner answers them.
+    const labelOnly = ["Facebook", "Modernize", "eLocal", "Instant quote on your website"];
     for (const s of LEAD_SOURCES) {
-      if (s.label === "Facebook") {
+      if (labelOnly.includes(s.label)) {
         expect(s.site).toBeNull();
         continue;
       }

@@ -24,6 +24,9 @@
  * - Check 40 P2: an "Attached: 3 photos, 1 PDF" line per email with attachments.
  * - Check 36 P5: water and sewer departments and backflow notices are town paperwork.
  * - Check 37 P3: electric-company work requests and appointments are never junk.
+ * - Check 39 P5 (step 6 of the group, written into this same unreleased version):
+ *   routine_paperwork widened to energy-program and rebate letters, manufacturer registrations,
+ *   warranty part claims, dispatches and startup-report requests; jobs never draft those.
  *
  * classify.v5 was:
  * - Check 22 P4 + Check 36 P1 (safety guards, wave 1): smells_gas widened to propane, rotten
@@ -207,7 +210,7 @@ Only fill in what the email actually says. Do not guess.
 ## signals
 
 - mentions_legal: lawyers, liens filed or threatened, courts, lawsuits, small claims, legal threats. Not routine insurance or warranty claims, lien waivers or insurance certificates.
-- routine_paperwork: insurance or home-warranty claims and adjuster notes, claim or dispatch numbers, lien waivers, certificates of insurance, W-9s, lender draw paperwork — business as usual, not a dispute.
+- routine_paperwork: insurance or home-warranty claims, dispatches and claim numbers, adjuster notes, lien waivers, certificates of insurance, W-9s, lender draws, energy-program and rebate letters, manufacturer registrations, warranty part claims and startup-report requests — business as usual, not a dispute, and usually sent by a system nobody reads replies to.
 - payment_change_request: the email asks the business to pay somewhere new — says the sender's bank, wire or payment details changed, asks to pay a new account, or asks for payment in gift cards. A customer saying their OWN card, bank or payment info changed ("I updated my card in your portal", "the check will come from my new bank") is not this.
 - smells_gas: the sender says they smell gas or propane, or rotten eggs in the air, or says a gas line, pipe or appliance is leaking or hissing, or the gas company shut off or red-tagged something. Sulfur-smelling or rotten-egg-smelling WATER alone (hot water, the shower, well water) is not a gas smell. Safety advice printed in a utility's bill, footer or newsletter ("Smell gas? Leave the building and call 911") is not someone smelling gas.
 - co_alarm: the sender says a carbon monoxide (CO) alarm or detector went off or is sounding, or someone feels sick from carbon monoxide. A request to install CO detectors, or a low-battery chirp, is not this.

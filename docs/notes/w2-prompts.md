@@ -286,3 +286,27 @@ first names and a share only, scrubbed. **Prompts:** `voice.v4` (`ACTIVE.voice`)
 - When the learned sign-off names someone else (an office manager), drafts now sign with no
   sign-off line and the signature's name instead. Alternative: "Thanks, <owner's first name>".
   Which?
+
+## Step 6: paperwork robots and roofing lead marketplaces (Check 39 P5 + 40 P4)
+
+- **Check 39 P5:** `createDraftForThread` skips job drafts (auto, followup) when
+  `extracted.routine_paperwork` is true → reason `paperwork`; the owner's tap still drafts.
+  `threadsToAutoDraft` leaves those threads out (safety notes are unaffected). The wider
+  `routine_paperwork` definition (energy-program and rebate letters, manufacturer registrations,
+  warranty part claims, dispatches, startup-report requests) went into **classify.v6** itself —
+  still unreleased on this branch, so no classify.v7 (one version per release, every rule meant
+  for it). Needs-you is unchanged: these show there only if already needs-owner.
+- **Check 40 P4:** `LEAD_SOURCES` gains Modernize (modernize.com), eLocal (elocal.com) and
+  "Instant quote on your website" (roofle.com, roofr.com), `site: null` with a TODO to confirm
+  each sending domain from a real email (GAF / Owens Corning left out until seen). They count
+  under their label in the monthly summary. `createDraftForThread` skips with reason
+  `lead_platform` when the reply address is one of those platforms and isn't a per-customer relay
+  (`LEAD_RELAY_LOCAL_PATTERN`) — not even on the owner's tap, like `no_reply_address`; a usable
+  Reply-To (the homeowner) still drafts. **Adapted:** the card line "Lead from Modernize. Call or
+  email them directly." is not built: with `site: null` these aren't lead channels, and no
+  phone is parsed from the body (the review's point 3); the owner sees the email in Inbox as
+  today. A follow-up could add a lead-channel kind for "marketplace, no reply" if Davi wants the
+  card.
+- Tests: `tests/unit/paperwork-leads.test.ts`; `leads-rules.test` lists the label-only sources.
+  Eval cases H09 (rebate incomplete), H11 (registration complete), H23 (home-warranty dispatch)
+  with `routinePaperwork: true`. **Evals not run.**

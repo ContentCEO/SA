@@ -232,4 +232,45 @@ export const DRAFT_V9_CASES: EvalCase[] = [
     expect: { category: "quote_request", needsOwner: false },
     draft: DRAFT,
   }),
+
+  // ── step 6: paperwork robots and roofing lead marketplaces (Check 39 P5 + 40 P4) ──
+  c({
+    id: "h09-rebate-incomplete",
+    trade: "hvac",
+    fromName: "Heat Pump Rebates",
+    fromAddress: "hp-rebates@rebateprogram.example.com",
+    subject: "Application HP-55120 incomplete",
+    body: "Application HP-55120 incomplete. Missing: outdoor unit serial numbers and proof of payment. Please upload within 30 days.",
+    expect: {
+      category: ["customer_question", "supplier_vendor"],
+      needsOwner: false,
+      routinePaperwork: true,
+    },
+  }),
+  c({
+    id: "h11-registration-complete",
+    trade: "hvac",
+    fromName: "Product Registration",
+    fromAddress: "registrations@maker.example.com",
+    subject: "Registration complete",
+    body: "Your product registration for serial 4410-22 is complete. Keep this email for your records.",
+    expect: {
+      category: ["supplier_vendor", "customer_question", "noise"],
+      needsOwner: false,
+      routinePaperwork: true,
+    },
+  }),
+  c({
+    id: "h23-warranty-dispatch",
+    trade: "hvac",
+    fromName: "Home Warranty Dispatch",
+    fromAddress: "dispatch@homewarranty.example.com",
+    subject: "Service request 8812-44 assigned to you",
+    body: "Service request 8812-44 assigned to you: no cooling at 14 Oak St, homeowner Beth. Accept within 4 hours in the contractor portal.",
+    expect: {
+      category: ["customer_question", "scheduling", "quote_request"],
+      needsOwner: false,
+      routinePaperwork: true,
+    },
+  }),
 ];
