@@ -29,7 +29,7 @@ those on branch `referral-offer-a` the same day (migrations `0039_referral_free_
 
 Because `draft.v7` and `purpose.v2` are taken, the review pages' "draft.v7" bundle is `draft.v8`
 here. The whole version plan (draft.v8 / v9, classify.v5, followup.v5, voice.v3, purpose.v3) is in
-`CLAUDE.md` under "Prompt versions".
+`docs/decisions/ai-and-prompts.md` under "Prompt versions".
 
 ## Before you start a step
 

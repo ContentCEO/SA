@@ -11,7 +11,7 @@ server-side and tested).
    milestone it rides on. Build that milestone's brief scope first, then that milestone's features
    here, in the order listed.
 2. One milestone per session. At the end, tick the boxes here and in `CLAUDE.md`, write down
-   decisions in `CLAUDE.md` → Decisions, and report: what's done, how to see it, what's next, what's
+   decisions in the matching `docs/decisions/*.md` file (CLAUDE.md → Decisions lists them), and report: what's done, how to see it, what's next, what's
    needed from Davi.
 3. Every feature ships with tests. Anything that touches sending, approval or a gate has a guardrail
    test that fails if the rule is broken.

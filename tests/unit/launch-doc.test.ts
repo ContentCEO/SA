@@ -876,7 +876,12 @@ describe("LAUNCH.md structure", () => {
     expect(start, "the first open item").toBe(open.indexOf("- **First: finish the legal text"));
     const first = open.slice(start, open.indexOf("- **", start + 4));
     expect(first).toContain("Owners are agreeing to the draft");
-    const claude = flat(readFileSync(join(ROOT, "CLAUDE.md"), "utf8"));
+    // Check 49 P5: the decisions moved from CLAUDE.md to docs/decisions/, so read both.
+    const claude = flat(
+      ["CLAUDE.md", ...readdirSync(join(ROOT, "docs/decisions")).map((f) => `docs/decisions/${f}`)]
+        .map((f) => readFileSync(join(ROOT, f), "utf8"))
+        .join("\n"),
+    );
     expect(claude).not.toContain("the gate isn't live yet");
     expect(claude).not.toContain("live only after the **second merge**");
   });
