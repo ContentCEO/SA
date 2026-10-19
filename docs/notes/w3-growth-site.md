@@ -166,3 +166,17 @@ one-on-one by Davi Chaves, a Massachusetts remodeler." (≤160, built from siteC
 offers / ratings / areaServed) rendered on /growth; `src/lib/structured-data.ts` added to the
 growth-boundary MENTIONS list with its reason. Expect a small overlap with the Google group's
 step 11/12 if it also touches structured-data.ts or public-site e2e.
+
+## Step 13 (Check 7 P4 + Check 7 P6 + Check 2 P9): share card, one mark, laptop layout
+
+- `buildShareCardTree` (exported): each headline word is its own span in a wrapping flex row with
+  a pixel column gap (Satori ignores `wordSpacing` and em gaps); checked by rendering the PNG:
+  "the marketing side, / done for you." now has clear gaps. The homepage card is unchanged
+  visually ("handled." is one word).
+- `src/components/brand/growth-mark.tsx` (Wordmark + "growth" chip, one name "Squared Away
+  Growth") on the homepage Growth bar (replacing the plain "Squared Away Growth" text; the unused
+  `growthCopy.bar.label` is gone) and the /growth header. Call buttons `whitespace-nowrap`,
+  `px-3` below sm.
+- Services grid `sm:grid-cols-2 lg:grid-cols-4`, the first card spanning two columns: seven
+  cards leave no lone card at sm or lg (if Davi merges the ad cards, step 1, six cards go back to
+  three columns with no span). The "Text …" button is hidden from lg up.

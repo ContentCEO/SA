@@ -33,7 +33,6 @@ export const growthCopy = {
     to: "Your marketing",
   },
   bar: {
-    label: "Squared Away Growth",
     nav: "Growth",
     link: `Ask ${davi} to call me`,
   },

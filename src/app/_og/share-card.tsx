@@ -8,18 +8,42 @@ export const SHARE_SIZE = { width: 1200, height: 630 };
  * A share card in the brand: the wordmark, a serif-over-heavy headline and one line, off-white on
  * charcoal (Instrument Serif italic over Inter Tight 900). Built once at deploy time.
  */
-export async function shareCard(o: {
+type ShareCardWords = {
   serif: string;
   heavy: string;
   line: string;
   heavySize?: number;
-}) {
-  const dir = path.join(process.cwd(), "src/app/_og");
-  const [serif, heavy] = await Promise.all([
-    readFile(path.join(dir, "InstrumentSerif-Italic.ttf")),
-    readFile(path.join(dir, "InterTight-Black.ttf")),
-  ]);
-  return new ImageResponse(
+};
+
+/**
+ * Check 7 P4: one span per word in a wrapping flex row with a real gap. The image renderer
+ * (Satori) ignores wordSpacing, and the heavy line's negative letter spacing shrinks each space,
+ * so "done for you." used to read "doneforyou.". letterSpacing stays inside each word.
+ */
+function words(text: string, gap: number, style: Record<string, string | number>) {
+  return (
+    // Satori takes the gap in pixels (an em value is ignored).
+    <div
+      data-words
+      style={{ display: "flex", flexDirection: "row", flexWrap: "wrap", columnGap: gap }}
+    >
+      {text
+        .split(/\s+/)
+        .filter(Boolean)
+        .map((w, i) => (
+          <span key={i} style={style}>
+            {w}
+          </span>
+        ))}
+    </div>
+  );
+}
+
+/** The card's element tree (exported so the word spans can be unit-tested). */
+const SERIF_SIZE = 120;
+
+export function buildShareCardTree(o: ShareCardWords) {
+  return (
     <div
       style={{
         width: "100%",
@@ -43,31 +67,36 @@ export async function shareCard(o: {
         </span>
       </div>
       <div style={{ display: "flex", flexDirection: "column", lineHeight: 1 }}>
-        <span style={{ fontFamily: "Instrument Serif", fontStyle: "italic", fontSize: 120 }}>
-          {o.serif}
-        </span>
-        <span
-          style={{
-            fontFamily: "Inter Tight",
-            fontWeight: 900,
-            fontSize: o.heavySize ?? 168,
-            letterSpacing: -6,
-            wordSpacing: "0.14em",
-          }}
-        >
-          {o.heavy}
-        </span>
+        {words(o.serif, Math.round(0.25 * SERIF_SIZE), {
+          fontFamily: "Instrument Serif",
+          fontStyle: "italic",
+          fontSize: SERIF_SIZE,
+        })}
+        {words(o.heavy, Math.round(0.3 * (o.heavySize ?? 168)), {
+          fontFamily: "Inter Tight",
+          fontWeight: 900,
+          fontSize: o.heavySize ?? 168,
+          letterSpacing: -6,
+        })}
       </div>
       <span style={{ fontFamily: "Inter Tight", fontWeight: 900, fontSize: 30, color: "#9A9994" }}>
         {o.line}
       </span>
-    </div>,
-    {
-      ...SHARE_SIZE,
-      fonts: [
-        { name: "Instrument Serif", data: serif, style: "italic", weight: 400 },
-        { name: "Inter Tight", data: heavy, style: "normal", weight: 900 },
-      ],
-    },
+    </div>
   );
+}
+
+export async function shareCard(o: ShareCardWords) {
+  const dir = path.join(process.cwd(), "src/app/_og");
+  const [serif, heavy] = await Promise.all([
+    readFile(path.join(dir, "InstrumentSerif-Italic.ttf")),
+    readFile(path.join(dir, "InterTight-Black.ttf")),
+  ]);
+  return new ImageResponse(buildShareCardTree(o), {
+    ...SHARE_SIZE,
+    fonts: [
+      { name: "Instrument Serif", data: serif, style: "italic", weight: 400 },
+      { name: "Inter Tight", data: heavy, style: "normal", weight: 900 },
+    ],
+  });
 }

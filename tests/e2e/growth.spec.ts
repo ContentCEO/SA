@@ -1383,3 +1383,54 @@ test.describe("Ask Davi to call me: the optional questions (Check 3 P4, 5 P2, 45
     await expect(card).toContainText("Sent by: Mike Torres");
   });
 });
+
+test.describe("one Growth look (Check 7 P6) and a tidy laptop layout (Check 2 P9)", () => {
+  for (const width of [320, 375]) {
+    test(`the same mark on both headers, and the call button on one line (${width}px)`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width, height: 812 });
+      await page.goto("/growth");
+      const header = page.locator("header").first();
+      await expect(header.getByRole("img", { name: "Squared Away Growth" })).toBeVisible();
+      const pageCall = header.getByRole("link", { name: "Ask Davi to call me" });
+      const h1 = (await pageCall.boundingBox())!.height;
+      expect(h1).toBeGreaterThanOrEqual(44);
+      expect(h1).toBeLessThanOrEqual(48);
+      expect(await noOverflow(page)).toBe(true);
+
+      await page.goto("/#growth");
+      const bar = page.locator("[data-growth-chapter] > div").first();
+      await expect(bar.getByRole("img", { name: "Squared Away Growth" })).toBeVisible();
+      const barCall = bar.getByRole("link", { name: "Ask Davi to call me" });
+      const h2 = (await barCall.boundingBox())!.height;
+      expect(h2).toBeGreaterThanOrEqual(44);
+      expect(h2).toBeLessThanOrEqual(48);
+      expect(await noOverflow(page)).toBe(true);
+    });
+  }
+
+  test("1280px: no lone service card, and no Text button; 375px keeps the Text button", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto("/growth");
+    const cards = page
+      .getByRole("region", { name: "What we take on" })
+      .locator("ul")
+      .first()
+      .locator(":scope > li");
+    const tops = await cards.evaluateAll((els) =>
+      els.map((el) => Math.round(el.getBoundingClientRect().top)),
+    );
+    const perRow = new Map<number, number>();
+    for (const t of tops) perRow.set(t, (perRow.get(t) ?? 0) + 1);
+    expect([...perRow.values()].every((n) => n > 1)).toBe(true);
+    const call = page.getByRole("region", { name: "Ask Davi to call me" });
+    await expect(call.getByRole("link", { name: "Text 978-201-9763" })).toBeHidden();
+    await expect(call.getByRole("link", { name: "Call 978-201-9763" })).toBeVisible();
+
+    await page.setViewportSize({ width: 375, height: 812 });
+    await expect(call.getByRole("link", { name: "Text 978-201-9763" })).toBeVisible();
+  });
+});

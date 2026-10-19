@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { SiteFooter } from "@/components/app/site-footer";
-import { Wordmark } from "@/components/brand/wordmark";
+import { GrowthMark } from "@/components/brand/growth-mark";
 import { SiteAnalytics } from "@/components/marketing/site-analytics";
 import { GrowthChapter } from "@/components/marketing/growth/growth-chapter";
 import { growthCopy } from "@/components/marketing/growth/growth-copy";
@@ -41,7 +41,7 @@ export default function GrowthPage() {
       <header className="sticky top-0 z-10 border-b border-ash/40 bg-charcoal px-4">
         <div className="mx-auto flex w-full max-w-5xl items-center justify-between py-2">
           <Link href="/" className="inline-flex min-h-tap items-center" aria-label={page.homeLabel}>
-            <Wordmark />
+            <GrowthMark />
           </Link>
           <nav aria-label="Site" className="flex items-center gap-1">
             <Link href="/" className="inline-flex min-h-tap items-center px-3 font-semibold">
@@ -49,7 +49,7 @@ export default function GrowthPage() {
             </Link>
             <Link
               href="#growth-call"
-              className="inline-flex min-h-tap items-center rounded-lg bg-offwhite px-4 font-semibold text-charcoal"
+              className="inline-flex min-h-tap items-center rounded-lg bg-offwhite px-3 font-semibold whitespace-nowrap text-charcoal sm:px-4"
             >
               {page.callLink}
             </Link>

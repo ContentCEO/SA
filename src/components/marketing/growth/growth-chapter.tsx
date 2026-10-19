@@ -98,9 +98,14 @@ export function GrowthChapter({
 
       <Section label={c.services.region}>
         <Headline as="h2" serif={c.services.serif} heavy={c.services.heavy} />
-        <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {c.services.items.map((s) => (
-            <li key={s.title} className="rounded-2xl border border-ash/40 p-6">
+        {/* Check 2 P9: the first card spans two columns, so seven cards leave no lone card
+            (sm: 2 + 2×3; lg: 2+1+1, then 4). One column on phones. */}
+        <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {c.services.items.map((s, i) => (
+            <li
+              key={s.title}
+              className={cn("rounded-2xl border border-ash/40 p-6", i === 0 && "sm:col-span-2")}
+            >
               <h3 className="text-xl font-black">{s.title}</h3>
               <p className="mt-2 text-lg text-ash">{s.body}</p>
               <ul
@@ -218,7 +223,8 @@ export function GrowthChapter({
               <a href={phoneHref("tel", siteConfig.phone)} className={outlined}>
                 {c.call.callLink}
               </a>
-              <a href={phoneHref("sms", siteConfig.phone)} className={outlined}>
+              {/* Check 2 P9: an sms: link usually does nothing on a desktop. */}
+              <a href={phoneHref("sms", siteConfig.phone)} className={cn(outlined, "lg:hidden")}>
                 {c.call.textLink}
               </a>
             </div>
