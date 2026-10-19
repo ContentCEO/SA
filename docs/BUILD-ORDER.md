@@ -374,8 +374,21 @@ edits this file after it is created.
 - [x] Wave 3, App emails, 8) C47 P3 [M]
 - [x] Wave 3, App emails, 9) C18 P8
 - [x] Wave 3, App emails, 10) C18 P9
-      Queue screen 15) C09 P8 was not built (it waits for Davi's yes; `docs/LAUNCH.md` step 13). Voice 7) C24 P8's new prompt `voice-examples.v1` and the Inbox / Sync prompt lines wait for the Prompt
-      versions group in `docs/notes/prompt-versions-inbox.md`.
+- [x] Wave 3, Growth: site and form, 2) C02 P4 + C03 P2
+- [x] Wave 3, Growth: site and form, 3) C02 P1 + C03 P7
+- [x] Wave 3, Growth: site and form, 4) C02 P2
+- [x] Wave 3, Growth: site and form, 5) C02 P3
+- [x] Wave 3, Growth: site and form, 8) C02 P6
+- [x] Wave 3, Growth: site and form, 9) C02 P7 + C06 P6
+- [x] Wave 3, Growth: site and form, 10) C07 P7 + C06 P11
+- [x] Wave 3, Growth: site and form, 11) C02 P8 + C03 P4 + C05 P2 + C45 P5 + C44 P3 [M]
+- [x] Wave 3, Growth: site and form, 12) C33 P2
+- [x] Wave 3, Growth: site and form, 13) C07 P4 + C07 P6 + C02 P9
+- [x] Wave 3, Growth: site and form, 14) C29 P9
+- [x] Wave 3, Growth: site and form, 15) C26 P8
+
+Queue screen 15) C09 P8 was not built (it waits for Davi's yes; `docs/LAUNCH.md` step 13). Voice 7) C24 P8's new prompt `voice-examples.v1` and the Inbox / Sync prompt lines wait for the Prompt
+versions group in `docs/notes/prompt-versions-inbox.md`.
 
 Autopilot rules 7) C20 P9, 8) C20 P10 [M] and 9) C48 P6 were not built (they wait for Davi's yes;
 `docs/LAUNCH.md` step 13). The classify.v6, followup.v5 and reply-language lines from the
@@ -396,5 +409,7 @@ until the Growth site group shortens it.
 Wave 3 App emails: 5) C01 P2 kept the built trial emails (no fourth email, no migration; the
 question is in `docs/LAUNCH.md` step 13). Its mail-host sentence waits in
 `docs/notes/legal-w3-emails.md`.
+Wave 3 Growth site: 1) C03 P3 not built (Davi's call); 6) C03 P1 + C03 P5 and 7) C03 P6 +
+C34 P4 were built and then reverted at the merge (46d4e03, 4f8bc6a) until Davi okays the words; 11) built without its migration (no town, no waitlist state); 15) only the per-email limit.
 
 Later steps are added to this list as their pull requests merge.

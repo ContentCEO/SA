@@ -816,7 +816,7 @@ Davi runs several builder sessions at once. The build order for review prompts i
   users still go to `/queue`); sign-in moved to `/signin` (Auth.js `pages`, `requireOwner` redirect).
   Copy must stay true to the code (scopes, 30-day retention, trial can't send, autopilot rules);
   prices render from `src/config/pricing.ts`. Waitlist form → `waitlist` table (idempotent per
-  email, hidden "website" honeypot); joining does NOT allow sign-in — Davi taps Invite in
+  email, hidden trap field: `sa_hp` since wave 3, `website` still counts from old pages); joining does NOT allow sign-in — Davi taps Invite in
   /admin → Waitlist (`inviteFromWaitlist`). `QueuePreview` is an HTML still of the queue.
 - **Installable app (PWA, 2026-10-05):** Davi wants website + downloadable app. `src/app/manifest.ts`
   (start_url /queue, standalone), icons from `src/app/app-icon/[size]/route.tsx` (ImageResponse
@@ -899,14 +899,15 @@ Davi runs several builder sessions at once. The build order for review prompts i
     Growth, keyboard, mid-wipe) is scrolled to the opener by GrowthSwitch itself, because Next's
     Link doesn't move the page for the address it's already on (e2e caught it).
     Full show ("in"): five charcoal bands slam in from alternate sides (240 ms each, the middle
-    band first, the outer two from 80 ms, full cover at 320) with "The app" in huge serif in the
+    band first, the outer two from 80 ms, full cover at 320) with "Your inbox" (was "The app"; Check
+    6 P6, wave 3) in huge serif in the
     middle band; the theme swaps at `BW_THEME_AT_MS` 380 under full cover **and the page moves to
     the opener** (`#growth`, `scrollIntoView` instant; again at `BW_REALIGN_AT_MS` 1220 in case a
     fling's momentum carried on), so every full show lands on the one-on-one opener with its
     `.sa-land` headline on screen, however fast or slow the scroll (review 2026-10-13: a flick went
     3000px past the opener under the cover, and a slow scroll lifted the cover onto the bridge with
     the opener below the fold); not when navigation (Back etc.) happened during the show. The
-    words tick over to "One-on-one" in huge heavy sans (240 ms from 440), which inverts at 680
+    words tick over to "Your marketing" (was "One-on-one") in huge heavy sans (240 ms from 440), which inverts at 680
     (1 ms flip), holds 620 ms, then the bands fly back out the way they came, outer ones first,
     from 1300 (all gone by 1540); `.sa-land` delays 960 / 1020 ms after the swap; cleanup at
     `BW_DONE_MS` 1740 re-applies the theme then drops the attribute. Each band reaches 1px into
@@ -3682,7 +3683,8 @@ Away" }`; pages set a short title and never write "· Squared Away" by hand
     (`orientation: "portrait"`) until Davi says otherwise.
 - **Wave 3 merge A (2026-10-19, branch `integrate-w3a`):** `w2-prompts` (wave 2 Prompt
   versions), `w3-legal` (Legal text, one release), `w3-google` (Google review and the domain) and
-  `w3-emails` (App emails) merged with `--no-ff`, in that order, on top of faef9a5. Migrations regenerated one at a time
+  `w3-emails` (App emails), then `w3-growth-site` (Growth site and form) merged with `--no-ff`,
+  in that order, on top of faef9a5 (`w3-growth-records` waits for the preview database split). Migrations regenerated one at a time
   with drizzle-kit on the 0076 snapshot, SQL byte-identical to the branch's:
   `0077_voice_writers` (when 1792390564735), `0078_snow_trade` (1792390572405; `ALTER TYPE trade
 ADD VALUE 'snow' BEFORE 'other'`, alone in its migration), `0079_trade_other` (1792390574464),
@@ -3841,6 +3843,58 @@ acknowledgedOn })`; invoice reminders ask when they expect to pay, never an easy
       {via: "unsubscribe"}; GET changes nothing and lands on a page that asks.
     - Four new rate-limit keys (`emailTest`, `inviteAgain`, `waitlistCatchup`, `emailStop`) with
       their rows in `security-surface.test.ts`.
+  - **Growth site and form (`w3-growth-site`, base faef9a5, no migration).** Merged last, then
+    **two of its commits reverted on this branch: 46d4e03 reverts 39a02ca** (Check 3 P1 + 3 P5:
+    "what you get" lines on every service card, the new Reviews blurb, the ground rule's "offer
+    anything in return for a review") **and 4f8bc6a reverts 163061b** (Check 3 P6 + 34 P4: the
+    FAQs "Who pays for the ads?" and "How is this different from a marketing agency?"). Both are
+    Davi's draft sales words and wait for his okay; re-apply with `git revert 46d4e03` /
+    `git revert 4f8bc6a`, which brings their tests back too. Conflicts kept both sides: the
+    restructured public-form actions (one `input` object) carry `tradeOther`;
+    `joinWaitlist(input, source, { trapFilled, resolveMx })`; growth-boundary lists both new
+    files. public-site.spec's `waitingOn["/growth"]` entry is gone (the description is 155
+    characters).
+    - **Check 3 P3 not built:** the Facebook and Instagram ad cards stay separate (Davi's call;
+      the proposal keeps `instagram_ads` as a legacy id, no data migration).
+    - **Check 2 P4 + 3 P2:** both ad blurbs say "in and around the towns you work in" (Meta's
+      Housing special ad category); FAQ "Can my Facebook ads show only in my town?".
+    - **Check 2 P1 + 3 P7:** banned in every Growth source file and the rendered copy: "book a
+      free call", "booking", "find a time", "first page", "page one", "#1", "number one", "more
+      leads", "google screened", "license verified", whole-word "rank".
+    - **Check 2 P2:** `sendGrowthConfirmation` (through `brandEmail`; key
+      `growth-confirm-<addressKey>-<New York date>`; Reply-To `SUPPORT_EMAIL` when set; fixed
+      words and the business phone only), sent beside Davi's notice (`Promise.allSettled`).
+      Live with the Resend domain.
+    - **Check 2 P3:** the trap field is `sa_hp` (`trap-rules.ts`; `website` still counts). Trap +
+      invalid form = polite success, nothing stored; trap + valid form = stored with
+      `Flag: hidden field filled` (`TRAP_FLAG`), nobody emailed, /admin says "Might be a bot".
+    - **Check 2 P6:** `siteConfig.operatorPhoto` (null) and `GROWTH_PROOF = []`
+      (`src/config/growth-proof.ts`, `liveProof`: written okay date and a check within 12
+      months); the proof section renders only for live items.
+    - **Check 2 P7 + 6 P6:** ground rule 1 gives examples ("like sorting, drafts and
+      follow-ups"); the homepage hand-off and bridge name the four services; the Big words read
+      "Your inbox" → "Your marketing" (sizes 11.5vw / min(11.5vw, 14vh) in theme.css).
+    - **Check 7 P7 + 6 P11:** names keep their capitals in headlines ("ask Davi to call you.",
+      "your Gmail.", "reconnect Gmail.", a customer's name as written); `headlines.test.ts` scans
+      every serif / heavy field.
+    - **Check 2 P8 + 3 P4 + 5 P2 + 45 P5:** optional Growth form answers as lines in the
+      `[Growth call]` block only (no columns): "Not sure yet — tell me what to do first" (a
+      checkbox, never a card), how they heard and who sent them, state, and the browser's time
+      zone; /admin shows "Works in AZ", "Their time now", "Heard", "Sent by". Not built: trade or
+      services optional, town and the waitlist's state / town (C44 P3, needs a migration).
+    - **Check 33 P2:** /growth title "Contractor marketing, done for you · Squared Away Growth",
+      a 155-character description, the eyebrow, and `growthStructuredData` (one Service, no
+      offers, ratings or areaServed) beside the Google group's Organization markup.
+    - **Check 7 P4 + 7 P6 + 2 P9:** share card words spaced per span; `GrowthMark` on both
+      Growth headers; services grid without a lone card; no Text button from `lg` up; /growth's
+      header hides "The app" below `sm` (fits 320px).
+    - **Check 29 P9:** `.sa-cv` (`content-visibility: auto` with measured content heights) on
+      the off-screen homepage and /growth sections (`src/lib/deferred-section.ts`). The
+      CPU-throttled crossing e2e is opt-in (`SA_PERF=1`) and its "< 120ms" claim is **not
+      verified** (the shared machine read 250–350ms); run it on an idle machine before relying
+      on it.
+    - **Check 26 P8:** `LIMITS.formEmail` (5 a day per address, keyed by an HMAC `addressKey`)
+      on both public forms. Not built: keeping the first request as well as the newest.
 
 ## Milestones
 
@@ -3873,7 +3927,8 @@ acknowledgedOn })`; invoice reminders ask when they expect to pay, never an easy
   Massachusetts carpenters' HIC / CSL words, the sign-off when someone else signs, prompt checks
   in CI and the eval baseline (`ANTHROPIC_API_KEY` repo secret), the legal lock in CI
   (`fetch-depth: 0`), `GOOGLE_APP_STATE`, the "sa preview" Google project, the CASA pre-scan,
-  search after the domain move, a fourth trial email, and "Invite anyway" for non-Gmail addresses.
+  search after the domain move, a fourth trial email, "Invite anyway" for non-Gmail addresses, and
+  the Growth site's held words (two reverted commits), ad cards, form fields and repeat requests.
 - **Wave 2 merge D questions** (data and speed, phone look, security, phone alerts):
   docs/LAUNCH.md step 13 "Still open" — the AI limit numbers (500 per inbox, 3,000 a day) and
   the "sorting waits" wording; the broken-cookie homepage case; the shared database's table sizes

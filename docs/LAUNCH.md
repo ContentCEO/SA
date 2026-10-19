@@ -1340,8 +1340,9 @@ Nothing below is switched on or changed until you say so.
   - **One legal release.** Every wording change for the terms and the privacy policy waits in
     `docs/notes/legal-w3-legal.md` (the three [To confirm] items, data requests from your owners'
     customers, how changes are announced, Google's Limited Use wording, six small lines, the
-    breach sentence, text alerts, and two lines from the new prompts and trades), plus one in
-    `docs/notes/legal-w3-emails.md` (looking up who hosts a waitlist address's email). Nothing is in
+    breach sentence, text alerts, and two lines from the new prompts and trades), plus
+    `docs/notes/legal-w3-emails.md` (looking up who hosts a waitlist address's email) and
+    `docs/notes/legal-w3-growth-site.md` (the Growth confirmation email and form answers). Nothing is in
     the documents yet. Okay each sentence (and the lawyer, where you want one); then the engineers
     apply all of them at once, so owners agree again only once (`docs/LEGAL-RELEASE.md`).
   - **How changes are announced:** the documents say owners hear about big changes before they
@@ -1385,6 +1386,28 @@ Nothing below is switched on or changed until you say so.
   - **A fourth trial email?** Today: day 2, the last day, and one a week after the trial ends
     ("still here"), each with a Stop link. The review also wanted one the moment the trial ends
     ("Your three days are up"). Add it?
+  - **The Growth page's held words.** Written from the review, kept off the site until you okay
+    them (the engineers re-apply each with one command, `git revert <hash>`): (1) commit 46d4e03
+    holds back "what you get" lines on every Growth service card, a new Reviews blurb ("Your
+    Google review link and a short message you send to every customer yourself, plus help
+    answering the reviews you get. We never write fake ones, and we never message your
+    customers.") and the ground rule's "or offer anything in return for a review"; (2) commit
+    4f8bc6a holds back two questions: "How is this different from a marketing agency?" ("You
+    talk to the person doing the work, who runs a remodeling company too. There's no sales team
+    and no hand-off. Your email is never part of it. You get a clear price before anything
+    starts.") and "Who pays for the ads?" ("You do, straight to Google or Facebook, from an ad
+    account in your business's name. You set the monthly limit. Davi's fee for running them is
+    separate, and you'll know it before any work starts."). Also yours: "Month to month, stop
+    any time." and "Your Google listing, ad accounts and website stay in your name." were not
+    added. Okay each, or edit?
+  - **One card for Facebook and Instagram ads?** Today two cards and two checkboxes. Merging
+    keeps old requests working. Merge?
+  - **The Growth form's questions:** added as optional — "Not sure yet", how they heard, who
+    sent them, state, and the time zone from their browser. Not added: making trade or services
+    optional, the town, and state / town on the app waitlist (that needs a database change).
+    Which do you want?
+  - **Someone who sends the Growth form twice:** today the newest request replaces the last.
+    Keep the first and the newest instead (one privacy line)?
   - **Inviting a non-Gmail address:** /admin now shows where a waitlist address's email lives
     (Outlook, another host, or "couldn't tell") and asks "Invite anyway?" for Outlook and other
     hosts, since only Gmail can connect today. When the lookup couldn't tell (a custom domain
@@ -1749,6 +1772,10 @@ Nothing below is switched on or changed until you say so.
 - The production domain and `SUPPORT_EMAIL` ([step 5](#5-support-email-and-the-production-domain)).
 - The icon pack, and for the homepage's About section (PR #9) your photo and the exact license
   wording.
+- **Growth proof:** a real photo of you (`siteConfig.operatorPhoto`, file in `public/brand/`),
+  and any client proof for /growth (`src/config/growth-proof.ts`). Each proof item needs the
+  client's written okay (the date goes in `permissionOn`) and a yearly check that it's still true
+  (`checkedOn`); nothing is shown without both.
 - The `ANTHROPIC_API_KEY` repository secret for the "Prompt evals" GitHub action.
 - Your Massachusetts sales tax registration: start it now (it takes days;
   [details](#start-your-sales-tax-registration-now-it-takes-days)), then [step 7e](#7-stripe-live-mode).
