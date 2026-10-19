@@ -5,13 +5,19 @@ import { activityLog, mailboxes, users, workspaces } from "@/db/schema";
 import { appUrl } from "@/lib/app-url";
 import { brandEmail } from "@/lib/email-layout";
 import { sendEmail, type EmailSender, emailErrorFields } from "@/lib/email";
+import { accessLostReason, googleAppState, type GoogleAppState } from "@/config/google-app";
 import { jobsAllowed } from "./lifecycle";
 
 /** A second reminder if Gmail is still disconnected this long after the first alert. */
 export const ACCESS_REMINDER_AFTER_MS = 2 * 24 * 60 * 60 * 1000;
 export const MAX_ACCESS_ALERTS = 2;
 
-export function accessLostEmail(mailboxEmail: string, reminder: boolean) {
+export function accessLostEmail(
+  mailboxEmail: string,
+  reminder: boolean,
+  /** Check 1 P7: in Testing, Google ends access every 7 days, so the reason line says so. */
+  state: GoogleAppState = googleAppState(),
+) {
   const subject = reminder
     ? "Reminder: reconnect Gmail to Squared Away"
     : "Squared Away lost access to your Gmail";
@@ -23,9 +29,7 @@ export function accessLostEmail(mailboxEmail: string, reminder: boolean) {
       "Reconnecting takes about a minute. Nothing was lost — we pick up where we left off.",
     ],
     button: { label: "Reconnect Gmail", url: appUrl("/settings/gmail") },
-    footer: reminder
-      ? "This is the last reminder we'll send about this."
-      : "Google sometimes ends access on its own, for example after a password change.",
+    footer: reminder ? "This is the last reminder we'll send about this." : accessLostReason(state),
   });
   return { subject, text, html };
 }

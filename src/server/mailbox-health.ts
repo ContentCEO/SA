@@ -1,3 +1,4 @@
+import { accessLostReason, googleAppState, type GoogleAppState } from "@/config/google-app";
 import { relativeTime } from "@/lib/relative-time";
 import type { MailboxSummary } from "./mailboxes";
 
@@ -51,13 +52,15 @@ export function mailboxHealth(
   now: Date,
   pushConfigured: boolean,
   firstRead?: FirstReadProgress,
+  /** Check 1 P7: the same reason as the access-lost email (7 days while in Testing). */
+  googleState: GoogleAppState = googleAppState(),
 ): MailboxHealth {
   const accessLost = m.status === "reconnect_needed" || m.lastSyncErrorCode === "access_lost";
 
   const access: HealthLine = accessLost
     ? {
         label: "Google access",
-        text: "Removed. Squared Away can't read this inbox until you reconnect.",
+        text: `Removed. Squared Away can't read this inbox until you reconnect. ${accessLostReason(googleState)}`,
         problem: true,
       }
     : m.status === "paused"
