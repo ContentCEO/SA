@@ -3521,6 +3521,14 @@ big)`; the hourly job runs `captureQuoteAmounts` first.
     expression lives once in `replyAddressExpr` (schema.ts) so the planner matches its index
     (`tests/unit/query-plans.test.ts`). `/admin`'s "last sorted" / "last morning email" are
     per-mailbox / per-workspace scalar subqueries (`lastSortedQuery` / `lastDigestQuery`).
+    **Held back (2026-10-19, CI `old-code-new-schema` on PR #14):** `0070` ships seven indexes,
+    not eight — `messages_mailbox_reply_address_idx` (Check 30 P4, `customerDetail`'s lookup) is
+    out of `schema.ts` and the regenerated 0070–0075 snapshots. With it, main's `notesForThreads`
+    (no ORDER BY; it takes the first row at `max(sent_at)`) gets same-second inbound emails from
+    the planner in reply-address order instead of insertion order, and main's control test
+    reads the wrong note. It can return (an additive `CREATE INDEX IF NOT EXISTS`, plus the plan
+    assertion in `query-plans.test.ts`) once main carries this branch's `order by id` tie-break
+    (this PR). At today's sizes the lookup is one mailbox's inbound rows; no measured loss.
   - **Extracted facts (Check 30 P6):** `threads.classified_prompt_version` records the classify
     version that wrote `extracted`; read `extracted` with `readExtracted(extracted, version?)`
     (src/server/extracted.ts), not casts. A new classify version that adds keys adds its schema

@@ -31,9 +31,10 @@ export const tradeEnum = pgEnum("trade", TRADES);
 
 /**
  * Check 30 P4: the customer's reply address of an email: the stored usable Reply-To, else the
- * sender, lowercased and trimmed. The one source of this expression: the messages index
- * `messages_mailbox_reply_address_idx` and `messageReplyAddress` / `replyAddressSql`
- * (src/server/thread-sql.ts) all build it here, so the planner matches the index.
+ * sender, lowercased and trimmed. The one source of this expression: `messageReplyAddress` /
+ * `replyAddressSql` (src/server/thread-sql.ts) build it here, and so will the messages index
+ * `messages_mailbox_reply_address_idx` when it returns (see the messages table), so the planner
+ * can match it.
  */
 export const replyAddressExpr = (replyToHeader: SQLWrapper, fromAddress: SQLWrapper) =>
   sql<string | null>`lower(trim(coalesce(${replyToHeader}->>'address', ${fromAddress})))`;
@@ -517,12 +518,10 @@ export const messages = pgTable(
     index("messages_retention_idx").on(t.sentAt),
     // Check 29 P6: classification's first-time-sender count (same address, earlier email).
     index("messages_mailbox_from_sent_idx").on(t.mailboxId, t.fromAddress, t.sentAt),
-    // Check 30 P4: a customer's conversations, found by their reply address. The expression
-    // must stay the exact text `messageReplyAddress` uses (both come from replyAddressExpr), or
-    // the planner can't match it.
-    index("messages_mailbox_reply_address_idx")
-      .on(t.mailboxId, replyAddressExpr(t.replyToHeader, t.fromAddress))
-      .where(sql`direction = 'in'`),
+    // Check 30 P4's `messages_mailbox_reply_address_idx` (mailbox_id, replyAddressExpr, where
+    // direction = 'in') is left out for now: main's `notesForThreads` has no tie-break, and with
+    // this index the planner hands it same-second emails in reply-address order, so the CI job
+    // `old-code-new-schema` fails. It can return once main carries the tie-break (this PR).
   ],
 );
 

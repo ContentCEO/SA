@@ -101,9 +101,12 @@ describe("query plans use the new indexes", () => {
     expect(await plan(q)).toContain("messages_mailbox_from_sent_idx");
   });
 
-  it("a customer's conversations by reply address (customerDetail)", async () => {
+  it("a customer's conversations by reply address (customerDetail) still answer right without their index", async () => {
     const workspaceId = workspaceIds[0]!;
-    // The same shape as customerDetail's first query.
+    // The same shape as customerDetail's first query. `messages_mailbox_reply_address_idx` is
+    // held back (src/db/schema.ts, messages: main's notesForThreads has no tie-break and the CI
+    // job old-code-new-schema fails with it), so the planner can't use it yet. When it returns,
+    // this becomes `expect(await plan(q)).toContain("messages_mailbox_reply_address_idx")`.
     const q = database
       .selectDistinct({ id: messages.threadId })
       .from(messages)
@@ -115,7 +118,8 @@ describe("query plans use the new indexes", () => {
           sql`${messageReplyAddress()} = ${"form.lead@example.com"}`,
         ),
       );
-    expect(await plan(q)).toContain("messages_mailbox_reply_address_idx");
+    expect(await plan(q)).not.toContain("messages_mailbox_reply_address_idx");
+    expect(await q).toHaveLength(THREADS_PER_SHOP);
   });
 
   it("/admin's last sorted", async () => {
