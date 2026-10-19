@@ -39,7 +39,9 @@ export default function GrowthPage() {
     <div data-growth-page className="sa-inverted flex flex-1 flex-col">
       <SkipLink />
       <header className="sticky top-0 z-10 border-b border-ash/40 bg-charcoal px-4">
-        <div className="mx-auto flex w-full max-w-5xl items-center justify-between py-2">
+        {/* Below 360px the mark and the call button only just fit: the button shrinks there,
+            and the row wraps rather than scroll sideways if a font renders wider still. */}
+        <div className="mx-auto flex w-full max-w-5xl flex-wrap items-center justify-between gap-x-1 gap-y-2 py-2">
           <Link href="/" className="inline-flex min-h-tap items-center" aria-label={page.homeLabel}>
             <GrowthMark />
           </Link>
@@ -54,7 +56,7 @@ export default function GrowthPage() {
             </Link>
             <Link
               href="#growth-call"
-              className="inline-flex min-h-tap items-center rounded-lg bg-offwhite px-3 font-semibold whitespace-nowrap text-charcoal sm:px-4"
+              className="inline-flex min-h-tap items-center rounded-lg bg-offwhite px-3 font-semibold whitespace-nowrap text-charcoal max-[359px]:px-2.5 max-[359px]:text-sm sm:px-4"
             >
               {page.callLink}
             </Link>
