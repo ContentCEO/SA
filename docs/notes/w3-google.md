@@ -277,3 +277,62 @@ rewrites. **Growth group / integrator:** keep that description at 160 characters
 delete the `waitingOn["/growth"]` line in the spec (the test fails on its own once the entry is
 unused). Not edited here to avoid a conflict on the line that step rewrites. `/terms`'s
 description was lengthened to 150 characters (it was 33) in this branch.
+
+## What turns each switched-off piece on
+
+| Piece                                          | Off today because                                 | Davi's step that turns it on                                                        |
+| ---------------------------------------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| vercel.app → domain forward (step 2)           | `APP_URL` is `https://sa-dac3.vercel.app`         | LAUNCH step 5 item 4: `APP_URL` = the domain (Production), redeploy. Nothing else.  |
+| Connect-screen "Tap Advanced" wording (step 4) | `GOOGLE_APP_STATE` unset = `testing` (true today) | Set `GOOGLE_APP_STATE=unverified` when the app is published (0c); `verified` later. |
+| Access-lost email's 7-day reason (step 4)      | Live now (testing is right today)                 | Same env: once `unverified`/`verified`, the password-change line comes back.        |
+| `pnpm google:ready` all PASS (step 7)          | Legal release, `SUPPORT_EMAIL`, domain, noindex   | Each of those steps; the script says which line still fails.                        |
+| CASA pre-scan (step 6)                         | Never run (no pushes from builders)               | Actions → CASA pre-scan after the merge.                                            |
+
+## Integration notes (conflicts to expect)
+
+- **App emails step 6 (Check 1 P7)** edits `src/server/alerts.ts`'s footer too. This branch's
+  version reads `accessLostReason(googleAppState())` from `src/config/google-app.ts` (the plan's
+  conflict 12: one env). Keep this one; if that group added a `GOOGLE_APP_TESTING` env, drop it and
+  its SETUP/.env.example rows.
+- **Growth site step 12 (Check 33 P2)** rewrites `growthCopy.meta` in `growth-copy.ts`; the
+  search-basics e2e needs its description at 160 characters or fewer, then the `waitingOn["/growth"]`
+  entry in `tests/e2e/public-site.spec.ts` must be deleted (the test fails by itself once it's
+  unused). If that group also adds `growthStructuredData`, the e2e's og:image / canonical rules
+  already cover /growth and need no change.
+- **Growth site step 1 (Check 3 P3)** may merge the Facebook and Instagram cards: unrelated to this
+  branch, but the same `growth-copy.ts` region.
+- **Legal group:** this branch never touches `docs/terms.md`, `docs/privacy-policy.md` or
+  `TERMS_VERSION`; `src/app/sitemap.ts` reads `TERMS_VERSION` (date part), so the legal release
+  needs no sitemap edit. `docs/google-verification.md` was edited here (Scope justifications, the
+  Before-submitting bullets, demo step 4): if the Legal group's step 5 (C27 P5) also edits that
+  file's Limited Use mirror, the sections don't overlap.
+- **`tests/unit/verification-doc.test.ts`** gained four tests (P1, P2, P4 and the step-4 wording is
+  unchanged); other groups adding tests to the same file merge cleanly below them.
+- **`tests/e2e/a11y.spec.ts`, `tap-targets.spec.ts`, `tests/unit/security-headers.test.ts`:** one
+  line each adds `/admin/video` to the admin page lists; a group adding another admin page edits the
+  same lines.
+- **`package.json` scripts:** two new entries (`google:ready`, `check:headers`) at the end of
+  `scripts`; a group adding a script edits the same spot.
+- **`docs/SETUP.md`:** §8 paragraph rewritten and one new env row (`GOOGLE_APP_STATE`) after
+  `AUTH_GOOGLE_ID`; `.env.example` gets the matching entry.
+- No migrations, no prompt versions, no new send path, no new fetch host in `src/` (the two scripts
+  fetch whatever URL Davi passes, from `scripts/`, which the data-paths fence doesn't scan on
+  purpose: they read public pages and send nothing).
+
+## Questions for Davi (plain words)
+
+1. **One switch for Google's screen.** `GOOGLE_APP_STATE` (testing / unverified / verified, default
+   testing) is the one setting that decides both the Connect Gmail screen's warning line and the
+   reason in the "lost access to your Gmail" email. Today's value (testing) is right. Okay to set it
+   to `unverified` when the app is published, and `verified` when Google approves?
+2. **A second Google project, "sa preview".** Google will only verify addresses on a domain we own,
+   so the live client must lose its `vercel.app` and `localhost` addresses before submitting;
+   previews and local testing move to a separate Google project that is never submitted (its test
+   users don't count against the 100). This is a 15-minute click-through in step 2 of the launch
+   checklist. Okay?
+3. **The CASA pre-scan.** It runs in GitHub Actions on a copy of the app with fake Google and fake
+   AI, never on the live site, and costs nothing. Okay for the engineers to run it once after the
+   merge and read the two reports before any lab is paid?
+4. **Search after the domain move.** Step 5 item 10 in the notes asks for a Google Search Console
+   sitemap submit, two "Request indexing" taps, and a Bing import. These are the only places search
+   engines are told about the new domain; nothing in the code does it. Okay to add to the checklist?
