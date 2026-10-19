@@ -13,7 +13,9 @@ import { safeNextPath } from "@/server/terms-rules";
 import { signInWithGoogleAction } from "./actions";
 import { SkipLink } from "@/components/app/skip-link";
 
-export const metadata: Metadata = { title: "Sign in" };
+// Check 33 P4: linked from the homepage, so search engines may read it and find the noindex here
+// (robots.txt no longer blocks it: a blocked page can still be listed by its address).
+export const metadata: Metadata = { title: "Sign in", robots: { index: false, follow: true } };
 
 export default async function SignInPage(props: PageProps<"/signin">) {
   const session = await auth();

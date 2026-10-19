@@ -7,7 +7,7 @@ import { siteConfig } from "@/config/site";
  * (we have none), and no offer for the trial (it isn't a product on its own: it can't send to
  * customers). Pure, so it is unit-tested.
  */
-export function structuredData(siteUrl: string) {
+export function structuredData(siteUrl: string, opts: { supportEmail?: string } = {}) {
   const usd = (cents: number) => (cents / 100).toFixed(2);
   const plans = Object.values(pricing.plans).map((p) => ({
     "@type": "Offer",
@@ -34,6 +34,12 @@ export function structuredData(siteUrl: string) {
       name: siteConfig.name,
       url: siteUrl,
       telephone: `+1-${siteConfig.phone}`,
+      // Check 33 P3: what Google's Organization guide lists to identify the business. The logo is
+      // the 512px home-screen icon the manifest already serves; the address stops at the state
+      // (no street); the email only when SUPPORT_EMAIL is set, never typed here.
+      logo: new URL("/app-icon/512", siteUrl).toString(),
+      address: { "@type": "PostalAddress", addressRegion: "MA", addressCountry: "US" },
+      ...(opts.supportEmail?.trim() ? { email: opts.supportEmail.trim() } : {}),
     },
     {
       "@context": "https://schema.org",

@@ -6,7 +6,10 @@ import { Headline } from "@/components/brand/headline";
 import { Wordmark } from "@/components/brand/wordmark";
 import { SkipLink } from "@/components/app/skip-link";
 
-export const metadata: Metadata = { title: "Account deleted" };
+export const metadata: Metadata = {
+  title: "Account deleted",
+  robots: { index: false, follow: true },
+};
 
 export default function GoodbyePage() {
   return (

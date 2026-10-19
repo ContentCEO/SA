@@ -34,8 +34,9 @@ import { SkipLink } from "@/components/app/skip-link";
 
 const telHref = phoneHref("tel", siteConfig.phone);
 
+// Check 33 P3: search results show about the first 155 characters, so the promise comes first.
 const description =
-  "AI email help for contractors, built for carpenters, plumbers, and electricians: Squared Away sorts your business email, drafts replies in your voice, and drafts quote follow-ups — and nothing goes out without your okay.";
+  "AI email help for contractors: Squared Away sorts your business email and drafts replies in your own voice. Nothing goes out without your okay.";
 
 export const metadata: Metadata = {
   // The words people search for; the share card keeps the brand line.

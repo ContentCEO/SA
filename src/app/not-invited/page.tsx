@@ -7,7 +7,7 @@ import { siteConfig } from "@/config/site";
 import { SkipLink } from "@/components/app/skip-link";
 
 // Check 32 P6: every screen has its own title ("… · Squared Away" from the root template).
-export const metadata: Metadata = { title: "Invite only" };
+export const metadata: Metadata = { title: "Invite only", robots: { index: false, follow: true } };
 
 export default function NotInvitedPage() {
   const support = process.env.SUPPORT_EMAIL;

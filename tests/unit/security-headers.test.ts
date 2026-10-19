@@ -95,6 +95,7 @@ describe("Check 26 P9: nothing announces what's behind the site", () => {
       "src/app/(app)/admin/page.tsx",
       "src/app/(app)/admin/growth/page.tsx",
       "src/app/(app)/admin/costs/page.tsx",
+      "src/app/(app)/admin/video/page.tsx",
     ])
       expect(readFileSync(page, "utf8"), page).toContain("robots: { index: false }");
   });

@@ -101,6 +101,6 @@ test.describe("axe", () => {
 
   test("the admin's screens", async ({ page, context }) => {
     await signInAs(context, await seedAdmin());
-    await check(page, ["/admin", "/admin/costs", "/admin/growth"]);
+    await check(page, ["/admin", "/admin/costs", "/admin/growth", "/admin/video"]);
   });
 });

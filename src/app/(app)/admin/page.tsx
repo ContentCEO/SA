@@ -1013,6 +1013,13 @@ export default async function AdminPage(props: PageProps<"/admin">) {
             This lets them sign in and emails them the sign-in link, with what to have ready. Until
             Google approves the app, also add them as a test user in Google Cloud.
           </p>
+          {/* Check 28 P7: the demo video script as a tick list, for filming. */}
+          <Link
+            href="/admin/video"
+            className="inline-flex min-h-tap items-center self-start font-semibold underline underline-offset-4"
+          >
+            Video script (for filming)
+          </Link>
         </form>
         {invited.length ? (
           <ul className="flex flex-col divide-y rounded-lg border">

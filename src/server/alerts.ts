@@ -2,6 +2,7 @@ import "server-only";
 import { and, eq, gt, isNull, lt, or } from "drizzle-orm";
 import { db } from "@/db";
 import { activityLog, mailboxes, users, workspaces } from "@/db/schema";
+import { accessLostReason, googleAppState } from "@/config/google-app";
 import { appUrl } from "@/lib/app-url";
 import { brandEmail } from "@/lib/email-layout";
 import { sendEmail, type EmailSender } from "@/lib/email";
@@ -23,9 +24,10 @@ export function accessLostEmail(mailboxEmail: string, reminder: boolean) {
       "Reconnecting takes about a minute. Nothing was lost — we pick up where we left off.",
     ],
     button: { label: "Reconnect Gmail", url: appUrl("/settings/gmail") },
+    // Check 1 P7: the likely reason follows where the app is with Google (GOOGLE_APP_STATE).
     footer: reminder
       ? "This is the last reminder we'll send about this."
-      : "Google sometimes ends access on its own, for example after a password change.",
+      : accessLostReason(googleAppState()),
   });
   return { subject, text, html };
 }

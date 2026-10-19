@@ -126,6 +126,13 @@ test("robots.txt, sitemap.xml and the share image", async ({ request }) => {
   }
   // Check 26 P9: /admin isn't named (its pages say noindex instead).
   expect(robots).not.toContain("/admin");
+  // Check 33 P4: the sign-in, not-invited and goodbye pages carry a noindex tag instead of a
+  // robots.txt block (a blocked page can still be listed by its address).
+  for (const path of ["/signin", "/not-invited", "/goodbye"]) {
+    expect(robots).not.toContain(`Disallow: ${path}`);
+  }
+  expect(robots).toContain("Disallow: /queue");
+  expect(robots).toContain("Disallow: /api/");
   expect(robots).toMatch(/Sitemap: https?:\/\/[^\s]+\/sitemap\.xml/);
   const sitemap = await (await request.get("/sitemap.xml")).text();
   for (const path of ["/growth", "/privacy", "/terms"]) expect(sitemap).toContain(`${path}</loc>`);
@@ -134,6 +141,22 @@ test("robots.txt, sitemap.xml and the share image", async ({ request }) => {
   const og = await request.get("/opengraph-image");
   expect(og.status()).toBe(200);
   expect(og.headers()["content-type"]).toBe("image/png");
+});
+
+test("sign-in, not-invited and goodbye say noindex in the page; the sitemap is dated", async ({
+  page,
+  request,
+}) => {
+  for (const path of ["/signin", "/not-invited", "/goodbye"]) {
+    await page.goto(path);
+    await expect(page.locator('meta[name="robots"]')).toHaveAttribute("content", /noindex/);
+    await expect(page.locator('meta[name="robots"]')).toHaveAttribute("content", /follow/);
+    await expect(page.locator('meta[name="robots"]')).not.toHaveAttribute("content", /nofollow/);
+  }
+  const sitemap = await (await request.get("/sitemap.xml")).text();
+  const dates = [...sitemap.matchAll(/<lastmod>([^<]+)<\/lastmod>/g)].map((m) => m[1]!);
+  expect(dates).toHaveLength(4);
+  for (const d of dates) expect(d).toMatch(/^\d{4}-\d{2}-\d{2}/);
 });
 
 test("homepage: share card tags, the call button and the trial clock in the phone", async ({
@@ -254,6 +277,82 @@ test("footer: the phone number is a 44px call link, and public pages link to Gro
       name: /See everything Growth does/,
     }),
   ).toHaveAttribute("href", "/growth");
+});
+
+/**
+ * Check 33 P6: one walk over every public page, read from the sitemap so a new page is covered
+ * without editing the test. Each rule names the failing URL. Nothing else is fetched or printed.
+ */
+test("every public page has its search basics", async ({ page, request, baseURL }) => {
+  const xml = await (await request.get("/sitemap.xml")).text();
+  const urls = [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1]!);
+  expect(urls.length).toBeGreaterThanOrEqual(4);
+  const problems: string[] = [];
+  /**
+   * Findings waiting on another group's change, one per line, each self-expiring: the test fails
+   * again when the finding is gone and the line isn't deleted. Growth site step 12 (Check 33 P2)
+   * rewrites /growth's title and description in growth-copy.ts; keep it at 160 characters or
+   * fewer there, then delete this entry.
+   */
+  const waitingOn: Record<string, RegExp> = {
+    "/growth": /^meta description is 1[6-9]\d characters/,
+  };
+  const hit = new Set<string>();
+  const fail = (url: string, rule: string) => {
+    const path = new URL(url).pathname;
+    if (waitingOn[path]?.test(rule)) hit.add(path);
+    else problems.push(`${url}: ${rule}`);
+  };
+
+  for (const url of urls) {
+    const entry = new URL(url);
+    const res = await page.goto(new URL(entry.pathname, baseURL).toString());
+    if (res?.status() !== 200) fail(url, `status ${res?.status()}, not 200`);
+
+    const h1s = await page.locator("h1").count();
+    if (h1s !== 1) fail(url, `${h1s} h1 elements, not exactly one`);
+
+    const title = await page.title();
+    if (title.length < 10 || title.length > 70) fail(url, `title is ${title.length} characters`);
+
+    const description =
+      (await page.locator('meta[name="description"]').getAttribute("content")) ?? "";
+    if (description.length < 50 || description.length > 160) {
+      fail(url, `meta description is ${description.length} characters (50 to 160)`);
+    }
+
+    const canonical = await page.locator('link[rel="canonical"]').getAttribute("href");
+    if (!canonical) fail(url, "no rel=canonical");
+    else if (new URL(canonical, baseURL).origin !== entry.origin) {
+      fail(url, "canonical is on another origin than the sitemap entry");
+    }
+
+    const ogImage = await page.locator('meta[property="og:image"]').first().getAttribute("content");
+    if (!ogImage) fail(url, "no og:image");
+    else {
+      const img = await request.get(
+        new URL(new URL(ogImage, baseURL).pathname, baseURL).toString(),
+      );
+      if (img.status() !== 200) fail(url, `og:image answered ${img.status()}`);
+      if (!img.headers()["content-type"]?.startsWith("image/png")) {
+        fail(url, `og:image content-type is ${img.headers()["content-type"]}`);
+      }
+    }
+
+    const robots = await page.locator('meta[name="robots"]').all();
+    for (const r of robots) {
+      if (/noindex/i.test((await r.getAttribute("content")) ?? ""))
+        fail(url, "meta robots noindex");
+    }
+
+    const missingAlt = await page.evaluate(
+      () => [...document.querySelectorAll("img")].filter((i) => !i.hasAttribute("alt")).length,
+    );
+    if (missingAlt) fail(url, `${missingAlt} <img> without alt`);
+  }
+  expect(problems).toEqual([]);
+  // An entry nobody needs any more must go (else it would hide a new finding later).
+  expect([...Object.keys(waitingOn)].filter((p) => !hit.has(p))).toEqual([]);
 });
 
 test("an address that doesn't exist: a plain 404 with a way home", async ({ page }) => {

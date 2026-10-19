@@ -296,6 +296,39 @@ describe("the demo video script matches the end-to-end journey", () => {
     expect(step4).not.toMatch(/production domain/);
   });
 
+  it("Check 28 P2: the branding is verified and published before the video is recorded", () => {
+    const before = flat(
+      section("Before submitting (for Davi only; never pasted into Google's form)"),
+    );
+    expect(before).toContain("**Publish the branding before filming**");
+    expect(before).toContain("**Verify Branding**");
+    expect(before).toContain("**Publish branding** within 7 days");
+    expect(before).toContain("shows the app's domain, not its name");
+  });
+
+  it("Check 28 P1: one OAuth client on the production project, cleaned of vercel.app and localhost before submitting", () => {
+    const before = flat(
+      section("Before submitting (for Davi only; never pasted into Google's form)"),
+    );
+    expect(before).toContain("**Clean the live client first**");
+    expect(before).toContain("**exactly one OAuth client**");
+    expect(before).toContain("`https://<your domain>/api/auth/callback/google`");
+    expect(before).toContain("`https://<your domain>/api/gmail/callback`");
+    expect(before).toContain("no `vercel.app` address and no `localhost`");
+    expect(before).toContain('separate "sa preview" Google project');
+    // SETUP.md §8 says the same, and no step anywhere tells Davi to create a second client inside
+    // the production project.
+    const setup = flat(readFileSync("docs/SETUP.md", "utf8"));
+    expect(setup).toContain("the production client lists **only the production domain**");
+    expect(setup).toContain('"sa preview"');
+    expect(setup).toContain("don't use places in the production project's 100-user cap");
+    for (const file of ["docs/SETUP.md", DOC_PATH]) {
+      expect(readFileSync(file, "utf8"), file).not.toContain(
+        "A separate Google client for previews (optional)",
+      );
+    }
+  });
+
   it("publishing doesn't end the 7-day expiry for access given in Testing: reconnect once", () => {
     const before = flat(
       section("Before submitting (for Davi only; never pasted into Google's form)"),
@@ -327,6 +360,44 @@ describe("the verification answer is true of the code", () => {
       expect(text).toContain(`\`${param}=${value}\``);
       expect(connector).toContain(`${param}: "${value}"`);
     }
+  });
+
+  it("Check 28 P4: one paste-ready justification per scope, naming the narrower scopes and every endpoint", () => {
+    expect(text).toContain(
+      '"Two separate consent steps", "Scopes", "Scope justifications", "Google API Services: Limited Use" and "Data handling"',
+    );
+    const just = section("Scope justifications (one per scope, pasted into Google's form)");
+    const paragraph = (scope: string) => {
+      const marker = `**${scope}**\n\n`;
+      const at = just.indexOf(marker);
+      expect(at, scope).toBeGreaterThan(0);
+      const rest = just.slice(at + marker.length);
+      const end = rest.indexOf("\n\n");
+      return flat(end === -1 ? rest : rest.slice(0, end)).trim();
+    };
+    const readonly = paragraph("gmail.readonly");
+    const compose = paragraph("gmail.compose");
+    for (const p of [readonly, compose]) {
+      expect(p.length).toBeGreaterThan(300);
+      expect(p.length).toBeLessThan(1000);
+    }
+    expect(readonly).toContain("gmail.metadata");
+    expect(readonly).toContain("gmail.addons.current.message.readonly");
+    expect(readonly).toContain("never modify, label, archive or delete");
+    expect(compose).toContain("gmail.send");
+    expect(compose).toContain("gmail.addons.current.action.compose");
+    expect(compose).toContain("drafts.send does not accept it");
+    // Every Gmail endpoint the client calls is named in one of the two paragraphs.
+    const api = readFileSync("src/mailbox/gmail/api.ts", "utf8");
+    const methods = [
+      ...new Set([...api.matchAll(/\bcall(?:<[\s\S]*?>)?\(\s*"([a-zA-Z.]+)"/g)].map((m) => m[1]!)),
+    ];
+    expect(methods.length).toBeGreaterThanOrEqual(12);
+    const named = `${readonly} ${compose}`;
+    for (const m of methods) expect(named, m).toContain(`users.${m}`);
+    // The old claim is gone: gmail.readonly is the narrowest scope *with message text*.
+    expect(text).not.toContain("`gmail.readonly` is the narrowest scope (no change rights at all)");
+    expect(text).toContain("the narrowest scope that includes message text");
   });
 
   it("names the scopes we don't ask for, and the test that keeps them out exists", () => {
