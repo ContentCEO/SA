@@ -3898,6 +3898,17 @@ acknowledgedOn })`; invoice reminders ask when they expect to pay, never an easy
     - **Check 26 P8:** `LIMITS.formEmail` (5 a day per address, keyed by an HMAC `addressKey`)
       on both public forms. Not built: keeping the first request as well as the newest.
 
+- **Model keep-until dates (Check 48 P2, 2026-10-19):** `modelLifecycle` in
+  `src/config/models.ts` (notBefore from Anthropic's model deprecations page, checkedOn, source;
+  read 2026-10-19: Haiku 4.5 snapshot "not sooner than" 2026-10-15, Sonnet 5 2027-06-30, Haiku 5.5
+  2027-10-07, Sonnet 5.5 2027-09-28). `tests/unit/model-lifecycle.test.ts` fails when a date is
+  within 30 days or past and checkedOn is over 14 days old. `modelCapabilities` (effort allowed,
+  thinking "omit" | "disabled") decides what `callStructured` sends (`requestOptionsFor`); Haiku
+  5.5 trials send thinking disabled. `pnpm eval --model classify=<id>` (draft= / voice=) swaps a
+  role's model through `setEvalModelOverrides` (eval script and tests only), ids only from
+  `EVAL_MODEL_IDS`; `--update-baseline` refused with it. Production models unchanged. Checklist:
+  docs/SETUP.md "When Anthropic emails about a model".
+
 ## Milestones
 
 - [x] **0. Scaffold**

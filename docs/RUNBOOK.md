@@ -68,7 +68,8 @@ waits for it like everyone else; there's usually nothing to fix on our side.
 - Most likely: the prepaid credit ran out, the spend limit was reached, the key was revoked, or
   Anthropic is having an outage.
 - What to do: add credit or raise the limit; a revoked key → [section 8](#8-a-leaked-key). A
-  model that's no longer available is the engineers' to switch (`src/config/models.ts`). Nothing
+  model that's no longer available is the engineers' to switch ([SETUP.md](SETUP.md) "When
+  Anthropic emails about a model"). Nothing
   is lost: email waits in Gmail and is sorted when the AI answers again.
 - Worked when: the box says **System** and owners' new mail is sorted and drafted again.
 

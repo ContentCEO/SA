@@ -732,6 +732,28 @@ if anything is worse than `tests/evals/baseline.json`. Needs `ANTHROPIC_API_KEY`
 - First time (or after an intended improvement): `pnpm eval --update-baseline`, then commit the file.
 - From GitHub: Actions → **Prompt evals** → Run workflow. Add `ANTHROPIC_API_KEY` as a repository
   secret first (Settings → Secrets and variables → Actions). It never runs on its own.
+- Another model, without changing production: `pnpm eval --no-drafts --model classify=<id>`
+  (also `draft=` and `voice=`). Only ids in `EVAL_MODEL_IDS` (`src/config/models.ts`) are taken;
+  `--update-baseline` is refused with `--model` (the baseline is production's models). What each
+  model accepts (effort, thinking) is `modelCapabilities` in the same file.
+
+### When Anthropic emails about a model
+
+Each model's keep-until date is `modelLifecycle` in `src/config/models.ts`, copied from Anthropic's
+model deprecations page (platform.claude.com/docs/en/about-claude/model-deprecations) with the day
+it was read. `tests/unit/model-lifecycle.test.ts` fails when a date is within 30 days (or past)
+and the page hasn't been read in 14 days. Anthropic promises at least 60 days' notice by email
+before a retirement. When that email comes, or the test fails:
+
+1. Re-read the deprecations page. Update `notBefore` and `checkedOn` (never guess a date; write
+   "none announced" if the page gives none). If nothing changed, that's the whole job.
+2. If a retirement is announced, add the recommended replacement to `modelFallbacks`,
+   `modelPricing` (from Anthropic's pricing page), `modelCapabilities` and `modelLifecycle`.
+3. Run `pnpm eval --model <role>=<replacement>` (with `--no-drafts` for sorting) and compare the
+   table with `tests/evals/baseline.json`. Note anything worse, and the token cost.
+4. Davi decides, from those numbers, whether to switch.
+5. Then switch `models` (and keep `modelPricing` right), run `pnpm eval --update-baseline` on the
+   new model, commit both, and deploy before the retirement date.
 
 ## 11. Phone checks (by hand, on real phones)
 
