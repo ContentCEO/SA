@@ -220,7 +220,7 @@ customer whether a permit is needed` covers every trade), so Check 41 P4's "(onl
 asked_to_wait | already_answered | paid | other | null`, `.catch(null)`). "Open with something
   specific to the job, not 'just checking in'"; "never 'haven't heard from you'". When the model
   sets `skip`: no draft, no Gmail draft, Activity `followup_skipped` `{ code }` (content-free;
-  `describeActivity` hides unknown actions, so nothing shows), the thread gets
+  Activity reads "No follow-up written to Dana: they said no · Quote request"), the thread gets
   `extracted.nudge_skip` / `nudge_skip_at`, and `createDraftForThread` answers
   `{ status: "skipped", reason: "writer_declined" }`. Until someone writes (`nudge_skip_at` newer
   than `threads.last_message_at`) the scan leaves the thread out (SQL twin in

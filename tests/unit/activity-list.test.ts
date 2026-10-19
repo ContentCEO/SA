@@ -85,6 +85,16 @@ describe("every logged action shows on Activity or is hidden on purpose (Check 1
     expect([...logged].filter((a) => !known.has(a)).sort()).toEqual([]);
   });
 
+  it("Check 21 P7: a nudge the writer left out says why, from the code only", () => {
+    const who = { name: "Dana Ruiz", category: "quote_request" };
+    expect(describeActivity("followup_skipped", { code: "declined" }, who)).toBe(
+      "No follow-up written to Dana: they said no · Quote request",
+    );
+    expect(describeActivity("followup_skipped", { code: "other" }, null)).toBe(
+      "No follow-up written",
+    );
+  });
+
   it("the five owner actions that were missing now have plain lines", () => {
     const who = { name: "Dana Ruiz", category: "quote_request" };
     expect(describeActivity("answered_by_phone", { draftRemoved: false }, who)).toBe(
