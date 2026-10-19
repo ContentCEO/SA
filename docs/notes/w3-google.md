@@ -191,3 +191,18 @@ pre-scan once on the branch and read the two artifacts.
   its reason in `docs/casa-prep.md` (the evidence file the lab's questionnaire is answered from).
   Add the yearly key rotation (`docs/SETUP.md` §5a) to the same 60–90-day reminder.
 ```
+
+## Step 7: Check 28 P6 (LAUNCH.md text; the script is `pnpm google:ready <url>`)
+
+Run on 2026-10-19 against `https://sa-dac3.vercel.app`: 8 FAIL lines, exactly today's known gaps
+(`[To confirm]` in the terms, no contact email on /privacy and /terms, the vercel.app host,
+`x-robots-tag: noindex` on all three pages, `x-powered-by` on `/`), everything else PASS.
+
+**LAUNCH.md 0e.** Add a bullet before "Paste:":
+
+```
+- Before Submit, have the engineers run `pnpm google:ready https://<your domain>` (it reads the
+  public pages the way Google's reviewer does: no sign-in, the privacy link, the Limited Use
+  sentence, a contact email, no `[To confirm]`, your own domain, no noindex). Every line must say
+  PASS. Worked when: the last line says "All checks passed".
+```
