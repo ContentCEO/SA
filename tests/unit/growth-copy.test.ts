@@ -253,3 +253,21 @@ describe("Check 3 P1: every service card says what you get", () => {
     expect(words).toContain("A monthly cap on ad money that you set");
   });
 });
+
+describe("Check 3 P6 + Check 34 P4: two more FAQs", () => {
+  it("says who pays for the ads, separate from the fee, with a limit the owner sets", () => {
+    const item = growthCopy.faq.items.find((i) => /pays for the ads/i.test(i.q));
+    expect(typeof item?.a).toBe("string");
+    expect(item?.a).toContain("separate");
+    expect(item?.a).toContain("limit");
+  });
+
+  it("says how Growth differs from an agency, second in the list, with nothing we can't back", () => {
+    const item = growthCopy.faq.items[1];
+    expect(item.q).toBe("How is this different from a marketing agency?");
+    expect(item.a).not.toMatch(/guarantee|rank|#1|best/i);
+    // The two commercial sentences wait for the operator's answer.
+    expect(item.a).not.toContain("Month to month");
+    expect(item.a).not.toContain("stay in your name");
+  });
+});

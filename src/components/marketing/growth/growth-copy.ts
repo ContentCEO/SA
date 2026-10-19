@@ -124,8 +124,18 @@ export const growthCopy = {
         a: "No. Growth is for anyone in the trades — carpenters, plumbers, electricians, roofers, painters, landscapers, heating and cooling, and more. If you use the app too, the two are kept separate.",
       },
       {
+        // Check 34 P4 (draft words, waiting for the operator's okay). No agency is named.
+        q: "How is this different from a marketing agency?",
+        a: "You talk to the person doing the work, who runs a remodeling company too. There's no sales team and no hand-off. Your email is never part of it. You get a clear price before anything starts.",
+      },
+      {
         q: "What does it cost?",
         a: `It depends on what you need. ${davi} talks it through with you on the free call and gives you a clear price before any work starts.`,
+      },
+      {
+        // Check 3 P6 (draft words, waiting for the operator's okay): commercial policy.
+        q: "Who pays for the ads?",
+        a: `You do, straight to Google or Facebook, from an ad account in your business's name. You set the monthly limit. ${davi}'s fee for running them is separate, and you'll know it before any work starts.`,
       },
       {
         // Check 2 P4: Meta's Housing special ad category (15-mile minimum radius, no ZIP codes).

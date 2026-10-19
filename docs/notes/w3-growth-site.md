@@ -81,3 +81,17 @@ except the copy test's `includes` checks, which go with it).
   message your customers."
 - Ground rule "No made-up reviews": "…post photos of someone else's work, or offer anything in
   return for a review."
+
+## Step 7 (Check 3 P6 + Check 34 P4): two FAQs — HOLD for Davi's okay (commercial policy)
+
+Built with draft answers; revert this one commit if Davi hasn't okayed them.
+
+- Second in the list: "How is this different from a marketing agency?" — "You talk to the
+  person doing the work, who runs a remodeling company too. There's no sales team and no
+  hand-off. Your email is never part of it. You get a clear price before anything starts."
+  (The spec's "and he runs…" was reworded: no pronouns for Davi.)
+- After "What does it cost?": "Who pays for the ads?" — "You do, straight to Google or Facebook,
+  from an ad account in your business's name. You set the monthly limit. Davi's fee for running
+  them is separate, and you'll know it before any work starts."
+- **Not added** (commercial terms, Davi's call): "Month to month, stop any time." and "Your
+  Google listing, ad accounts and website stay in your name."

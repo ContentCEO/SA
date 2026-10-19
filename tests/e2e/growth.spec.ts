@@ -1326,3 +1326,13 @@ test("/growth: every service card says what you get (Check 3 P1)", async ({ page
   await expect(reviews).toContainText("we never message your customers");
   expect(await noOverflow(page)).toBe(true);
 });
+
+test("/growth: the new FAQs open to their answers (Check 3 P6, Check 34 P4)", async ({ page }) => {
+  await page.goto("/growth");
+  const faq = page.getByRole("region", { name: "Growth questions" });
+  await faq.getByText("Who pays for the ads?").click();
+  await expect(faq.getByText(/You set the monthly limit/)).toBeVisible();
+  await faq.getByText("How is this different from a marketing agency?").click();
+  await expect(faq.getByText(/no sales team and no hand-off/)).toBeVisible();
+  expect(await noOverflow(page)).toBe(true);
+});
