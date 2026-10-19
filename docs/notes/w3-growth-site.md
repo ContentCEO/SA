@@ -123,3 +123,12 @@ client's written okay (the date goes in `permissionOn`) and a yearly check that 
   side" checks are unchanged.
 - **CLAUDE.md:** the Growth "Big words" paragraph names "The app" / "One-on-one" — now
   "Your inbox" / "Your marketing" (Check 6 P6).
+
+## Step 10 (Check 7 P7 + Check 6 P11): names keep their capitals in headlines
+
+Rule written in `src/components/brand/headline.tsx`. Changed: Growth "ask Davi to call you.",
+the portal's "call or text Davi.", Settings "your Gmail.", the access-lost email "reconnect
+Gmail.", and customer pages ("Dana," — `headlineName` keeps names as written; no name is still
+"this customer,"). `tests/unit/headlines.test.ts` scans every serif/heavy field under src.
+Touches `src/components/growth-portal/portal-copy.ts`, `src/server/alerts.ts` and
+`settings/gmail/page.tsx` (one line each) — possible small conflicts with App emails (alerts.ts).

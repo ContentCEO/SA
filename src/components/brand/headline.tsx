@@ -16,7 +16,13 @@ const sizes = {
   md: { serif: "text-2xl", heavy: "text-3xl" },
 } as const;
 
-/** The signature stacked headline used for every major heading. */
+/**
+ * The signature stacked headline used for every major heading.
+ *
+ * Check 7 P7: headline words are lowercase, but people's names, company names and product names
+ * (Gmail, Google, Davi, AI) keep their capitals: "ask Davi to call you.", "your Gmail.",
+ * "Dana,". Never `.toLowerCase()` a name into a headline (tests/unit/headlines.test.ts).
+ */
 export function Headline({ serif, heavy, as: Tag = "h1", size = "lg", className }: HeadlineProps) {
   return (
     <Tag className={cn("flex flex-col", className)}>

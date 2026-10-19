@@ -76,14 +76,15 @@ describe("when they last wrote, how far back, and the headline (Check 13 P6–P8
   });
 
   it.each([
-    ["Dana Ruiz", "dana"],
-    ["Mr. John Smith", "john"],
-    ["Dr Kim", "kim"],
-    ["The Hill Property Group", "the hill property group"],
-    ["Supply House Branch 42", "supply house branch 42"],
-    ["Chelmsford Building Dept", "chelmsford building dept"],
-    ["O'Connor, Kevin", "kevin"],
-    ["Mary Ann Lopez", "mary ann lopez"],
+    // Check 7 P7: names keep their capitals inside the lowercase headline.
+    ["Dana Ruiz", "Dana"],
+    ["Mr. John Smith", "John"],
+    ["Dr Kim", "Kim"],
+    ["The Hill Property Group", "The Hill Property Group"],
+    ["Supply House Branch 42", "Supply House Branch 42"],
+    ["Chelmsford Building Dept", "Chelmsford Building Dept"],
+    ["O'Connor, Kevin", "Kevin"],
+    ["Mary Ann Lopez", "Mary Ann Lopez"],
     ["", "this customer"],
     [null, "this customer"],
     ["dana.ruiz@gmail.com", "this customer"],

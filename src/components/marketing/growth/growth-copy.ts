@@ -174,7 +174,7 @@ export const growthCopy = {
   call: {
     region: `Ask ${davi} to call me`,
     serif: "want more work,",
-    heavy: `ask ${davi.toLowerCase()} to call you.`,
+    heavy: `ask ${davi} to call you.`,
     body: `Leave your number and what you want help with. ${davi} calls you back personally.`,
     talkNow: "Rather talk now?",
     callLink: `Call ${phone}`,

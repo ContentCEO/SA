@@ -17,7 +17,7 @@ export function accessLostEmail(mailboxEmail: string, reminder: boolean) {
     : "Squared Away lost access to your Gmail";
   const { text, html } = brandEmail({
     serif: reminder ? "still waiting," : "heads up,",
-    heavy: "reconnect gmail.",
+    heavy: "reconnect Gmail.",
     lines: [
       `Google stopped letting Squared Away read ${mailboxEmail}, so new emails aren't being sorted or drafted.`,
       "Reconnecting takes about a minute. Nothing was lost — we pick up where we left off.",
