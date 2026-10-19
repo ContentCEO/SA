@@ -134,3 +134,40 @@ policy should say, plus Davi's questions. Legal sentences are in `docs/notes/leg
   **Adapted from the spec:** the spec's GET page said "Morning email turned off" while changing
   nothing, which would be untrue; the page asks instead. Trial links behave as before.
 - **Goes live** with the Resend domain (nothing sends before). Nothing to set.
+
+## Fixes found by the full run (same branch)
+
+- Guard tests taught about the new code: `no-content-logs` allows `emailErrorFields(err)` (a test
+  reads its body: only `err.name` / `err.status`); `security-surface` lists the stop route's
+  digest kind and the four new limits (`emailTest`, `inviteAgain`, `waitlistCatchup`,
+  `emailStop`).
+- Billing, payment, setup-confirmation and dispute notices also log the Resend status.
+- `.env.example` documents `GOOGLE_APP_STATE`.
+- The referral tests' owners are on yahoo.com, so their invites pass `{ confirmed: true }`
+  (Check 47 P3's confirm step).
+- e2e: the manifest's `theme_color` is lowercase now (`BRAND.charcoal`, the same colour);
+  `connect.spec` finds the Gmail address by exact text (the new "we email …" line names it too);
+  `activity.spec.ts` "morning summary time and time zone are saved" now waits for ZoneCapture's
+  background save before clicking through. It failed about 1 run in 4 on the base code's race
+  (ZoneCapture fires without waiting; Morning email could render with the default zone and Save
+  wrote it back).
+
+## Integration notes (conflicts to expect)
+
+- **Google group (Check 28 P3):** `src/config/google-app.ts` is here (with
+  `googleWarningLine`); the connect page isn't wired. Keep one copy of the file.
+- **Legal group:** one sentence in `docs/notes/legal-w3-emails.md` (mail host). No legal file
+  touched.
+- **Growth groups:** `src/app/(app)/admin/page.tsx` waitlist section changed (the On Outlook
+  count, the catch-up button, the mail-host line and an Invite confirm step on `WaitlistEntry`),
+  plus `inviteFromWaitlist(email, now, { confirmed })` returns a new `needs_confirm`. Growth
+  site 5 / Records 1 rework `WaitlistEntry` and Growth requests; keep the confirm step on app
+  sign-ups. `src/server/rate-limit.ts` gains four keys, and `security-surface.test.ts` gains
+  their rows (expect a list merge).
+- **Migration lane:** one migration, `0076_waitlist_mail_host` here (the tip is now at 0076, so
+  renumber to the next free number at merge). It adds `waitlist.mail_host text`. Additive.
+- **Emails:** every HTML email now goes through `emailShell` (`src/lib/email-layout.ts`). Any
+  new email from another group should use `brandEmail` / `emailHtml`; `brand-colors.test.ts`
+  fails on a hex colour typed anywhere in `src/**.ts(x)` outside `src/config/brand.ts`.
+- **Digest:** `buildDigest` takes `extras.trial` and `links.billingUrl`; `DigestCounts` gains
+  `sentByAutopilot` / `autopilotOn`. The greeting now follows the local hour.
