@@ -242,24 +242,6 @@ describe("Check 2 P1 / Check 3 P7: the banned list catches what it should", () =
   });
 });
 
-describe("Check 3 P6 + Check 34 P4: two more FAQs", () => {
-  it("says who pays for the ads, separate from the fee, with a limit the owner sets", () => {
-    const item = growthCopy.faq.items.find((i) => /pays for the ads/i.test(i.q));
-    expect(typeof item?.a).toBe("string");
-    expect(item?.a).toContain("separate");
-    expect(item?.a).toContain("limit");
-  });
-
-  it("says how Growth differs from an agency, second in the list, with nothing we can't back", () => {
-    const item = growthCopy.faq.items[1];
-    expect(item.q).toBe("How is this different from a marketing agency?");
-    expect(item.a).not.toMatch(/guarantee|rank|#1|best/i);
-    // The two commercial sentences wait for the operator's answer.
-    expect(item.a).not.toContain("Month to month");
-    expect(item.a).not.toContain("stay in your name");
-  });
-});
-
 describe("Check 2 P7 + Check 6 P6: the first ground rule and the homepage hand-off", () => {
   it("the inbox rule gives examples, not a complete list", () => {
     expect(growthCopy.rules.items[0].body).toBe(

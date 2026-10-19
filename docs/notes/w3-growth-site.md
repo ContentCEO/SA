@@ -67,20 +67,6 @@ exactly like the flag is stored as "(flag)".
 CLAUDE.md line to change: the Growth section's "the hidden 'website' field for bots" → "the
 hidden `sa_hp` trap field (Check 2 P3: filled + valid = stored with a flag, nobody emailed)".
 
-## Step 7 (Check 3 P6 + Check 34 P4): two FAQs — HOLD for Davi's okay (commercial policy)
-
-Built with draft answers; revert this one commit if Davi hasn't okayed them.
-
-- Second in the list: "How is this different from a marketing agency?" — "You talk to the
-  person doing the work, who runs a remodeling company too. There's no sales team and no
-  hand-off. Your email is never part of it. You get a clear price before anything starts."
-  (The spec's "and he runs…" was reworded: no pronouns for Davi.)
-- After "What does it cost?": "Who pays for the ads?" — "You do, straight to Google or Facebook,
-  from an ad account in your business's name. You set the monthly limit. Davi's fee for running
-  them is separate, and you'll know it before any work starts."
-- **Not added** (commercial terms, Davi's call): "Month to month, stop any time." and "Your
-  Google listing, ad accounts and website stay in your name."
-
 ## Step 8 (Check 2 P6): room for real proof
 
 `siteConfig.operatorPhoto` (null) feeds the homepage About section and /growth's "who does the

@@ -1377,16 +1377,6 @@ test("/growth: its own page, charcoal edge to edge", async ({ page }) => {
   expect(await noOverflow(page)).toBe(true);
 });
 
-test("/growth: the new FAQs open to their answers (Check 3 P6, Check 34 P4)", async ({ page }) => {
-  await page.goto("/growth");
-  const faq = page.getByRole("region", { name: "Growth questions" });
-  await faq.getByText("Who pays for the ads?").click();
-  await expect(faq.getByText(/You set the monthly limit/)).toBeVisible();
-  await faq.getByText("How is this different from a marketing agency?").click();
-  await expect(faq.getByText(/no sales team and no hand-off/)).toBeVisible();
-  expect(await noOverflow(page)).toBe(true);
-});
-
 test("/growth: no empty proof section while there's no real proof (Check 2 P6)", async ({
   page,
 }) => {
