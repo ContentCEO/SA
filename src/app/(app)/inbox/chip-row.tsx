@@ -13,6 +13,10 @@ export function ChipRow({ children }: { children: React.ReactNode }) {
     const row = nav.current;
     const active = row?.querySelector<HTMLElement>('[aria-current="page"]');
     if (!row || !active || row.scrollWidth <= row.clientWidth) return;
+    // E2E hardening (2026-10-19): this runs at hydration, which on a slow phone comes after the
+    // owner may already have swiped the row to the chip they want. Moving it back then put a
+    // different chip (or the gap between two) under their tap. A row that has moved is theirs.
+    if (row.scrollLeft !== 0) return;
     // Only the row moves (never the page): centre the active chip where it fits.
     row.scrollLeft =
       active.offsetLeft - row.offsetLeft - (row.clientWidth - active.offsetWidth) / 2;

@@ -470,6 +470,37 @@ test("Check 10 P7: older unsorted mail folds into one line; the Not sorted chip 
   await expect(row("Oldfield")).toBeVisible();
 });
 
+test("a chip row swiped before the page's script runs stays where the owner left it", async ({
+  page,
+  context,
+}) => {
+  // E2E hardening (2026-10-19): ChipRow scrolls the active chip into view as the page hydrates.
+  // On a slow phone that came after the owner had already swiped the row to "Scheduling", so the
+  // row jumped back and their tap landed between two other chips (inbox.spec.ts:59, on phones).
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await seedThreads(owner.mailboxId!);
+  await signInAs(context, owner);
+  await page.setViewportSize({ width: 375, height: 812 });
+  // The page's script is held back until the swipe is done.
+  let release!: () => void;
+  const held = new Promise<void>((r) => (release = r));
+  await page.route("**/_next/static/chunks/*.js", async (route) => {
+    await held;
+    await route.continue();
+  });
+  await page.goto("/inbox", { waitUntil: "domcontentloaded" });
+  const nav = page.getByRole("navigation", { name: "Filter" });
+  const chip = nav.getByRole("link", { name: "Scheduling" });
+  await chip.scrollIntoViewIfNeeded();
+  const swiped = await nav.evaluate((n) => n.scrollLeft);
+  expect(swiped).toBeGreaterThan(0);
+  release();
+  await page.waitForLoadState("networkidle");
+  expect(await nav.evaluate((n) => n.scrollLeft)).toBe(swiped);
+  await chip.click();
+  await expect(page).toHaveURL(/c=scheduling/);
+});
+
 test("Check 10 P9: chips wrap on a computer; on a phone the active chip is in view", async ({
   page,
   context,
