@@ -52,7 +52,10 @@ const FORBIDDEN = new Set(
  * Reviewed exceptions: whole identifiers that look like content but are not. An entry nobody
  * uses any more fails the test, so the list can't quietly grow stale.
  */
-const ALLOWED_IDENTIFIERS: Record<string, string> = {};
+const ALLOWED_IDENTIFIERS: Record<string, string> = {
+  emailErrorFields:
+    "Check 18 P2: returns only the error's name and the Resend status (checked below), never an address",
+};
 
 function parts(identifier: string): string[] {
   return identifier
@@ -90,6 +93,8 @@ function isValue(n: ts.Identifier): boolean {
 
 /** Fields of an error that are fixed codes, never text: its class name and an HTTP status. */
 const SAFE_ERROR_FIELDS = new Set(["name", "status"]);
+/** Helpers that turn an error into those fields only (each body is checked below). */
+const SAFE_ERROR_HELPERS = new Set(["emailErrorFields"]);
 
 /** `err.name` / `(err as Error).name`, `err.status`, or `err instanceof X`. */
 function isSafeErrorUse(n: ts.Identifier): boolean {
@@ -104,6 +109,16 @@ function isSafeErrorUse(n: ts.Identifier): boolean {
   const p = x.parent;
   if (ts.isPropertyAccessExpression(p) && p.expression === x)
     return SAFE_ERROR_FIELDS.has(p.name.text);
+  // Check 18 P2: `emailErrorFields(err)` (src/lib/email.ts) returns only the name and the
+  // Resend status; the test below checks that is all it reads.
+  if (
+    ts.isCallExpression(p) &&
+    ts.isIdentifier(p.expression) &&
+    SAFE_ERROR_HELPERS.has(p.expression.text) &&
+    p.arguments.length === 1 &&
+    p.arguments[0] === x
+  )
+    return true;
   return (
     ts.isBinaryExpression(p) &&
     p.left === x &&
@@ -310,5 +325,16 @@ describe("C15: every Sentry path is scrubbed", () => {
       const keys = (opts as ts.ObjectLiteralExpression).properties.map((p) => p.name?.getText());
       expect(keys).toEqual(["tags"]);
     });
+  });
+
+  it("Check 18 P2: emailErrorFields reads only the error's name and its Resend status", () => {
+    const src = readFileSync("src/lib/email.ts", "utf8");
+    const body = src.slice(src.indexOf("export function emailErrorFields"));
+    const fn = body.slice(0, body.indexOf("\n}\n") + 3);
+    expect(fn).toContain("return { error: err.name, status: err.status }");
+    expect(fn).not.toMatch(/\.message|\.stack|\.cause|String\(err|JSON/);
+    expect(
+      [...fn.matchAll(/err\.(\w+)/g)].map((m) => m[1]).every((f) => f === "name" || f === "status"),
+    ).toBe(true);
   });
 });

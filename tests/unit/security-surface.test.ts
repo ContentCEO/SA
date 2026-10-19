@@ -380,10 +380,23 @@ describe("C3: every route handler is in the table with the guard it uses", () =>
           expect(readFileSync("src/server/trial-email-links.ts", "utf8")).toContain(
             "timingSafeEqual",
           );
+          // Check 18 P9: `k=digest` links can only turn the morning email off (rate-limited per
+          // link; GET only redirects to a page that asks). Each kind signs its own purpose.
           expect(src.match(/await [a-zA-Z.]+\(/g)).toEqual([
             "await stopTrialEmails(",
+            "await hitLimit(",
+            "await turnOffDigest(",
+            "await request.formData(",
             "await stopTrialEmails(",
           ]);
+          const get = src.slice(
+            src.indexOf("export async function GET"),
+            src.indexOf("export async function POST"),
+          );
+          expect(get).not.toContain("turnOffDigest");
+          expect(readFileSync("src/server/trial-email-links.ts", "utf8")).toContain(
+            'digest: "digest-emails:stop:"',
+          );
           break;
         }
         case "twilio-signature": {
@@ -1552,6 +1565,31 @@ const LIMIT_SITES: LimitSite[] = [
     fn: "GET",
     limit: "poll",
     work: ["queueMembership", "leadsAtRisk"],
+  },
+  // Check 18 P2 / P4 / P9: Davi's email buttons on /admin and the morning email's one-click stop.
+  {
+    file: "src/app/(app)/admin/actions.ts",
+    fn: "sendTestEmailAction",
+    limit: "emailTest",
+    work: ["sendAdminTestEmail"],
+  },
+  {
+    file: "src/app/(app)/admin/actions.ts",
+    fn: "emailInviteAgainAction",
+    limit: "inviteAgain",
+    work: ["sendInviteEmail"],
+  },
+  {
+    file: "src/app/(app)/admin/actions.ts",
+    fn: "catchUpWaitlistEmailsAction",
+    limit: "waitlistCatchup",
+    work: ["catchUpWaitlistConfirmations"],
+  },
+  {
+    file: "src/app/api/emails/stop/route.ts",
+    fn: "POST",
+    limit: "emailStop",
+    work: ["turnOffDigest"],
   },
   // Owner taps that write to Gmail.
   {
