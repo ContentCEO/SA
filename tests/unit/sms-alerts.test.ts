@@ -161,7 +161,9 @@ describe("confirming the number", () => {
     expect(textsStep(p!, NOW)).toBe("phone");
     // The log carries Twilio's status, never the number.
     expect(errors).toHaveBeenCalledWith("sms_code_failed", { workspaceId, status: 400 });
-    expect(JSON.stringify(errors.mock.calls)).not.toMatch(/508|555/);
+    // The random workspace id can hold "555" by chance (integrator, 2026-10-19: it did once in
+    // a full run), so it is taken out before looking for any piece of the number.
+    expect(JSON.stringify(errors.mock.calls).replaceAll(workspaceId, "")).not.toMatch(/508|555/);
     errors.mockRestore();
     // A code that really went shows the code box.
     await startPhoneVerification(workspaceId, "(508) 555-1234", { send, now: NOW });
