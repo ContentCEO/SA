@@ -207,6 +207,20 @@ test("a short draft on a card that folds has no Show full draft (Check 9 P7)", a
   await expect(card.getByRole("button", { name: "Show full draft" })).toHaveCount(0);
 });
 
+test("a draft of five or more lines has Show full draft in the server's HTML: nothing moves at hydration", async ({
+  page,
+  context,
+}) => {
+  // E2E hardening (2026-10-19): only measured in the browser, the toggle appeared as the card
+  // hydrated and pushed Edit and Discard 52px down, so a tap already on its way (a slow phone,
+  // or a test's click) landed on the note above them.
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await seedQueue(owner.mailboxId!); // Priya's draft: five lines, on a card that folds
+  await signInAs(context, owner);
+  const html = await (await page.request.get("/queue")).text();
+  expect(html).toContain("Show full draft");
+});
+
 test("'Fill in 1 gap to send' opens the gap's fill box; filling it brings Send reply (Check 9 P11)", async ({
   page,
   context,

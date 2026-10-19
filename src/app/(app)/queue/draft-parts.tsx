@@ -31,6 +31,9 @@ export function ConfidenceTag({ label }: { label: ConfidenceLabel }) {
 /** Which gap's fill box is open, and on which text (the card owns it: Check 9 P11). */
 export type GapOpen = { index: number; body: string } | null;
 
+/** A folded draft shows this many lines (`line-clamp-4` below). */
+const FOLD_LINES = 4;
+
 export function BodyWithGaps({
   body,
   onChange,
@@ -70,13 +73,18 @@ export function BodyWithGaps({
   // Check 9 P7: the toggle only when folding hides something (measured while folded).
   const text = useRef<HTMLParagraphElement>(null);
   const [measured, setMeasured] = useState(false);
-  const cutShort = folds && measured;
+  // Five or more lines (by line break) can't fit in four, whatever the screen or font: the
+  // toggle is in the server's HTML from the start. Only measured, it appeared at hydration and
+  // pushed Edit and Discard down under a thumb (or a click) already on its way.
+  const surelyCut = folds && body.trim().split("\n").length > FOLD_LINES;
+  const cutShort = surelyCut || (folds && measured);
   useLayoutEffect(() => {
     const el = text.current;
     if (!folds || expanded || !el) return;
+    if (surelyCut) return;
     // A layout measurement of the folded text.
     setMeasured(el.scrollHeight > el.clientHeight + 1);
-  }, [folds, expanded, body]);
+  }, [folds, expanded, body, surelyCut]);
   // Check 32 P1: Cancel (or Escape) puts focus back on the gap chip that opened the box.
   const chips = useRef<(HTMLButtonElement | null)[]>([]);
   const [returnTo, setReturnTo] = useState<number | null>(null);
