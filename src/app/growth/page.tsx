@@ -6,6 +6,8 @@ import { SiteAnalytics } from "@/components/marketing/site-analytics";
 import { GrowthChapter } from "@/components/marketing/growth/growth-chapter";
 import { growthCopy } from "@/components/marketing/growth/growth-copy";
 import { SkipLink } from "@/components/app/skip-link";
+import { appUrl } from "@/lib/app-url";
+import { growthStructuredData, jsonLd } from "@/lib/structured-data";
 
 const { meta, page } = growthCopy;
 
@@ -54,6 +56,11 @@ export default function GrowthPage() {
           </nav>
         </div>
       </header>
+      {/* Check 33 P2: one Service block for search engines, like the homepage's. */}
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: jsonLd(growthStructuredData(appUrl("/"))) }}
+      />
       <main id="main" tabIndex={-1} className="flex flex-col outline-none">
         <GrowthChapter headingLevel="h1" standalone />
       </main>

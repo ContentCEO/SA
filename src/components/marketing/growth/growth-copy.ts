@@ -11,6 +11,8 @@ const operator = siteConfig.operator;
 const davi = operator.split(" ")[0]!;
 const company = siteConfig.company;
 const phone = siteConfig.phone;
+/** "Massachusetts", from siteConfig.location (Check 33 P2: never typed twice). */
+const homeState = siteConfig.location.split(",")[0]!.trim();
 
 export const growthCopy = {
   hero: {
@@ -37,7 +39,8 @@ export const growthCopy = {
   },
   opener: {
     region: "Squared Away Growth",
-    eyebrow: "Squared Away Growth · for anyone in the trades",
+    // Check 33 P2: the words owners search, and the state once. No town, street or office.
+    eyebrow: `Squared Away Growth · marketing for contractors, run from ${homeState}`,
     serif: "the marketing side,",
     heavy: "done for you.",
     body: "Google ads, Facebook and Instagram ads, social media posts, your Google Business Profile, reviews and your website. We do the work, one-on-one, so you can stay on the job.",
@@ -243,8 +246,9 @@ export const growthCopy = {
     callLink: `Ask ${davi} to call me`,
   },
   meta: {
-    title: "Squared Away Growth — ads, reviews and your website, done for you.",
-    description: `Google ads, Facebook and Instagram ads, social media posts, Google Business Profile, reviews and websites for anyone in the trades. Done for you, one-on-one. Ask ${davi} to call you.`,
+    // Check 33 P2: what owners type into Google ("contractor marketing …").
+    title: "Contractor marketing, done for you · Squared Away Growth",
+    description: `Google and Facebook ads, Google Business Profile, reviews and websites for anyone in the trades, done one-on-one by ${operator}, a ${homeState} remodeler.`,
     twitterDescription: `Ads, posts, reviews, your Google listing and your website, done for you, one-on-one. For anyone in the trades. Ask ${davi} to call you.`,
   },
   /**

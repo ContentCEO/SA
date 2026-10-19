@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { growthCopy } from "@/components/marketing/growth/growth-copy";
 import { GROWTH_OWNED, GROWTH_SERVICES } from "@/config/growth";
+import { siteConfig } from "@/config/site";
 
 /** Squared Away Growth copy guard: what the page may and may not say. */
 const SOURCES = [
@@ -312,5 +313,17 @@ describe("Check 3 P4: Not sure yet is a form choice, not a card", () => {
     });
     // A stored request's services are comma-separated: no label may hold a comma.
     for (const o of GROWTH_REQUEST_OPTIONS) expect(o.label).not.toContain(",");
+  });
+});
+
+describe("Check 33 P2: /growth says what owners search", () => {
+  it("title, description and eyebrow", () => {
+    expect(growthCopy.meta.title).toContain("Contractor marketing");
+    expect(growthCopy.meta.description.length).toBeLessThanOrEqual(160);
+    expect(growthCopy.meta.description).toContain(siteConfig.operator);
+    expect(growthCopy.opener.eyebrow).toContain("Massachusetts");
+    expect(growthCopy.opener.eyebrow).toBe(
+      "Squared Away Growth · marketing for contractors, run from Massachusetts",
+    );
   });
 });

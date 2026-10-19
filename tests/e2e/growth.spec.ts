@@ -1281,9 +1281,7 @@ test("admin: Growth requests and app sign-ups side by side; Growth-only is never
 test("/growth: its own page, charcoal edge to edge", async ({ page }) => {
   const res = await page.goto("/growth");
   expect(res?.status()).toBe(200);
-  await expect(page).toHaveTitle(
-    "Squared Away Growth — ads, reviews and your website, done for you.",
-  );
+  await expect(page).toHaveTitle("Contractor marketing, done for you · Squared Away Growth");
   const h1 = page.getByRole("heading", { level: 1 });
   await expect(h1).toContainText("the marketing side,");
   await expect(h1).toContainText("done for you.");

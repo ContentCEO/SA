@@ -253,3 +253,14 @@ test("an address that doesn't exist: a plain 404 with a way home", async ({ page
   await page.getByRole("link", { name: "Go to the homepage" }).click();
   await expect(page).toHaveURL(/\/$/);
 });
+
+test("/growth has one Service block for search engines and its own title (Check 33 P2)", async ({
+  page,
+}) => {
+  await page.goto("/growth");
+  await expect(page).toHaveTitle("Contractor marketing, done for you · Squared Away Growth");
+  const blocks = page.locator('script[type="application/ld+json"]');
+  await expect(blocks).toHaveCount(1);
+  const ld = JSON.parse((await blocks.textContent()) ?? "{}") as { "@type": string };
+  expect(ld["@type"]).toBe("Service");
+});

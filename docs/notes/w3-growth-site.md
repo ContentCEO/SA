@@ -155,3 +155,14 @@ only" chip and MA-first sort (C44 P3, needs a migration — put them on `growth_
 waitlist in one lane turn if wanted); "State: AZ" in Davi's email notice (C45 P5 item 5: the
 notice is content-free today, and a body that changes under the same Resend idempotency key
 gets a 409). Privacy lines: legal note.
+
+## Step 12 (Check 33 P2): search words and structured data on /growth
+
+Title "Contractor marketing, done for you · Squared Away Growth"; description "Google and
+Facebook ads, Google Business Profile, reviews and websites for anyone in the trades, done
+one-on-one by Davi Chaves, a Massachusetts remodeler." (≤160, built from siteConfig); eyebrow
+"Squared Away Growth · marketing for contractors, run from Massachusetts" (the state from
+`siteConfig.location`). `growthStructuredData` in `src/lib/structured-data.ts` (one Service, no
+offers / ratings / areaServed) rendered on /growth; `src/lib/structured-data.ts` added to the
+growth-boundary MENTIONS list with its reason. Expect a small overlap with the Google group's
+step 11/12 if it also touches structured-data.ts or public-site e2e.

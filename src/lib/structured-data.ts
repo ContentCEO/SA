@@ -1,3 +1,5 @@
+import { growthCopy } from "@/components/marketing/growth/growth-copy";
+import { GROWTH_SERVICES } from "@/config/growth";
 import { pricing } from "@/config/pricing";
 import { siteConfig } from "@/config/site";
 
@@ -52,4 +54,28 @@ export function structuredData(siteUrl: string) {
 /** JSON for a <script type="application/ld+json">, with `<` escaped so it can't close the tag. */
 export function jsonLd(value: unknown): string {
   return JSON.stringify(value).replace(/</g, "\\u003c");
+}
+
+/**
+ * Check 33 P2: /growth's structured data, one Service. No offers or price (Growth has no price
+ * list), no ratings or reviews (we have none), no areaServed (Davi hasn't picked one). Pure.
+ */
+export function growthStructuredData(siteUrl: string) {
+  const base = siteUrl.replace(/\/+$/, "");
+  return {
+    "@context": "https://schema.org",
+    "@type": "Service",
+    name: "Squared Away Growth",
+    url: `${base}/growth`,
+    description: growthCopy.meta.description,
+    serviceType: GROWTH_SERVICES.map((s) => s.label),
+    provider: {
+      "@type": "Organization",
+      name: siteConfig.name,
+      url: base,
+      telephone: `+1-${siteConfig.phone}`,
+      address: { "@type": "PostalAddress", addressRegion: "MA", addressCountry: "US" },
+      founder: { "@type": "Person", name: siteConfig.operator },
+    },
+  };
 }
