@@ -2,7 +2,7 @@
  * Check 23 P12 (wave 2, Prompt versions step 9): one row per example, flagged or clean, through
  * the same check context the app builds (`buildCheckContext`), so a later regex edit can't
  * quietly undo another fix. A sample plumbing profile. Rows for checks that aren't built yet are
- * `it.todo` (listed in docs/notes/w2-prompts.md).
+ * `it.todo` (listed in CLAUDE.md, "Wave 3 merge A").
  */
 import { describe, expect, it } from "vitest";
 import { checkDraft } from "@/ai/draft-checks";

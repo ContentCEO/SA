@@ -508,7 +508,9 @@ describe("LAUNCH.md structure", () => {
     expect(authorized).toBeGreaterThan(0);
     expect(google).toBeGreaterThan(authorized);
     expect(appUrl).toBeGreaterThan(google);
-    expect(flat(step5)).toContain("**Redirect to** your domain");
+    // Check 33 P1 (wave 3): the old addresses forward by themselves once APP_URL is the domain.
+    expect(flat(step5)).toContain("forwards its pages to your domain by itself");
+    expect(flat(step5)).toContain("`src/config/host-redirects.ts`");
     expect(flat(step5)).not.toContain("Keep the old address working");
   });
 
@@ -1070,5 +1072,26 @@ describe("main only takes green CI (Check 31 P3)", () => {
       /^jobs:\n  # Required check on main\. Renaming it breaks the ruleset\.\n  check:$/m,
     );
     expect(ci).toMatch(/^  old-code-new-schema:$/m);
+  });
+});
+
+describe("Google review and the domain (wave 3, folded in by the integrator)", () => {
+  it("Check 28 P1: previews have their own Google project; the live client is cleaned before submitting", () => {
+    expect(launch).not.toContain("A separate Google client for previews (optional)");
+    expect(launch).toContain("**A separate Google project for previews and local testing.**");
+    const step0e = sections0().slice(sections0().indexOf("**0e."), sections0().indexOf("**0f."));
+    expect(step0e).toContain("**Clean the live client**");
+    expect(step0e).toContain("`https://<your domain>/api/auth/callback/google`");
+    expect(step0e).toContain("`https://<your domain>/api/gmail/callback`");
+  });
+
+  it("Check 28 P2: brand verification is in 0b, before the video", () => {
+    const s = sections0();
+    const step0b = s.slice(s.indexOf("**0b."), s.indexOf("**0c."));
+    expect(step0b).toContain("**Verify Branding**");
+    expect(step0b).toContain("**Publish branding**");
+    expect(step0b).toContain("within 7 days");
+    const step0d = s.slice(s.indexOf("**0d."), s.indexOf("**0e."));
+    expect(step0d).toContain("Branding is published (0b)");
   });
 });

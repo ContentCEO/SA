@@ -47,6 +47,14 @@ here. The whole version plan (draft.v8 / v9, classify.v5, followup.v5, voice.v3,
    `pnpm eval --no-drafts` when a prompt file changed if `ANTHROPIC_API_KEY` is available (else say
    it wasn't run).
 
+## Legal text
+
+Builders never edit `docs/terms.md`, `docs/privacy-policy.md` or `TERMS_VERSION`. They write
+the exact wording they need in `docs/notes/legal-<branch>.md` with the reason and the review
+prompt id. `tests/unit/legal-freeze.test.ts` fails any other branch that changes them (branches
+named `claude/legal-*` and `integrate-*` are allowed). The integrator applies every note in one
+`claude/legal-<date>` release, so owners agree again once (`docs/LEGAL-RELEASE.md`).
+
 ## The order
 
 Wave 0 (Before anything else; This week, one builder, nothing else running):
@@ -325,6 +333,37 @@ edits this file after it is created.
 - [x] Wave 2, Phone alerts and the app, 10) C46 P1 + C46 P2
 - [x] Wave 2, Phone alerts and the app, 11) C46 P4
 
+- [x] Wave 2, Prompt versions, 1) C12 P2 + C12 P3 + C22 P9 + C38 P5 + C45 P7
+- [x] Wave 2, Prompt versions, 2) C23 P11 + C43 P1 + C44 P1 + C45 P2
+- [x] Wave 2, Prompt versions, 3) C36 P8 + C37 P4 + C39 P6
+- [x] Wave 2, Prompt versions, 4) C12 P7 + C21 P7
+- [x] Wave 2, Prompt versions, 5) C24 P5 + C24 P9
+- [x] Wave 2, Prompt versions, 6) C39 P5 + C40 P4
+- [x] Wave 2, Prompt versions, 7) C41 P3 [M]
+- [x] Wave 2, Prompt versions, 8) C41 P4 [M]
+- [x] Wave 2, Prompt versions, 9) C22 P12 + C23 P12 + C24 P10 + C31 P5
+- [x] Wave 2, Prompt versions, 10) C37 P8 + C39 P8 + C40 P6
+- [x] Wave 3, Legal text, one release, 1) C50 P5
+- [x] Wave 3, Legal text, one release, 2) C27 P1
+- [x] Wave 3, Legal text, one release, 3) C27 P2 + C27 P7
+- [x] Wave 3, Legal text, one release, 4) C27 P3 + C27 P4
+- [x] Wave 3, Legal text, one release, 5) C27 P5 + C27 P8 + C45 P6
+- [x] Wave 3, Legal text, one release, 6) C27 P6
+- [x] Wave 3, Legal text, one release, 7) C27 P9 + C27 P10
+- [x] Wave 3, Legal text, one release, 8) C07 P1 + C07 P8
+- [x] Wave 3, Google review and the domain, 1) C28 P1
+- [x] Wave 3, Google review and the domain, 2) C33 P1
+- [x] Wave 3, Google review and the domain, 3) C28 P2
+- [x] Wave 3, Google review and the domain, 4) C28 P3
+- [x] Wave 3, Google review and the domain, 5) C28 P4
+- [x] Wave 3, Google review and the domain, 6) C28 P5
+- [x] Wave 3, Google review and the domain, 7) C28 P6
+- [x] Wave 3, Google review and the domain, 8) C28 P7
+- [x] Wave 3, Google review and the domain, 9) C33 P5
+- [x] Wave 3, Google review and the domain, 10) C01 P6
+- [x] Wave 3, Google review and the domain, 11) C33 P3 + C33 P4
+- [x] Wave 3, Google review and the domain, 12) C33 P6
+
 Queue screen 15) C09 P8 was not built (it waits for Davi's yes; `docs/LAUNCH.md` step 13). Voice 7) C24 P8's new prompt `voice-examples.v1` and the Inbox / Sync prompt lines wait for the Prompt
 versions group in `docs/notes/prompt-versions-inbox.md`.
 
@@ -336,5 +375,13 @@ Billing and admin 5) C17 P6 was built without its item 3 (over-limit lines): Dav
 decision already pauses the extra Gmail addresses on a lower plan. The Town, utility and job-kind
 lists group's classify.v6 lines (Check 36 P5, Check 37 P3) wait in
 `docs/notes/prompt-versions-inbox.md`.
+
+Wave 2 Prompt versions wrote every line that waited in `docs/notes/prompt-versions-inbox.md`
+except one optional voice-block wording (Check 24 P11), which waits for the next draft version.
+Wave 3 Legal text: every document sentence (Check 27 P1–P8, Check 45 P6) is written out in
+`docs/notes/legal-w3-legal.md` and waits for the one legal release; 7) C27 P10 was already done
+at the tip. Wave 3 Google review: 6) C28 P5's `poweredByHeader` part was already done; its CASA
+pre-scan workflow has not been run yet. 12) C33 P6 keeps one exception (/growth's description)
+until the Growth site group shortens it.
 
 Later steps are added to this list as their pull requests merge.

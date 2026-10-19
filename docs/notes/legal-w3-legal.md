@@ -277,3 +277,26 @@ Test for the release: `legal-docs.test.ts` requires that sentence.
 Test for the release: `legal-docs.test.ts` requires the section heading, "Message and data rates
 may apply", "HELP", "STOP" and the carrier sentence; the numbers can be read from `SMS.dailyCap`
 and the quiet hours as the other number tests do.
+
+## From the wave 3 merge A (integrator, 2026-10-19): lines the merged branches need
+
+`w2-prompts` (Prompt versions) stores two new things a reader of the policy would expect to see;
+`w3-google` stores nothing new (its scripts read public pages and send nothing; the sitemap and
+search markup carry no personal data). Proposed for the same release:
+
+### Check 24 P9: who signs the sent mail (`voice_profile.writers`)
+
+In "**How you write:**", after "…and up to five short example replies in your style.", add:
+
+> We also note the first names that sign your sent mail and roughly how much of it each signs
+> (for example "Linda signs some of it"), so your drafts are written as you. We keep first names
+> only, never last names or addresses.
+
+### Check 41 P4: "Another trade" in the person's own words (`waitlist.trade_other`, `workspaces.trade_other`)
+
+In "**When you join the waitlist:**" and "**When you ask for a free Growth call:**", change "trade"
+to "trade (and, if you pick "Something else", which one, in your words)". In "**What you tell
+us:**", the same after "trade".
+
+Test for the release: `legal-docs.test.ts` requires "first names that sign your sent mail" and
+"which one, in your words".

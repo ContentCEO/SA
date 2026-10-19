@@ -1874,9 +1874,11 @@ Davi runs several builder sessions at once. The build order for review prompts i
   `<kind>.v<N>.ts` file (constant `<KIND>_PROMPT_VERSION = "<kind>.v<N>"`) plus one line in
   `ACTIVE`; `prompt-versions.test.ts` fails on two files with one version, a gap, an `ACTIVE`
   that isn't the newest file, or code that records a version imported from an older file.
-  Active after the wave 1 integration: classify.v5, draft.v8, followup.v4, voice.v3, revise.v2,
-  purpose.v2, edit-tone.v1, opening-tweaks.v1, dispute-caution.v1 (a suffix on draft / revise
-  versions, never stored alone). Taken, so the review pages' names shift:
+  Active after wave 3 merge A (2026-10-19): classify.v6, draft.v9, followup.v5, voice.v4,
+  voice-examples.v1, revise.v2, purpose.v2, edit-tone.v1, opening-tweaks.v1, dispute-caution.v1
+  (a suffix on draft / revise versions, never stored alone). The review bundles below landed in
+  classify.v6 / draft.v9 / followup.v5 / voice.v4 (see "Wave 3 merge A"); the next free numbers
+  are classify.v7, draft.v10, followup.v6, voice.v5. Taken, so the review pages' names shift:
   - **draft.v8** = the review's "draft.v7" bundle: Check 23 P11 + 43 P1 + 44 P1 (and 45 P2) + the
     prompt parts of 40 P1 and 41 P1. Then the trade files of Check 36 P8, 37 P4 and 39 P6, in
     draft.v8 or the next version (**draft.v9**).
@@ -3678,6 +3680,124 @@ Away" }`; pages set a short title and never write "· Squared Away" by hand
     `scripts/app-shots.mjs`, invented e2e data only), `lang`, `dir`; pwa.spec asks Chrome's
     `Page.getInstallabilityErrors`. The installed app stays locked upright on Android
     (`orientation: "portrait"`) until Davi says otherwise.
+- **Wave 3 merge A (2026-10-19, branch `integrate-w3a`):** `w2-prompts` (wave 2 Prompt
+  versions), `w3-legal` (Legal text, one release) and `w3-google` (Google review and the domain)
+  merged with `--no-ff`, in that order, on top of faef9a5. Migrations regenerated one at a time
+  with drizzle-kit on the 0076 snapshot, SQL byte-identical to the branch's:
+  `0077_voice_writers` (when 1792390564735), `0078_snow_trade` (1792390572405; `ALTER TYPE trade
+ADD VALUE 'snow' BEFORE 'other'`, alone in its migration), `0079_trade_other` (1792390574464).
+  Proved on scratch databases: fresh from 0000 (80 rows), and faef9a5's folder first, then this
+  one (only 0077–0079 applied; the guard passed). No textual conflicts between the three; the
+  connect screen keeps legal's "Share your email" item and google's `GOOGLE_APP_STATE` line, and
+  /admin keeps legal's support-email line, google's Video script link and prompts' "Something
+  else: pest control" waitlist words.
+  - **Kept as on faef9a5 (no okay from Davi to change when CI fails):** `.github/workflows/evals.yml`
+    stays hand-run only (the branch added a pull_request trigger), and `tests/unit/evals.test.ts`'s
+    "saved eval record matches the prompts in use" runs only once a baseline has been recorded
+    (the branch made it fail from 2026-10-26 with none). Both are proposals in LAUNCH step 13.
+  - **Time zone race (integrator fix):** Settings → Morning email could render before the first
+    page's background zone save (`ZoneCapture`) landed, still showing Eastern; Save then posted
+    Eastern and `setOwnerTimeZone` stored it as the owner's pick (over the browser's zone, with a
+    `time_zone_changed` row the owner never made). This was the e2e "morning summary time and time
+    zone are saved" failure seen by three builders under load. The form now posts the zone it
+    showed (`timeZoneShown`); `pickedTimeZone()` (`time-zone-rules.ts`) saves only a zone the
+    owner changed. activity.spec holds the detection request to prove it, and the original test
+    waits for the browser zone to be saved before opening the screen.
+  - **classify.v6** (Check 12 P2 + 12 P3 + 22 P9 + 38 P5 + 45 P7, plus every inbox line for it):
+    `extracted.invoice` is a running balance — `amount` stays the key (the full amount billed;
+    the review's `invoice_total` was not used so stored rows keep one shape), plus
+    `amount_paid_now`, `kind` (invoice / payment / credit) and `other_invoices` (merged into
+    `earlier_open` on store, so the stored list is always `[]`). `money-rules.ts`:
+    `InvoiceFacts.paid`, `balanceDollars()` (never below 0), `isMoneyToward()`;
+    `carryInvoiceFacts` adds payments, never opens an invoice for a payment or credit, and
+    payments that cover it read as `paid` (our paid guess, `settledByPayments`). Money and
+    `owedCents` use the balance; `matchReceipt` accepts the balance or the whole amount. Status
+    `said_sent` ("check is in the mail") counts as owed, never sets `invoice_paid_at`, and holds
+    nudges for `SAID_SENT_WAIT_DAYS` = 7 (`saidSentBlocksNudge`, SQL twin `saidSentHold`);
+    `promised_on` shows "They said they'd pay Friday." The paid list says how we knew
+    (`paidViaLine`). New owner rules: `fake_bill` (priority high, never on junk), `not_the_payer`
+    (lead categories only), `contract_rights` (`mentionsContractRights` in guards.ts: cancelling,
+    three-day window, deposit back, Guaranty Fund, arbitration, state complaint…; jobs never draft
+    it, autopilot refuses it, never sets `complained_at`). Signals `acknowledgment_only`,
+    `declines_quote`, `also_asks`, `new_job_requested`, `extracted.wait_until` (stored only as
+    `followupSignalsOf`'s checked date). The sender's name, address and subject are fenced in
+    `<header>`. `EmailInput.firstTimeSender: boolean | "unknown"`; an "Attached: 3 photos, 1 PDF
+    (the assistant can't see them)" line per email (`attachedLine`). The paperwork line names the
+    811 programs and the energy programs; `routine_paperwork` is wider (rebate letters, warranty
+    claims, dispatches).
+  - **draft.v9** (Check 23 P11 + 43 P1 + 44 P1 + 45 P2 + 39 P6, plus inbox lines): length and tone
+    rules, one rule for unknown facts, "a gap replaces the words for the fact", answer every
+    question in order, never say whether a permit is needed / what meets code / a warranty /
+    waived fees / matched prices; the business block gains "- Owner's first name: …"
+    (`ownerFirstName`), the reply-language line (`replyLanguageLine`, Check 43 P8) and, for a
+    shop with a state file, "Words used in your state" (`src/ai/prompts/states/`, Massachusetts
+    only: HIC, CSL, Mass Save / HEAT Loan names, never amounts; `stateWordsFor`). "Who is
+    writing" (wave 1) stays; the review's fixed honesty line was **not** added (two rules for one
+    question). `HUMAN_CLAIMS` gained "no AI" / "no assistant" / Spanish and Portuguese claims;
+    "a real person" counts only as a claim about who is writing. Trade files: plumbing,
+    electrical and HVAC lost the permit questions and gained the review's words and questions;
+    no trade file asks whether a permit is needed (test). `buildCheckContext` (exported from
+    drafts.ts with `ownerFactsOf`, `DraftContext`) is the one builder of `checkDraft`'s context
+    for drafts and evals.
+  - **followup.v5** (Check 12 P7 + 21 P7): `followupTask({ nudgeNumber, daysQuiet, kind,
+acknowledgedOn })`; invoice reminders ask when they expect to pay, never an easy out
+    (`EASY_OUT_FLAG`, flag only, cap 0.5), late fee or discount. Output `skip` (declined /
+    asked_to_wait / already_answered / paid / other): no draft, Activity `followup_skipped`
+    `{ code }`, `extracted.nudge_skip` / `nudge_skip_at`; the scan and the drafter leave the
+    thread alone until someone writes (`nudgeSkipStands`).
+  - **voice.v4 + voice-examples.v1** (Check 24 P5 + 24 P9 + 24 P8): sent mail is fenced
+    (`<email n>` + `untrusted`), `injectionCheck` drops flagged bodies and flagged answers;
+    `voice_profile.writers` (first names + most / some / few, scrubbed, ≤5) and Settings'
+    `writersNotice`; a sign-off naming someone else isn't learned. `rewriteVoiceExamples` (no
+    sent mail read; one guarded UPDATE, an edit made meanwhile wins), event
+    `voice/examples.requested`, function `voice-examples`.
+  - **Other prompts-branch code:** jobs skip `routine_paperwork` (reason `paperwork`; the owner's
+    tap still drafts). `LEAD_SOURCES` gains Modernize, eLocal and roofle / roofr ("Instant quote
+    on your website"), `site: null`; a reply address on those platforms (not a per-customer
+    relay) is never drafted, not even on a tap (`lead_platform`). Trade `snow` ("Snow plowing";
+    `trades/snow.ts`, `JOB_KINDS.snow`). "Another trade" asks which (`tradeOtherField`, ≤60, one
+    plain line; stored only when the trade is "other"), shown on /admin waitlist rows and in
+    draft.v9's "Trade:" line; not carried from waitlist to workspace. `REAL_LEGAL` ignores
+    insurance disputes ("disputing the depreciation"); a lost-neutral line counts as an
+    electrical hazard. Evals run the real path (`classifyPending` on stored threads), plus
+    follow-up, voice and voice-example sets; `tests/support/fake-model.ts` parses fixtures
+    through the real schema (`LooseClassification`). **Evals not run** (no key); one
+    `it.todo` in `draft-checks-cases.test.ts` (a spoken figure like "fourteen fifty" isn't read).
+  - **Legal text, one release (Check 50 P5):** `docs/terms.md`, `docs/privacy-policy.md` and
+    `TERMS_VERSION` change only on a `claude/legal-<date>` or `integrate-*` branch, as one
+    release. `tests/unit/legal-freeze.test.ts` diffs other branches against their merge-base with
+    `claude/squared-away-mvp-ddxl7s` (skips when git can't name the branch or base — so it skips in
+    CI's shallow checkout today). Wording waits in `docs/notes/legal-<branch>.md`; steps in
+    `docs/LEGAL-RELEASE.md`. `LEGAL_DOCS_SHA256` (`src/config/legal.ts`) is the hash of both
+    documents; `legal-docs-hash.test.ts` fails on any change, the integrator's included, until it
+    is recomputed. `docs/legal-changes.md` (one section per version) feeds "What changed" on
+    /welcome/terms; `TERMS_VERSION` may be `YYYY-MM-DD.N` for a second release on one day.
+  - **Legal-branch code:** with no `SUPPORT_EMAIL` the legal pages' contact block offers a text
+    link (`sms:`), and /admin's System box says so (inverted in production). Text alerts: the
+    screen carries the carrier words (count, quiet hours, "Msg & data rates may apply", HELP /
+    STOP, agreement line with 44px Terms / Privacy links); `sendSms` reads Twilio's error `code`
+    only, 21610 → `opted_out` → `sms_stopped_reason`; `sendLeadAlerts` isolates each owner
+    (`alertOne`; `sms_alert_failed` logs status and error name only). No `sms_opted_out_at`
+    column. The connect screen's "Share your email" item names our US servers and Anthropic. The
+    Markdown renderer joins wrapped lines before the inline pass; /privacy and /terms open with
+    `<Headline>` ("the fine print,") and skip the file's `# Title`.
+  - **Google review and the domain:** `GOOGLE_APP_STATE` (Production only; testing / unverified
+    / verified, default testing; `src/config/google-app.ts`) is the one switch for what Google's
+    consent screen shows: the connect screen's warning line and the access-lost email's reason
+    read it. Never add a second env for the same fact. `legacyHostRedirects()`
+    (`src/config/host-redirects.ts`) forwards every `vercel.app` page (never `/api/*` or
+    `/_next/*`) only when `VERCEL_ENV` is production and `APP_URL` is an https non-vercel.app
+    address. `pnpm google:ready <url>` and `pnpm check:headers <url>` (scripts/, read public
+    pages only). `.github/workflows/casa-prep.yml` + `docs/casa-prep.md` (not run yet).
+    `/admin/video` renders the demo video script from `docs/google-verification.md`
+    (`src/server/video-script.ts`, 17 steps pinned) as 44px tick boxes in localStorage only; no
+    loading.tsx (must 404); in the a11y, tap-target and noindex admin lists. The sitemap dates
+    each page: `CONTENT_DATES` in `site.ts` for `/` and `/growth` (bump when the words change),
+    the date part of `TERMS_VERSION` for /privacy and /terms (`legalDate()`). `/signin`,
+    `/not-invited`, `/goodbye` are `index: false, follow: true` and out of robots' disallow list.
+    Organization markup: logo, state-level address, `email` only from `SUPPORT_EMAIL`.
+    public-site.spec's search basics keep one self-expiring exception, `waitingOn["/growth"]`
+    (its description is 179 characters), until the Growth site group shortens it.
 
 ## Milestones
 
@@ -3703,6 +3823,14 @@ Away" }`; pages set a short title and never write "· Squared Away" by hand
 - **Wave 2 merge C questions** (mail format, town and utility lists, numbers, billing and
   admin): docs/LAUNCH.md step 13 "Still open", with three live checks (send-as alias, Outlook
   line breaks, the From line) and the sender domains to confirm from real notices.
+- **Wave 3 merge A questions** (prompt versions, legal text, Google review): docs/LAUNCH.md
+  step 13 "Still open" — the one legal release (every sentence in
+  `docs/notes/legal-w3-legal.md`, including how changes are announced), fake-bill priority, the
+  7-day "check is in the mail" hold, booking for someone else, the "is this a bot?" answer,
+  Massachusetts carpenters' HIC / CSL words, the sign-off when someone else signs, prompt checks
+  in CI and the eval baseline (`ANTHROPIC_API_KEY` repo secret), the legal lock in CI
+  (`fetch-depth: 0`), `GOOGLE_APP_STATE`, the "sa preview" Google project, the CASA pre-scan, and
+  search after the domain move.
 - **Wave 2 merge D questions** (data and speed, phone look, security, phone alerts):
   docs/LAUNCH.md step 13 "Still open" — the AI limit numbers (500 per inbox, 3,000 a day) and
   the "sorting waits" wording; the broken-cookie homepage case; the shared database's table sizes

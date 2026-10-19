@@ -267,7 +267,8 @@ that doesn't open and a reviewer would see old screens. Each rejection costs wee
 
 - **Now** (once the domain is added): 0a and 0c.
 - **After [step 1](#1-merge-the-launch-branch) (merge) and [step 5](#5-support-email-and-the-production-domain) (domain):**
-  0b and 0d, then 0e (submit).
+  0b (all of it, including Verify Branding and Publish branding), then 0d, then 0e (submit). 0d
+  can't start before 0b is finished: the video must show the app name on Google's screen.
 - **After you submit:** 0f once Google's email names the reviewer's address, and 0g.
 
 **0a. Prove you own the domain.** (Now.)
@@ -287,11 +288,24 @@ that doesn't open and a reviewer would see old screens. Each rejection costs wee
   it isn't, add it there first.)
 - Worked when: Branding saves with no red warning, and those three links open the homepage, the
   privacy policy and the terms.
+- Then verify the brand: on the same Branding page tap **Verify Branding**. If the status says
+  **Ready to publish**, tap **Publish branding** within 7 days (after 7 days the check has to be
+  run again). If Google asks for a manual review instead, wait (usually 2–3 business days) and
+  answer any email from Google. Until the branding is published, Google's consent screen shows
+  your domain where the app name should be.
+- Worked when: Branding shows the branding as published (verified), and Google's consent screen
+  (start Connect Gmail on your domain, stop at Google's permissions screen, then go back) shows
+  "Squared Away" at the top instead of the domain.
 
 **0c. Switch to In production before real owners connect.** (Now.)
 
 - Where: Google Auth Platform → **Audience** → Publishing status → **Publish app** (it then says
   "In production").
+- Then tell the app: Vercel → sa → Settings → Environment Variables → `GOOGLE_APP_STATE`
+  (Production only) = `unverified` → Save → Redeploy. The Connect Gmail screen then says "Tap
+  Advanced, then the link that starts with Go to" instead of "Tap Continue", which is what Google
+  shows once the app is published. When Google approves the app (0g done), set it to `verified`
+  and redeploy: the warning line disappears. Preview stays unset.
 - Why: ends the 7-day expiry for Gmail access given **from now on**, and the hand-added test-user
   list. Until verification passes, owners still see the "unverified app" warning (they can tap
   through it), and the 100-user cap stays. Sign-in to Squared Away itself is still invite-only, so
@@ -310,6 +324,8 @@ that doesn't open and a reviewer would see old screens. Each rejection costs wee
 The video's sign-in shows the "I agree" box, which goes live with the second merge (see
 [step 1](#1-merge-the-launch-branch)), so record after that one too.
 
+- Branding is published (0b): Google's consent screen shows Squared Away, not the domain. If it
+  shows the domain, stop and finish 0b.
 - Where: follow "Demo video script" in [google-verification.md](google-verification.md) word for
   word. It uses the real Google consent screen, shows the OAuth client id in the address bar, and
   shows each of the two Gmail permissions in use: `gmail.readonly` ("View your email messages and
@@ -336,6 +352,16 @@ The video's sign-in shows the "I agree" box, which goes live with the second mer
 
 **0e. Submit for verification.** (After 0b and 0d.)
 
+- **Clean the live client** (only after step 5, item 9: the old address already forwards to your
+  domain). Where: Google Auth Platform → **Clients** → the web client. Authorized redirect URIs
+  must list only `https://<your domain>/api/auth/callback/google` and
+  `https://<your domain>/api/gmail/callback`; Authorized JavaScript origins must list only
+  `https://<your domain>` (no `vercel.app` address, no `localhost`; delete the others). Then
+  Branding → Authorized domains lists only your domain. Google checks every address on the client
+  against domains you have proved, and `sa-dac3.vercel.app` can't be proved. The production
+  project keeps exactly one OAuth client; previews and local testing use the `sa preview` project
+  (step 2). Worked when: both lists show only your domain, and sign-in and Connect Gmail still
+  work on your domain.
 - Where: Google Auth Platform → **Data Access** → check the two Gmail scopes are listed and
   `gmail.send` isn't, then **Verification Center** → Submit for verification.
 - **Remove `gmail.send` first** (you decided on 2026-10-15 to stop asking for it): the app no
@@ -351,6 +377,10 @@ The video's sign-in shows the "I agree" box, which goes live with the second mer
   Worked when: Data Access lists `gmail.readonly` and `gmail.compose` (Google files both under
   restricted scopes) and no `gmail.send`.
 
+- Before Submit, have the engineers run `pnpm google:ready https://<your domain>` (it reads the
+  public pages the way Google's reviewer does: no sign-in, the privacy link, the Limited Use
+  sentence, a contact email, no `[To confirm]`, your own domain, no noindex). Every line must say
+  PASS. Worked when: the last line says "All checks passed".
 - Paste: the sections "Two separate consent steps", "Scopes", "Google API Services: Limited Use"
   and "Data handling" from [google-verification.md](google-verification.md) (only those; the
   sections marked "for Davi only" are never pasted), and the video link.
@@ -382,6 +412,10 @@ The video's sign-in shows the "I agree" box, which goes live with the second mer
   of the whole review.
 - It renews every 12 months, counted from the lab's letter, and Google contacts you when it's due.
   Set a reminder 60–90 days before.
+- Before paying a lab, run the pre-scan (GitHub → Actions → **CASA pre-scan** → Run workflow) and
+  have the engineers clear every high and medium finding, or list each as an accepted risk with
+  its reason in `docs/casa-prep.md` (the evidence file the lab's questionnaire is answered from).
+  Add the yearly key rotation (`docs/SETUP.md` §5a) to the same 60–90-day reminder.
 - Worked when: Verification Center shows the assessment as passed and the app as verified; the
   "unverified app" warning disappears from the Connect Gmail screen.
 
@@ -557,21 +591,36 @@ redirect URIs → add `https://<branch address>/api/auth/callback/google` and
 `https://<branch address>/api/gmail/callback` → Save (it can take a few minutes). Worked when:
 signing in and Connect Gmail (with a test Gmail address) work on that branch address.
 
-**A separate Google client for previews (optional).** With an empty preview database it's fine to
-skip this. It doesn't make it safe to connect a real Gmail address on a preview (see above).
+**A separate Google project for previews and local testing.** Google's verification checks every
+address on the production OAuth client, and each must be on a domain you own and have proved in
+Search Console (step 0a). A `vercel.app` address sits on Vercel's DNS and can't be proved, and
+`localhost` can't either, so previews and local work get their own Google project, which is never
+submitted. Neither makes it safe to connect a real Gmail address on a preview (see above).
 
-1. Google Auth Platform → **Clients** → Create client → Web application, name it
-   `sa preview`.
-2. Authorized redirect URIs: the two addresses above, for each preview branch address you use.
-3. Copy its Client ID and Client secret, then split `AUTH_GOOGLE_ID` and `AUTH_GOOGLE_SECRET`
+1. console.cloud.google.com → the project picker → **New project** → name it `sa preview` →
+   Create. Then, in that project: APIs & Services → Library → **Gmail API** → Enable.
+2. Google Auth Platform (in the `sa preview` project) → Get started → app name `Squared Away
+(preview)`, your support email, External, your contact email → Create. Leave the publishing
+   status at **Testing**: this project stays in Testing forever and is never submitted for
+   verification.
+3. Audience → **Add users** → the test Gmail addresses you use on previews (never your own or a
+   customer's). These test users don't use places in the production project's 100-user cap: the
+   cap counts per project.
+4. Clients → **Create client** → Web application, name `sa preview` → Authorized redirect URIs:
+   `https://<branch address>/api/auth/callback/google` and
+   `https://<branch address>/api/gmail/callback` for each preview branch address you use (the
+   addresses are explained above), plus `http://localhost:3000/api/auth/callback/google` and
+   `http://localhost:3000/api/gmail/callback` for the engineers' computers → Create.
+5. Copy its Client ID and Client secret, then split `AUTH_GOOGLE_ID` and `AUTH_GOOGLE_SECRET`
    (all three steps of "How to split a setting", including its **Cancel** rule) with those as the
    Preview values → Redeploy the preview. Or ask the engineers to untick Preview on both entries
-   through Vercel's API first; then you only do step 3 of the split.
-4. While the app is still in Testing (step 0c not done yet), the test users on the Audience page
-   apply to this client too; nothing to add.
+   through Vercel's API first; then you only do step 5 of the split.
 
 Worked when: signing in and Connect Gmail (with a test Gmail address) work on the preview's branch
-address, and still work on production.
+address, Google's consent screen there says `Squared Away (preview)`, and both still work on
+production. After this, the production client is cleaned of every `vercel.app` and `localhost`
+address in step 0e ("Clean the live client"), once the old address forwards to your domain
+(step 5, item 9).
 
 Also: Vercel → sa → Settings → Environment Variables → keep **"Automatically expose System
 Environment Variables"** on. Preview addresses and the safety switch that keeps test mode off on
@@ -702,6 +751,9 @@ Do the steps in this order: Google first (authorized domain, then redirect addre
 
 1. Vercel → sa → Settings → **Domains** → Add → the domain → add the DNS records it shows at your
    registrar. Worked when: Vercel shows **Valid Configuration**.
+   When you add the domain in Vercel → Domains, leave it as a Production domain (no Git branch).
+   Production domains in that list are the ones Vercel serves without noindex; `sa-dac3.vercel.app`
+   is a team address that isn't in that list, which is most likely why it carries noindex today.
 2. Google Cloud → Google Auth Platform → **Branding** → Authorized domains → **Add domain** → the
    production domain → Save. Do [0a](#0-start-now-google-verification-takes-weeks) (Search
    Console) first: Google wants the domain verified there. Google refuses a redirect address on a
@@ -709,7 +761,8 @@ Do the steps in this order: Google first (authorized domain, then redirect addre
    wait for step 0b. Worked when: Branding saves and lists the domain under Authorized domains.
 3. Google Auth Platform → **Clients** → the web client → Authorized redirect URIs →
    **add** `https://<your domain>/api/auth/callback/google` and
-   `https://<your domain>/api/gmail/callback`. Keep the old `sa-dac3.vercel.app` ones for now →
+   `https://<your domain>/api/gmail/callback`. Keep the old `sa-dac3.vercel.app` ones for now
+   (they come off in step 0e, "Clean the live client", once item 9 forwards the old address) →
    Save. Worked when: the list shows both new addresses.
 4. Vercel → `APP_URL` (Production only) = `https://<your domain>`, no trailing slash → Redeploy.
    Worked when: `https://<your domain>/api/health` answers, and signing in and Connect Gmail work
@@ -727,12 +780,52 @@ Do the steps in this order: Google first (authorized domain, then redirect addre
    `https://<your domain>/api/gmail/push` and keep the same `?token=` ending. Worked when: a new
    email shows up in Inbox within a minute.
 8. Resend: the new domain (step 6).
-9. Once the new domain passes the smoke test (step 12): Vercel → sa → Settings → **Domains** →
-   `sa-dac3.vercel.app` → Edit → **Redirect to** your domain (permanent). After item 4 above, Connect Gmail
-   only works when started on the new domain (Google sends the owner back there, and the old
-   address's sign-in check can't be read on the new one), so the old address should forward
-   everyone instead of staying a second way in. Worked when: opening
-   `https://sa-dac3.vercel.app/queue` lands on `https://<your domain>/queue`.
+9. Nothing to click: once `APP_URL` is your domain and you redeploy (item 4), every `vercel.app`
+   address forwards its pages to your domain by itself (`src/config/host-redirects.ts`), including
+   `sa-flax-eight.vercel.app`, the project address Vercel serves without noindex, which would
+   otherwise stay a second copy of the site. API addresses (`/api/…`) stay where they are until
+   items 5 to 7 are done, so Stripe, Inngest and Gmail keep working during the move. After item 4,
+   Connect Gmail only works when started on the new domain (Google sends the owner back there), so
+   the forward also stops the old address being a second way in. Worked when:
+   `https://sa-dac3.vercel.app/queue` and `https://sa-flax-eight.vercel.app/growth` both land on
+   the same path on your domain.
+10. **Let search engines in.** Every page on `sa-dac3.vercel.app` is sent with
+    `x-robots-tag: noindex` today, so the domain move is the moment search starts. Do these in
+    order, right after item 9.
+    1. Where: a terminal in the project folder. Paste: `pnpm check:headers https://<your domain>`.
+       Worked when: it prints "All checks passed" (no noindex on `/`, `/growth`, `/privacy`,
+       `/terms`, and `/favicon.ico` answers 200). Previews are expected to fail this: Vercel adds
+       noindex to every preview on purpose.
+    2. Open `https://<your domain>/sitemap.xml` and `https://<your domain>/robots.txt`. Worked
+       when: every address in both starts with your domain, not `vercel.app` (they come from
+       `APP_URL`, so a missed redeploy shows up here).
+    3. View the page source of `https://<your domain>/` and `/growth` (right-click → View page
+       source) and find `rel="canonical"`. Worked when: both point at your domain.
+    4. Google Search Console → the domain property → **Sitemaps** → paste `sitemap.xml` → **Submit**.
+       Then **URL Inspection** → paste `https://<your domain>/` → **Request indexing**; do the same
+       for `https://<your domain>/growth`. Worked when: Sitemaps shows **Success** and both
+       inspections say the request was sent.
+    5. Bing Webmaster Tools (bing.com/webmasters) → **Import from Google Search Console** → pick the
+       domain. Worked when: Bing lists the site and the sitemap.
+    6. A week later: Search Console → **Pages**. Worked when: `/` and `/growth` show as indexed. If
+       one says "Excluded by 'noindex' tag", re-run item 1.
+
+### Requests from the public
+
+Someone who emailed one of your owners may write to the support address (or text the business
+number) asking what Squared Away holds about them, or to have it corrected or deleted. Once the
+legal release (step 13, "Still open") adds it, the privacy policy promises to tell the owner
+within 5 business days and help; until then these steps are still the right way to answer.
+
+1. Note the date you got the request and the sender's email address (nothing else).
+2. Call the owner the same week. Tell them who asked and what for. The decision is theirs: it's
+   their business mail.
+3. Never open the customer's emails yourself, in the app or in the database. /admin shows no
+   email content on purpose.
+4. If the owner wants the emails gone: today the app deletes per Gmail address (Disconnect) or
+   per account (Delete my account); a single sender can't be removed on its own yet. Tell the
+   owner that plainly, and ask the engineers if a per-sender delete is wanted.
+5. Reply to the person in writing with what was done, and keep the note of the date.
 
 ## 6. Morning emails from your own domain (Resend)
 
@@ -953,6 +1046,10 @@ mode and test mode are set up separately. In this order:
 - First: US carriers require registration before texts are delivered. In Twilio → Messaging →
   Regulatory compliance → **A2P 10DLC**: register the brand and a campaign (or verify a toll-free
   number). Approval **takes days**; until then texts may be blocked with no clear error.
+  Twilio asks for a screenshot of where people agree to the texts: use Settings → Text alerts
+  (`/settings/texts`) at the phone-number step. That screen already says how many texts, "Msg &
+  data rates may apply", HELP and STOP, and that tapping **Text me a code** agrees to the texts,
+  the Terms and the Privacy Policy.
 - Then: [SETUP.md](SETUP.md) §6c → Vercel → `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` (sensitive),
   `TWILIO_MESSAGING_SERVICE_SID` (Production) → Redeploy.
 - Worked when: Settings → Text alerts → **Text me a code** reaches your own mobile, and a later new
@@ -1064,8 +1161,8 @@ Waiting on you from that review (nothing here is built or changed until you say 
 - Verify the Resend domain ([step 6](#6-morning-emails-from-your-own-domain-resend)), so the
   pricing cards' "morning summary" is true for owners and waitlist confirmations reach people.
   The pricing cards weren't changed.
-- Turn on Web Analytics ([step 4](#4-settings-in-vercel-per-environment)) and submit the sitemap
-  in Google Search Console.
+- Turn on Web Analytics ([step 4](#4-settings-in-vercel-per-environment)) and let search engines
+  in ([step 5, item 10](#5-support-email-and-the-production-domain)).
 - A booking calendar link for the confirmation email, if you want one (it needs an account).
 - Your picks from the review's 100 ideas.
 
@@ -1230,6 +1327,53 @@ Recorded here so nobody asks again.
 
 Nothing below is switched on or changed until you say so.
 
+- **Wave 3 merge A (2026-10-19): prompt versions, legal text, Google review.** Built the safe way;
+  say if you want it different:
+  - **One legal release.** Every wording change for the terms and the privacy policy waits in
+    `docs/notes/legal-w3-legal.md` (the three [To confirm] items, data requests from your owners'
+    customers, how changes are announced, Google's Limited Use wording, six small lines, the
+    breach sentence, text alerts, and two lines from the new prompts and trades). Nothing is in
+    the documents yet. Okay each sentence (and the lawyer, where you want one); then the engineers
+    apply all of them at once, so owners agree again only once (`docs/LEGAL-RELEASE.md`).
+  - **How changes are announced:** the documents say owners hear about big changes before they
+    take effect; the app shows "What changed" and asks again the day a new version goes live.
+    Recommended: reword the documents to match the app. The other choice is a notice in the app
+    before the date (not built).
+  - **A fake-looking bill** ("pay now" from a supplier you may not know) shows at high priority
+    with "This bill may be fake. Check with the supplier at a number you already have." Fine, or
+    normal priority?
+  - **"The check is in the mail"** holds payment reminders for 7 days. Keep 7?
+  - **Someone booking for someone else** (a tenant, a realtor, a neighbor) goes to Needs you with
+    "Writes for someone else. Check who pays before booking." for quote, question and scheduling
+    emails only. Fine?
+  - **"Is this a bot?"** The draft still leaves that question to you and is flagged (your earlier
+    rule). The other choice: the draft answers "I use an assistant to help draft my emails, and I
+    read and send every reply myself." Which?
+  - **Massachusetts carpenters** get the HIC / CSL words in drafts, like remodelers. Keep?
+  - **When someone else signs your sent mail** (an office manager), drafts have no sign-off line
+    and your signature carries your name. The other choice: "Thanks, <your first name>". Which?
+  - **Prompt checks in CI.** Today the "Prompt evals" check runs only when someone starts it.
+    Proposed: also run it (sorting only, cheaper) on every pull request that changes a prompt and
+    post the scores there, and make the build fail when the prompts change without a new saved
+    baseline. Not switched on: it changes when CI fails. First step either way: add the
+    `ANTHROPIC_API_KEY` repository secret (GitHub → Settings → Secrets and variables → Actions),
+    run "Prompt evals" once with drafts on, and commit the baseline it records.
+  - **The legal-text lock in CI.** The test that stops other branches editing the legal documents
+    only bites on a computer today: GitHub's checkout has no history to compare against.
+    Proposed: give the unit-test job the full history (`fetch-depth: 0`). Okay?
+  - **Google's screen, one switch.** `GOOGLE_APP_STATE` (testing / unverified / verified; today
+    testing, which is right) decides the Connect Gmail screen's warning line and the reason in the
+    "lost access to your Gmail" email. Okay to set it to `unverified` when the app is published
+    (step 0c) and `verified` when Google approves?
+  - **A second Google project, "sa preview"** (step 2): the live client must lose its `vercel.app`
+    and `localhost` addresses before you submit (step 0e), so previews and local testing move to a
+    project that is never submitted. About 15 minutes of clicks. Okay?
+  - **The CASA pre-scan** (step 0g): it runs in GitHub Actions on a copy of the app with a fake
+    Google and a fake AI, never on the live site, and costs nothing. Okay for the engineers to
+    run it once and read the two reports before any lab is paid?
+  - **Search after the domain move** (step 5, item 10): a sitemap submit, two "Request indexing"
+    taps and a Bing import. Okay to keep in the checklist?
+
 - **Wave 2 merge D (2026-10-18): data and speed, phone look, security, phone alerts.** Each was
   built the safe way; say if you want it different:
   - **Daily AI limit:** 500 calls per connected inbox, at most 3,000 a day for one shop, and
@@ -1306,6 +1450,8 @@ Nothing below is switched on or changed until you say so.
     that, the state courts in Middlesex County or the federal court for Massachusetts. Either side
     may use small claims court. No arbitration (with the usual group, AAA, a claim under
     $75,000 costs $1,450 to file plus $1,150 if it reaches a hearing, before the arbitrator's pay).
+  - The wording for each option, ready to paste, is in `docs/notes/legal-w3-legal.md` (Check 27
+    P1) until the legal release applies it.
 - **A lawyer's review** of the terms and privacy policy before launch: roughly $750–$2,500 (an
   estimate from published averages). A cheap first step: the Boston Bar Association's lawyer
   referral service gives a first 30-minute talk for $25 at most. Questions to bring: the three
