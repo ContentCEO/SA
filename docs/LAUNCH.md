@@ -1475,6 +1475,9 @@ Nothing below is switched on or changed until you say so.
   quiet inbox adds about 17,300, so one shop already needs the paid plan.
 - **Vercel Pro** ([check it this week](#vercel-hosting)): Hobby is for non-commercial use only;
   move to Pro (about $20 a month) before the first paying customer.
+- **Who is your backup person?** Someone who can call owners back if you can't be reached for a
+  week. Fill in their name and phone in [AWAY.md](AWAY.md) ("For the backup person"), which also
+  lists what carries on without you and what to do before you leave.
 - **Terms: the three [To confirm] items.** The wording in `docs/terms.md` stays as it is until
   you pick. Recommended (option A for each):
   - Refunds: monthly plans can be cancelled any time and stay on to the end of the paid month, with
