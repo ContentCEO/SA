@@ -206,3 +206,43 @@ Run on 2026-10-19 against `https://sa-dac3.vercel.app`: 8 FAIL lines, exactly to
   sentence, a contact email, no `[To confirm]`, your own domain, no noindex). Every line must say
   PASS. Worked when: the last line says "All checks passed".
 ```
+
+## Step 8: Check 28 P7 (CLAUDE.md line)
+
+**CLAUDE.md** (admin notes): `/admin/video` (Check 28 P7) renders the demo video script from
+`docs/google-verification.md` (`src/server/video-script.ts`, pure parser; 17 steps pinned by
+`tests/unit/video-script.test.ts`) as 44px tick boxes kept in localStorage only; three fixed
+reminders (desktop tab, demo Gmail only, YouTube Unlisted). No loading.tsx (must 404); listed in
+the a11y, tap-target and noindex admin page lists.
+
+## Step 9: Check 33 P5 (LAUNCH.md text only)
+
+**LAUNCH.md step 5.** Add a new item 10 at the end of the "Production domain" list:
+
+```
+10. **Let search engines in.** Every page on `sa-dac3.vercel.app` is sent with
+    `x-robots-tag: noindex` today, so the domain move is the moment search starts. Do these in
+    order, right after item 9.
+    1. Where: a terminal in the project folder. Paste: `pnpm check:headers https://<your domain>`.
+       Worked when: it prints "All checks passed" (no noindex on `/`, `/growth`, `/privacy`,
+       `/terms`, and `/favicon.ico` answers 200). Previews are expected to fail this: Vercel adds
+       noindex to every preview on purpose.
+    2. Open `https://<your domain>/sitemap.xml` and `https://<your domain>/robots.txt`. Worked
+       when: every address in both starts with your domain, not `vercel.app` (they come from
+       `APP_URL`, so a missed redeploy shows up here).
+    3. View the page source of `https://<your domain>/` and `/growth` (right-click → View page
+       source) and find `rel="canonical"`. Worked when: both point at your domain.
+    4. Google Search Console → the domain property → **Sitemaps** → paste `sitemap.xml` → **Submit**.
+       Then **URL Inspection** → paste `https://<your domain>/` → **Request indexing**; do the same
+       for `https://<your domain>/growth`. Worked when: Sitemaps shows **Success** and both
+       inspections say the request was sent.
+    5. Bing Webmaster Tools (bing.com/webmasters) → **Import from Google Search Console** → pick the
+       domain. Worked when: Bing lists the site and the sitemap.
+    6. A week later: Search Console → **Pages**. Worked when: `/` and `/growth` show as indexed. If
+       one says "Excluded by 'noindex' tag", re-run item 1.
+```
+
+**LAUNCH.md step 13 ("Decided on 2026-10-16" list, the bullet "Turn on Web Analytics … and submit
+the sitemap in Google Search Console").** Replace "and submit the sitemap in Google Search Console"
+with "and let search engines in ([step 5, item 10](#5-support-email-and-the-production-domain))",
+so there is one place for it.
