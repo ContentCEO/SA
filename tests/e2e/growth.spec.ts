@@ -1336,3 +1336,11 @@ test("/growth: the new FAQs open to their answers (Check 3 P6, Check 34 P4)", as
   await expect(faq.getByText(/no sales team and no hand-off/)).toBeVisible();
   expect(await noOverflow(page)).toBe(true);
 });
+
+test("/growth: no empty proof section while there's no real proof (Check 2 P6)", async ({
+  page,
+}) => {
+  await page.goto("/growth");
+  await expect(page.getByRole("region", { name: "What it looks like" })).toHaveCount(0);
+  await expect(page.getByText("what it looks like,")).toHaveCount(0);
+});

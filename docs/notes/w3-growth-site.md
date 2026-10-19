@@ -95,3 +95,17 @@ Built with draft answers; revert this one commit if Davi hasn't okayed them.
   them is separate, and you'll know it before any work starts."
 - **Not added** (commercial terms, Davi's call): "Month to month, stop any time." and "Your
   Google listing, ad accounts and website stay in your name."
+
+## Step 8 (Check 2 P6): room for real proof
+
+`siteConfig.operatorPhoto` (null) feeds the homepage About section and /growth's "who does the
+work" (null = exactly as before). `src/config/growth-proof.ts`: `GROWTH_PROOF = []`,
+`liveProof` (valid dates, checked within 12 months). `growth-proof.tsx` renders "what it looks
+like, for real." only for live items (https links only). The "testimonial" ban stays.
+/growth is static, so a stale item disappears at the next deploy, not on the day.
+
+**docs/LAUNCH.md, "Still needed from you":** add
+"- **Growth proof:** a real photo of you (`siteConfig.operatorPhoto`, file in `public/brand/`),
+and any client proof for /growth (`src/config/growth-proof.ts`). Each proof item needs the
+client's written okay (the date goes in `permissionOn`) and a yearly check that it's still true
+(`checkedOn`); nothing is shown without both."

@@ -14,6 +14,8 @@ const SOURCES = [
   "src/components/marketing/growth/big-words.tsx",
   "src/components/marketing/growth/big-words-rules.ts",
   "src/components/marketing/growth/growth-call-form.tsx",
+  "src/components/marketing/growth/growth-proof.tsx",
+  "src/config/growth-proof.ts",
   "src/config/growth.ts",
   "src/app/growth/page.tsx",
   "src/app/growth-actions.ts",

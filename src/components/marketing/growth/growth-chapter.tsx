@@ -1,11 +1,14 @@
 import { Phone } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 import { Headline } from "@/components/brand/headline";
+import { GROWTH_PROOF } from "@/config/growth-proof";
 import { siteConfig } from "@/config/site";
 import { phoneHref } from "@/lib/phone-href";
 import { cn } from "@/lib/utils";
 import { GrowthCallForm } from "./growth-call-form";
 import { growthCopy as c } from "./growth-copy";
+import { GrowthProof } from "./growth-proof";
 
 function Section({
   id,
@@ -153,10 +156,22 @@ export function GrowthChapter({
 
       {standalone ? (
         <Section label={c.who.region}>
+          {/* Check 2 P6: the operator's photo from siteConfig; null = text only, as before. */}
+          {siteConfig.operatorPhoto ? (
+            <Image
+              src={siteConfig.operatorPhoto.src}
+              alt={siteConfig.operatorPhoto.alt}
+              width={448}
+              height={448}
+              className="aspect-square w-full max-w-48 rounded-2xl object-cover"
+            />
+          ) : null}
           <Headline as="h2" serif={c.who.serif} heavy={c.who.heavy} />
           <p className="max-w-2xl text-xl leading-relaxed">{c.who.body}</p>
         </Section>
       ) : null}
+
+      <GrowthProof items={GROWTH_PROOF} now={new Date()} />
 
       <Section label={c.faq.region}>
         <Headline as="h2" serif={c.faq.serif} heavy={c.faq.heavy} />

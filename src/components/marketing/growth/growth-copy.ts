@@ -114,6 +114,15 @@ export const growthCopy = {
     heavy: `${davi}, personally.`,
     body: `For now, every Growth job is done by ${operator}, who runs ${company}, a remodeling company in Massachusetts, and builds the Squared Away app too. You talk to the person doing the work.`,
   },
+  /** Check 2 P6: shown only when src/config/growth-proof.ts has a live, permitted item. */
+  proof: {
+    region: "What it looks like",
+    serif: "what it looks like,",
+    heavy: "for real.",
+    byline: (shop: string, town: string) => `${shop}, ${town}`,
+    imageAlt: (shop: string, when: string) => `${shop}: ${when}`,
+    link: (shop: string) => `See ${shop}'s work`,
+  },
   faq: {
     region: "Growth questions",
     serif: "before you call,",
