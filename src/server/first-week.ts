@@ -16,7 +16,7 @@ import {
 } from "@/db/schema";
 import { appUrl } from "@/lib/app-url";
 import { brandEmail } from "@/lib/email-layout";
-import { sendEmail, type EmailSender } from "@/lib/email";
+import { sendEmail, type EmailSender, emailErrorFields } from "@/lib/email";
 import { pushConfigured, sendPush, type PushSender } from "@/lib/web-push";
 import { STOP_TRIAL_EMAILS_LABEL } from "./trial-email-rules";
 import { stopHeaders, stopLinkFor } from "./trial-email-links";
@@ -465,7 +465,7 @@ export async function sendFirstDraftsReady(
       // Tried again on the next run; the error's name only.
       console.error("first_drafts_email_failed", {
         workspaceId: r.workspace.id,
-        error: err instanceof Error ? err.name : "unknown",
+        ...emailErrorFields(err),
       });
       continue;
     }

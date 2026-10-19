@@ -273,7 +273,8 @@ describe("an app account and a Growth client for the same person never pay twice
       }),
     );
     await requestGrowthCall(growthRequest(email));
-    expect(await inviteFromWaitlist(email)).toBe("invited");
+    // Check 47 P3: yahoo.com isn't Gmail, so Davi's invite is the card's "Invite anyway".
+    expect(await inviteFromWaitlist(email, new Date(), { confirmed: true })).toBe("invited");
     const { workspace } = await ensureUserAndWorkspace({ email });
     expect(workspace.referredByWorkspaceId).not.toBeNull();
     return workspace.id;

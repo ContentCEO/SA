@@ -6,6 +6,7 @@ import { planEnum, tradeEnum } from "@/db/schema";
 import { inviteOwner, markTestUserAdded, removeInvite } from "@/server/admin";
 import { sendInviteEmail } from "@/server/invite-email";
 import { inviteFromWaitlist } from "@/server/waitlist";
+import { catchUpWaitlistConfirmations } from "@/server/waitlist-emails";
 import { clearStripeOrphans, connectStripe } from "@/server/billing";
 import { requireAdmin } from "@/server/session";
 import { stripeErrorReason } from "@/server/stripe-error-rules";
@@ -13,6 +14,8 @@ import { checkTestPayments, resetTestPayments, StripeNotLiveError } from "@/serv
 import { isAdminMove } from "@/server/lifecycle";
 import { isHandKey } from "@/server/launch-ready";
 import { tickLaunchItem } from "@/server/launch-ticks";
+import { sendAdminTestEmail } from "@/server/email-health";
+import { hitLimit } from "@/server/rate-limit";
 import {
   applyAdminMove,
   MoveNotAllowedError,
@@ -33,6 +36,29 @@ export async function tickLaunchAction(formData: FormData) {
   await tickLaunchItem(key);
   console.info("launch_ticked", { key });
   redirect("/admin?done=launch_ticked#launch");
+}
+
+/**
+ * Check 18 P2: "Send me a test email" on the Email box. Admin only, five an hour; the email goes
+ * to ADMIN_EMAIL from env. Only a fixed result code and a three-digit status travel in the URL.
+ */
+export async function sendTestEmailAction() {
+  await requireAdmin();
+  const limit = await hitLimit("emailTest", "admin");
+  if (!limit.allowed) redirect("/admin?error=email_test_limit#email");
+  let r: Awaited<ReturnType<typeof sendAdminTestEmail>>;
+  try {
+    r = await sendAdminTestEmail();
+  } catch (err) {
+    console.error("admin_test_email_failed", {
+      error: err instanceof Error ? err.name : "unknown",
+    });
+    redirect("/admin?error=unknown#email");
+  }
+  if (r.result === "refused") redirect(`/admin?error=email_test_refused&status=${r.status}#email`);
+  redirect(
+    `/admin?done=${r.result === "sent" ? "email_test_sent" : "email_test_not_set_up"}#email`,
+  );
 }
 
 /** Davi's manual status moves. Re-checks admin on every call, not just the page. */
@@ -71,6 +97,38 @@ export async function inviteAction(formData: FormData) {
   // Round 2 (FW A1): the "you're in" email. A failed email never fails the invite.
   const emailed = await sendInviteEmail(parsed.data.email);
   redirect(`/admin?done=${emailed === "sent" ? "invited_emailed" : "invited"}#invite`);
+}
+
+/**
+ * Check 18 P4: "Email the sign-in link again" on an invite nobody has signed in with. Once a day
+ * per address (the sender's own marker); refused once they've signed in.
+ */
+export async function emailInviteAgainAction(formData: FormData) {
+  await requireAdmin();
+  const email = z.string().trim().toLowerCase().email().safeParse(formData.get("email"));
+  if (!email.success) redirect("/admin?error=unknown#invite");
+  if (!(await hitLimit("inviteAgain", "admin")).allowed)
+    redirect("/admin?error=invite_again_limit#invite");
+  const r = await sendInviteEmail(email.data, { again: true });
+  if (r === "skipped") redirect("/admin?error=invite_used#invite");
+  if (r === "already_sent") redirect("/admin?done=invite_emailed_today#invite");
+  redirect(`/admin?done=${r === "sent" ? "invited_emailed" : "invited"}#invite`);
+}
+
+/**
+ * Check 18 P4: "Send the list email to people who never got it": the next batch of waitlist
+ * confirmations, oldest first. Only counts travel in the URL.
+ */
+export async function catchUpWaitlistEmailsAction() {
+  await requireAdmin();
+  if (!(await hitLimit("waitlistCatchup", "admin")).allowed) {
+    redirect("/admin?error=waitlist_catchup_limit#waitlist");
+  }
+  const r = await catchUpWaitlistConfirmations();
+  if (r.notConfigured) redirect("/admin?error=email_not_set_up#waitlist");
+  redirect(
+    `/admin?done=waitlist_catchup&sent=${r.sent}&failed=${r.failed}&left=${r.left}#waitlist`,
+  );
 }
 
 /**
@@ -116,8 +174,12 @@ export async function inviteFromWaitlistAction(formData: FormData) {
   await requireAdmin();
   const email = z.string().email().safeParse(formData.get("email"));
   if (!email.success) redirect("/admin?error=unknown");
-  const r = await inviteFromWaitlist(email.data);
+  // Check 47 P3: a non-Google address needs the card's "Invite anyway" (the confirm field).
+  const r = await inviteFromWaitlist(email.data, new Date(), {
+    confirmed: formData.get("confirm") === "1",
+  });
   if (r === "growth_only") redirect("/admin?error=growth_only#waitlist");
+  if (r === "needs_confirm") redirect("/admin?error=invite_needs_confirm#waitlist");
   if (r !== "invited") redirect("/admin?error=unknown");
   // Round 2 (FW A1): once per invite (sendInviteEmail checks), never failing the invite.
   const emailed = await sendInviteEmail(email.data);

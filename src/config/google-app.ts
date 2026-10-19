@@ -1,7 +1,9 @@
+import { siteConfig } from "@/config/site";
+
 /**
  * Check 28 P3 (and Check 1 P7): where Squared Away's Google app is in Google's process, so the
  * screens say what Google's own screen will show. One server env, `GOOGLE_APP_STATE`
- * (Production only; docs/SETUP.md §4, docs/LAUNCH.md 0c):
+ * (Production only; docs/SETUP.md §4, docs/LAUNCH.md 0c). Never add a second env for this fact.
  *
  * - `testing` (default, today): the app's publishing status is Testing. A test user sees Google's
  *   "hasn't verified this app" screen with a **Continue** button, and Google ends its Gmail access
@@ -12,7 +14,11 @@
  * - `verified`: Google approved the app. No warning at all.
  *
  * Unknown or missing values fall back to `testing`. Pure (no `server-only`, no database) so the
- * tests and the pure email builders can use it.
+ * tests and the pure email builders can use it. Davi sets it to "unverified" when publishing and
+ * "verified" when Google approves, then redeploys.
+ *
+ * Integrator (wave 3 merge A): the App emails and Google groups each wrote this file; this is the
+ * one copy, with both groups' names (`googleAppStateFrom` is `parseGoogleAppState`).
  */
 
 export const GOOGLE_APP_STATES = ["testing", "unverified", "verified"] as const;
@@ -25,6 +31,9 @@ export function parseGoogleAppState(value: string | undefined): GoogleAppState {
     : "testing";
 }
 
+/** The App emails group's name for `parseGoogleAppState`. */
+export const googleAppStateFrom = parseGoogleAppState;
+
 /** The state from the environment (read at request time, so a redeploy after a change is enough). */
 export function googleAppState(
   env: Record<string, string | undefined> = process.env,
@@ -36,7 +45,10 @@ export function googleAppState(
  * The connect screen's line about Google's warning, in plain words with no dashes, or null when
  * there is nothing to warn about (verified).
  */
-export function googleWarningLine(state: GoogleAppState, brandName: string): string | null {
+export function googleWarningLine(
+  state: GoogleAppState,
+  brandName: string = siteConfig.name,
+): string | null {
   switch (state) {
     case "testing":
       return `Google will show a screen saying it hasn't verified ${brandName} yet. That's expected while we're in early access. Tap Continue.`;
@@ -48,12 +60,14 @@ export function googleWarningLine(state: GoogleAppState, brandName: string): str
 }
 
 /**
- * Check 1 P7: the "Gmail access lost" email's one-line reason. While the app is in Testing the
- * usual cause is Google's 7-day limit, not anything the owner did; afterwards it is Google
- * ending access on its own (a password change, a security review).
+ * Check 1 P7: why Google access stopped, for the access-lost email and Settings → Your Gmail.
+ * In Testing, Google ends access every 7 days, so "a password change" would be the wrong reason
+ * for every owner in their first week.
  */
+export const ACCESS_LOST_REASON_TESTING = `While ${siteConfig.name} waits for Google's approval, Google ends access every 7 days. Reconnecting takes a minute and nothing is lost.`;
+export const ACCESS_LOST_REASON_DEFAULT =
+  "Google sometimes ends access on its own, for example after a password change.";
+
 export function accessLostReason(state: GoogleAppState): string {
-  return state === "testing"
-    ? "While we're in early access, Google ends its access on its own after 7 days. Reconnecting fixes it for another 7."
-    : "Google sometimes ends access on its own, for example after a password change.";
+  return state === "testing" ? ACCESS_LOST_REASON_TESTING : ACCESS_LOST_REASON_DEFAULT;
 }

@@ -133,6 +133,12 @@ async function referrer(email = "rosa@gmail.com", over: Partial<Workspace> = {})
   return load(workspace.id);
 }
 
+/**
+ * Check 47 P3: these owners are on webmail that isn't Gmail (yahoo.com…), so Davi's invite is
+ * the card's "Invite anyway" (the confirm step); the referral rules are what's tested here.
+ */
+const CONFIRMED = { confirmed: true } as const;
+
 /** The waitlist form's required fields (PR #9). */
 const appFields = { trade: "carpentry", teamSize: "Just me" } as const;
 
@@ -141,7 +147,7 @@ async function referredViaLink(code: string, email = "mike@yahoo.com") {
   await joinWaitlist(
     waitlistInput.parse({ ...appFields, name: "Mike", email, referralCode: code }),
   );
-  expect(await inviteFromWaitlist(email)).toBe("invited");
+  expect(await inviteFromWaitlist(email, new Date(), CONFIRMED)).toBe("invited");
   const { workspace, user } = await ensureUserAndWorkspace({ email });
   await set(workspace.id, {
     status: "evaluating",
@@ -411,7 +417,7 @@ describe("GATE: switched off, or no reward configured", () => {
     expect(joined?.referralCode).toBeNull();
 
     for (const email of ["old@yahoo.com", "mike@yahoo.com"]) {
-      await inviteFromWaitlist(email);
+      await inviteFromWaitlist(email, new Date(), CONFIRMED);
       const [inv] = await database.select().from(invites).where(eq(invites.email, email));
       expect(inv?.referredByWorkspaceId).toBeNull();
       const { workspace } = await ensureUserAndWorkspace({ email });
@@ -470,7 +476,7 @@ describe("GATE: switched off, or no reward configured", () => {
         referralCode: code,
       }),
     );
-    expect(await inviteFromWaitlist("mike@yahoo.com")).toBe("invited");
+    expect(await inviteFromWaitlist("mike@yahoo.com", new Date(), CONFIRMED)).toBe("invited");
     const invite = async () =>
       (await database.select().from(invites).where(eq(invites.email, "mike@yahoo.com")))[0];
     expect((await invite())?.referredByWorkspaceId).toBe(ref.id);
@@ -589,7 +595,7 @@ describe("referral free month (switched on)", () => {
     );
     const [b] = await database.select().from(waitlist).where(eq(waitlist.email, "b@yahoo.com"));
     expect(b?.referralCode).toBeNull();
-    await inviteFromWaitlist("b@yahoo.com");
+    await inviteFromWaitlist("b@yahoo.com", new Date(), CONFIRMED);
     for (const email of ["a@yahoo.com", "b@yahoo.com"]) {
       const { workspace } = await ensureUserAndWorkspace({ email });
       expect(workspace.referredByWorkspaceId).toBeNull();

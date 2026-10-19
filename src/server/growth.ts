@@ -210,6 +210,7 @@ export async function notifyAdmin(
       text,
       html,
       idempotencyKey: notice.key,
+      replyTo: null,
     }),
     deps.timeoutMs ?? GROWTH_NOTIFY_TIMEOUT_MS,
   );

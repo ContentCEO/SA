@@ -4,7 +4,7 @@ import type Stripe from "stripe";
 import { db } from "@/db";
 import { activityLog, stripeMoneyEvents, workspaces } from "@/db/schema";
 import { brandEmail } from "@/lib/email-layout";
-import { sendEmail, type EmailSender } from "@/lib/email";
+import { emailErrorFields, sendEmail, type EmailSender } from "@/lib/email";
 import { stripeClient } from "./billing";
 import { setupLookupKey } from "./billing-rules";
 import { disputeNoticeCopy, type MoneyEventRow } from "./stripe-money-rules";
@@ -166,9 +166,10 @@ async function notifyDispute(
       text,
       html,
       idempotencyKey: `dispute-${disputeId}`,
+      replyTo: null,
     });
   } catch (err) {
-    console.error("dispute_notice_failed", { error: err instanceof Error ? err.name : "unknown" });
+    console.error("dispute_notice_failed", emailErrorFields(err));
   }
 }
 

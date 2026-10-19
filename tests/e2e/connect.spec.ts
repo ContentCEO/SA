@@ -197,7 +197,8 @@ test("disconnect asks once, then removes the mailbox", async ({ page, context })
   await signInAs(context, owner);
 
   await page.goto("/settings/gmail");
-  await expect(page.getByText(owner.email)).toBeVisible();
+  // Exact: Check 42 P6's "If Google access stops, we email …" line names the sign-in too.
+  await expect(page.getByText(owner.email, { exact: true })).toBeVisible();
   await noHorizontalScroll(page);
 
   await page.getByRole("button", { name: "Disconnect Gmail" }).click();

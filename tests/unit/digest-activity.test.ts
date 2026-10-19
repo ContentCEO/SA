@@ -3,7 +3,15 @@ import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import { draftTag } from "@/config/categories";
 import type { Database } from "@/db";
-import { activityLog, businessProfiles, drafts, messages, threads, workspaces } from "@/db/schema";
+import {
+  activityLog,
+  businessProfiles,
+  drafts,
+  messages,
+  rules,
+  threads,
+  workspaces,
+} from "@/db/schema";
 import type { OutgoingEmail } from "@/lib/email";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import {
@@ -161,6 +169,143 @@ describe("digest content", () => {
     expect(d.text.indexOf("No emails need a decision from you today.")).toBeLessThan(
       d.text.indexOf("Last week:"),
     );
+  });
+});
+
+describe("the morning email stays true for autopilot and trial shops (Check 18 P6 / Check 20 P12)", () => {
+  const links = {
+    queueUrl: "https://app/queue",
+    quotesUrl: "https://app/quotes",
+    settingsUrl: "https://app/settings",
+    threadUrl: (id: string) => queueThreadUrl("https://app/queue", id),
+    billingUrl: "https://app/billing",
+  };
+  const at = { now: NOW, timeZone: "America/New_York" };
+  const base = {
+    repliesReady: 0,
+    nudgesReady: 0,
+    needsYou: [],
+    sentYesterday: 4,
+    sortedYesterday: 12,
+    leadsAtRisk: 0,
+    leadsAtRiskOffQueue: 0,
+  };
+
+  it("the autopilot bracket shows only when the number is above zero", () => {
+    expect(buildDigest({ ...base, sentByAutopilot: 1 }, links, at).text).toContain(
+      "In the last day: 12 conversations sorted, 4 replies and follow-ups sent (1 by autopilot).",
+    );
+    for (const c of [base, { ...base, sentByAutopilot: 0 }]) {
+      const d = buildDigest(c, links, at);
+      expect(d.text).toContain("4 replies and follow-ups sent.");
+      expect(d.text).not.toContain("autopilot");
+      expect(d.html).not.toContain("autopilot");
+    }
+  });
+
+  it("the footer changes only when a category is on autopilot", () => {
+    const plain = buildDigest(base, links, at);
+    expect(plain.text).toContain(
+      "Nothing is sent without your okay. Change or turn off this email",
+    );
+    expect(plain.text).not.toContain("except the kinds");
+    // Autopilot sent some yesterday but is off now: the count shows, the footer stays plain.
+    const offNow = buildDigest({ ...base, sentByAutopilot: 2, autopilotOn: false }, links, at);
+    expect(offNow.text).toContain("(2 by autopilot)");
+    expect(offNow.text).not.toContain("except the kinds");
+    const on = buildDigest({ ...base, autopilotOn: true }, links, at);
+    expect(on.text).toContain(
+      "Nothing is sent without your okay, except the kinds of email you put on autopilot. Change or turn off this email: https://app/settings",
+    );
+    expect(on.html).toContain(
+      "Nothing is sent without your okay, except the kinds of email you put on autopilot.</p>",
+    );
+    expect(on.html).toContain('href="https://app/settings"');
+    expect(on.html).not.toContain("Nothing is sent without your okay.");
+  });
+
+  it("the trial line shows only for an account in its three days, with the billing link", () => {
+    const trial = buildDigest(base, links, { ...at, trial: true });
+    expect(trial.text).toContain(
+      "You're in your three days: replies can't go to customers yet. Check the drafts and choose a plan to switch sending on. https://app/billing",
+    );
+    // Under the headline, before "Needs you".
+    expect(trial.html.indexOf("in your three days")).toBeLessThan(trial.html.indexOf("Needs you"));
+    expect(trial.html).toContain('href="https://app/billing"');
+    const paid = buildDigest(base, links, { ...at, trial: false });
+    expect(paid.text).not.toContain("three days");
+    expect(paid.html).not.toContain("three days");
+    expect(buildDigest(base, links, at).text).not.toContain("three days");
+  });
+});
+
+describe("each waiting quote once, and a greeting that matches the hour (Check 18 P8)", () => {
+  const links = {
+    queueUrl: "https://app/queue",
+    quotesUrl: "https://app/quotes",
+    settingsUrl: "https://app/settings",
+    threadUrl: (id: string) => queueThreadUrl("https://app/queue", id),
+  };
+  const quiet = {
+    repliesReady: 0,
+    nudgesReady: 0,
+    needsYou: [],
+    sentYesterday: 0,
+    sortedYesterday: 0,
+    leadsAtRisk: 0,
+    leadsAtRiskOffQueue: 0,
+  };
+  const at = { now: NOW, timeZone: "America/New_York" };
+
+  it("one at-risk lead off the queue gives exactly one line about it", () => {
+    const d = buildDigest({ ...quiet, leadsAtRisk: 1, leadsAtRiskOffQueue: 1 }, links, at);
+    const mentions = d.text.split("\n").filter((l) => /quote request/.test(l));
+    expect(mentions).toEqual([
+      "• 1 quote request waiting with no reply drafted — see your quotes: https://app/quotes",
+    ]);
+    expect(d.html.match(/quote request/g)).toHaveLength(1);
+  });
+
+  it("two at risk with one off the queue: the 4-hour line counts one, plus the off-queue line", () => {
+    const d = buildDigest({ ...quiet, leadsAtRisk: 2, leadsAtRiskOffQueue: 1 }, links, at);
+    expect(d.text).toContain("1 quote request has waited more than 4 hours.");
+    expect(d.text).toContain("• 1 quote request waiting with no reply drafted — see your quotes");
+    // Both on the queue: the line counts both, and there is no off-queue line.
+    const both = buildDigest({ ...quiet, leadsAtRisk: 2 }, links, at);
+    expect(both.text).toContain("2 quote requests have waited more than 4 hours.");
+    expect(both.text).not.toContain("no reply drafted");
+  });
+
+  it("greeting and subject at 7am, 1pm and 7pm local", () => {
+    const tz = "America/New_York";
+    const morning = buildDigest(quiet, links, {
+      now: new Date("2026-10-06T11:00:00Z"),
+      timeZone: tz,
+    });
+    expect(morning.text.startsWith("Good morning.")).toBe(true);
+    expect(morning.html).toContain(">good morning,<");
+    expect(morning.subject).toBe("Nothing waiting on you this morning");
+    const afternoon = buildDigest(quiet, links, {
+      now: new Date("2026-10-06T17:00:00Z"),
+      timeZone: tz,
+    });
+    expect(afternoon.text.startsWith("Good afternoon.")).toBe(true);
+    expect(afternoon.html).toContain(">good afternoon,<");
+    expect(afternoon.subject).toBe("Nothing waiting on you today");
+    const evening = buildDigest(quiet, links, {
+      now: new Date("2026-10-06T23:00:00Z"),
+      timeZone: tz,
+    });
+    expect(evening.text.startsWith("Good evening.")).toBe(true);
+    expect(evening.html).toContain(">good evening,<");
+    expect(evening.subject).toBe("Nothing waiting on you today");
+    // With something waiting the subject counts it, whatever the hour.
+    expect(
+      buildDigest({ ...quiet, repliesReady: 2 }, links, {
+        now: new Date("2026-10-06T17:00:00Z"),
+        timeZone: tz,
+      }).subject,
+    ).toBe("2 things waiting on you");
   });
 });
 
@@ -340,6 +485,63 @@ describe("in the database", () => {
     );
     await sendDigests(NOW, { send: sender });
     expect(sent).toHaveLength(0);
+  });
+
+  it("counts autopilot's sends in the bracket and reads the autopilot switch (Check 20 P12)", async () => {
+    const hourAgo = new Date(NOW.getTime() - 3600_000);
+    await database.insert(activityLog).values([
+      // sendDraft(…, by: "autopilot") writes reply_sent with autopilot: true.
+      {
+        workspaceId,
+        actor: "squared_away",
+        action: "reply_sent",
+        detail: { autopilot: true },
+        createdAt: hourAgo,
+      },
+      {
+        workspaceId,
+        actor: "owner",
+        action: "reply_sent",
+        detail: { kind: "reply" },
+        createdAt: hourAgo,
+      },
+      // Two days old: outside the 24 hours.
+      {
+        workspaceId,
+        actor: "squared_away",
+        action: "reply_sent",
+        detail: { autopilot: true },
+        createdAt: new Date(NOW.getTime() - 48 * 3600_000),
+      },
+    ]);
+    // Connecting Gmail started the three days; an active account gets no trial line.
+    await database
+      .update(workspaces)
+      .set({ status: "active" })
+      .where(eq(workspaces.id, workspaceId));
+    let c = await digestCounts(workspaceId, NOW);
+    expect(c.sentByAutopilot).toBe(1);
+    expect(c.autopilotOn).toBe(false);
+    await database.insert(rules).values({ workspaceId, category: "scheduling", mode: "autopilot" });
+    c = await digestCounts(workspaceId, NOW);
+    expect(c.autopilotOn).toBe(true);
+    await sendDigests(NOW, { send: sender });
+    expect(sent[0]!.text).toContain("except the kinds of email you put on autopilot");
+    // Active, so no trial line.
+    expect(sent[0]!.text).not.toContain("three days");
+  });
+
+  it("a trial account's email says sending to customers is off (Check 18 P6)", async () => {
+    await database
+      .update(workspaces)
+      .set({ status: "evaluating", evaluationEndsAt: new Date(NOW.getTime() + 86_400_000) })
+      .where(eq(workspaces.id, workspaceId));
+    await sendDigests(NOW, { send: sender });
+    expect(sent[0]!.text).toContain(
+      "You're in your three days: replies can't go to customers yet.",
+    );
+    expect(sent[0]!.text).toContain(appUrl("/billing"));
+    expect(`${sent[0]!.subject}${sent[0]!.text}${sent[0]!.html}`).not.toMatch(/SECRET|secret@/);
   });
 
   it("an unknown time zone is refused (Check 15 P7: the saved one stays)", () => {

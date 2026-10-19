@@ -19,6 +19,8 @@ import { isReferralCode, referralsVisible } from "./referral-rules";
 import { firstTouch, NO_SOURCE, type SignupSource } from "./source-rules";
 import { workspaceByReferralCode } from "./referrals";
 import { tradeOtherField, tradeOtherFor } from "@/lib/trade-other";
+import { lookupMailHost, type MxResolver } from "./mail-host";
+import { needsInviteConfirm } from "./mail-host-rules";
 
 export const TEAM_SIZES = ["Just me", "2–5", "6–15", "16+"] as const;
 
@@ -63,11 +65,14 @@ export const waitlistInput = z.object({
 export async function joinWaitlist(
   input: z.output<typeof waitlistInput>,
   source: SignupSource = NO_SOURCE,
+  deps: { resolveMx?: MxResolver } = {},
 ) {
   const email = normalizeEmail(input.email);
   const note = input.note ? scrubMarker(input.note) : null;
   // Plan #47: kept only while referrals are switched on (flag and amount).
   const referralCode = referralsVisible() ? (input.referralCode ?? null) : null;
+  // Check 47 P3: who hosts their email (best effort, 2 seconds at most; never blocks the sign-up).
+  const mailHost = await lookupMailHost(email, deps);
   return db().transaction(async (tx) => {
     const [row] = await tx
       .insert(waitlist)
@@ -77,6 +82,7 @@ export async function joinWaitlist(
         email,
         note,
         referralCode,
+        mailHost,
         ...source,
       })
       .onConflictDoNothing()
@@ -107,6 +113,7 @@ export async function joinWaitlist(
         // now holds only what the app form was given (so a later Growth request can't leave an
         // old number behind here).
         phone: input.phone ?? null,
+        mailHost,
         // The first code kept wins (a Growth request's, while referrals were on, or this one).
         referralCode: existing.referralCode ?? referralCode,
         note: [note, blocks].filter(Boolean).join("\n\n") || null,
@@ -197,7 +204,12 @@ async function waitlistRows(limit: number) {
  * Growth-only entry is never invited (a Growth call isn't an app sign-up), and the invite carries
  * the app note only, never the Growth request.
  */
-export async function inviteFromWaitlist(email: string, now: Date = new Date()) {
+export async function inviteFromWaitlist(
+  email: string,
+  now: Date = new Date(),
+  /** Check 47 P3: a non-Google address is only invited after Davi's "Invite anyway". */
+  opts: { confirmed?: boolean } = {},
+) {
   const [entry] = await db()
     .select()
     .from(waitlist)
@@ -205,6 +217,7 @@ export async function inviteFromWaitlist(email: string, now: Date = new Date()) 
   if (!entry) return "not_found" as const;
   const facts = describeWaitlistEntry(entry);
   if (!facts.app) return "growth_only" as const;
+  if (needsInviteConfirm(entry.mailHost) && !opts.confirmed) return "needs_confirm" as const;
   // Plan #47: carry the referral only while referrals are on; an unknown code is ignored.
   const referredByWorkspaceId = referralsVisible()
     ? await workspaceByReferralCode(entry.referralCode)

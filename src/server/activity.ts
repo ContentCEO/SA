@@ -210,6 +210,8 @@ export function describeActivity(
       return "Emailed you about your trial";
     case "trial_emails_stopped":
       return "You stopped the trial emails";
+    case "digest_turned_off":
+      return "You turned off the morning email from its Unsubscribe link";
     // Wave 2 batches A-C: logged lines with no content (counts and fixed words only).
     case "needs_owner_cleared":
       return detail.by === "gmail_reply"
@@ -432,6 +434,7 @@ export const DESCRIBED_ACTIONS = [
   "service_town_added",
   "trial_email_sent",
   "trial_emails_stopped",
+  "digest_turned_off",
   "mailbox_plan_swap",
   "mailboxes_fit_plan",
   // Batches A and B, and plan #47's lines (referralActivityLine, checked first).

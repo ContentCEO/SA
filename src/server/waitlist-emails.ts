@@ -1,13 +1,13 @@
 import "server-only";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, count, eq, isNull, sql } from "drizzle-orm";
 import { siteConfig } from "@/config/site";
 import { db } from "@/db";
 import { waitlist } from "@/db/schema";
-import { sendEmail, type EmailSender } from "@/lib/email";
+import { emailErrorFields, sendEmail, type EmailSender } from "@/lib/email";
 import { brandEmail } from "@/lib/email-layout";
 import { normalizeEmail } from "./accounts";
 import { addressKey, GROWTH_NOTIFY_TIMEOUT_MS, notifyAdmin, withTimeout } from "./growth";
-import { localStamp } from "./growth-note";
+import { GROWTH_ONLY_TEAM_SIZE, localStamp } from "./growth-note";
 
 /** Davi's notice: content-free, like the Growth one. Who it is stays on the admin page. */
 export const waitlistNotifyCopy = {
@@ -98,6 +98,66 @@ export async function sendWaitlistConfirmation(email: string, deps: Deps = {}) {
       .where(and(eq(waitlist.email, address), isNull(waitlist.confirmationSentAt)));
   }
   return outcome;
+}
+
+/** How many "never got it" confirmations one tap sends (one a second, inside a request's time). */
+export const WAITLIST_CATCHUP_PER_TAP = 8;
+
+/** Check 18 P4: app sign-ups whose "You're on the list" email never went out (a count only). */
+export async function countWaitlistNeverConfirmed(): Promise<number> {
+  const [row] = await db()
+    .select({ n: count() })
+    .from(waitlist)
+    .where(and(isNull(waitlist.confirmationSentAt), neverConfirmedFilter()));
+  return row?.n ?? 0;
+}
+
+const neverConfirmedFilter = () =>
+  sql`${waitlist.teamSize} is distinct from ${GROWTH_ONLY_TEAM_SIZE}`;
+
+export type WaitlistCatchUp = {
+  sent: number;
+  failed: number;
+  /** Still without one after this tap (another tap sends the next batch). */
+  left: number;
+  notConfigured: boolean;
+};
+
+/**
+ * Check 18 P4: once the Resend domain is verified, send the confirmation to everyone who joined
+ * before it (confirmation_sent_at null, not Growth-only), oldest first, one a second, up to
+ * WAITLIST_CATCHUP_PER_TAP per tap; stops at the first "not configured". Each success is marked
+ * by sendWaitlistConfirmation itself, so nothing goes twice. Logs counts only.
+ */
+export async function catchUpWaitlistConfirmations(
+  deps: Deps & { perTap?: number; pauseMs?: number } = {},
+): Promise<WaitlistCatchUp> {
+  const perTap = deps.perTap ?? WAITLIST_CATCHUP_PER_TAP;
+  const rows = await db()
+    .select({ email: waitlist.email })
+    .from(waitlist)
+    .where(and(isNull(waitlist.confirmationSentAt), neverConfirmedFilter()))
+    .orderBy(waitlist.createdAt)
+    .limit(perTap);
+  const run: WaitlistCatchUp = { sent: 0, failed: 0, left: 0, notConfigured: false };
+  for (const [i, r] of rows.entries()) {
+    if (i > 0) await new Promise((res) => setTimeout(res, deps.pauseMs ?? 1000));
+    try {
+      const outcome = await sendWaitlistConfirmation(r.email, deps);
+      if (outcome === "not_configured") {
+        run.notConfigured = true;
+        break;
+      }
+      if (outcome === "sent" || outcome === "already_sent") run.sent++;
+      else run.failed++;
+    } catch (err) {
+      run.failed++;
+      console.warn("waitlist_catchup_failed", emailErrorFields(err));
+    }
+  }
+  run.left = await countWaitlistNeverConfirmed();
+  console.info("waitlist_catchup", { sent: run.sent, failed: run.failed, left: run.left });
+  return run;
 }
 
 /**

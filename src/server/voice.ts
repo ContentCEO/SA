@@ -690,6 +690,7 @@ async function alertVoiceGaveUp(workspaceId: string, now: Date, send: EmailSende
         )
         .join(""),
       idempotencyKey: `voice-failed-${workspaceId}-${day}`,
+      replyTo: null,
     });
     if (result === "not_configured") return;
     await db().insert(appSettings).values({ key, value: now.toISOString() }).onConflictDoNothing();

@@ -17,7 +17,7 @@ import {
   type GrowthClient,
 } from "@/db/schema";
 import { appUrl } from "@/lib/app-url";
-import { sendEmail, type EmailSender } from "@/lib/email";
+import { emailErrorFields, sendEmail, type EmailSender } from "@/lib/email";
 import { brandEmail } from "@/lib/email-layout";
 import {
   adminToday,
@@ -208,7 +208,7 @@ export async function sendGrowthInviteEmail(
     return outcome;
   } catch (err) {
     console.error("growth_invite_email_failed", {
-      error: err instanceof Error ? err.name : "unknown",
+      ...emailErrorFields(err),
     });
     return "failed";
   }
@@ -379,7 +379,7 @@ export async function notifyGrowthUpdate(
   } catch (err) {
     console.error("growth_update_email_failed", {
       updateId,
-      error: err instanceof Error ? err.name : "unknown",
+      ...emailErrorFields(err),
     });
     return "failed";
   }

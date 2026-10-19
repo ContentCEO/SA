@@ -40,6 +40,14 @@ export const LIMITS = {
   poll: { max: 300, windowSec: 10 * 60 },
   /** Owner taps that write to Gmail (save an edit, discard a draft), per workspace (M11 C8). */
   gmailWrite: { max: 120, windowSec: 10 * 60 },
+  /** Davi's "Send me a test email" on /admin (Check 18 P2). */
+  emailTest: { max: 5, windowSec: 60 * 60 },
+  /** Davi's "Email the sign-in link again" (Check 18 P4); the email itself is once a day per address. */
+  inviteAgain: { max: 30, windowSec: 60 * 60 },
+  /** Davi's waitlist catch-up tap (Check 18 P4). */
+  waitlistCatchup: { max: 10, windowSec: 60 * 60 },
+  /** One-click unsubscribe POSTs, per signed link (Check 18 P9). */
+  emailStop: { max: 20, windowSec: 60 * 60 },
 } as const;
 /** purgeRateLimits deletes windows older than 2 days, so no window may be longer than a day. */
 export const MAX_WINDOW_SEC = 24 * 60 * 60;

@@ -34,7 +34,7 @@ import { purgeRateLimits } from "@/server/rate-limit";
 import { purgeGmailUnits } from "@/server/gmail-units";
 import { purgeJobRuns } from "@/server/job-runs";
 import { purgeSmsDeliveries } from "@/server/sms-deliveries";
-import { purgeEmailSentRecords } from "@/lib/email";
+import { purgeEmailRefusedTallies, purgeEmailSentRecords } from "@/lib/email";
 import { purgeStaleDraftClaims } from "@/server/draft-claims";
 import { sendAccessLostAlerts } from "@/server/alerts";
 import { purgeAdminNoticeMarkers } from "@/server/admin-notify";
@@ -783,7 +783,11 @@ export const purgeBodies = inngest.createFunction(
     const costAlerts = await step.run("cost-alerts", () => sendCostAlerts());
     await step.run("purge-cost-markers", () => purgeCostAlertMarkers());
     await step.run("purge-voice-alert-markers", () => purgeVoiceAlertMarkers());
-    await step.run("purge-email-sent-records", () => purgeEmailSentRecords());
+    await step.run("purge-email-sent-records", async () => {
+      await purgeEmailSentRecords();
+      // Check 18 P2: the count-only refusal tally, two weeks.
+      await purgeEmailRefusedTallies();
+    });
     await step.run("purge-draft-claims", () => purgeStaleDraftClaims());
     await step.run("purge-admin-notices", () => purgeAdminNoticeMarkers());
     // Check 18 P1: as in the lifecycle job, fail only after every step has run.

@@ -1083,8 +1083,10 @@ describe("#34 the push", () => {
     const c = await digestCounts(workspaceId, TUE_13_01_NY, NY);
     expect(c.leadsAtRisk).toBe(2);
     const d = buildDigest(c, links, { now: TUE_13_01_NY, timeZone: NY });
-    expect(d.text).toContain("2 quote requests have waited more than 4 hours.");
-    expect(d.html).toContain("2 quote requests have waited more than 4 hours.");
+    // Check 18 P8: these leads have no queue card, so they are said once, under Needs you.
+    expect(d.text).toContain("2 quote requests waiting with no reply drafted");
+    expect(d.html).toContain("2 quote requests waiting with no reply drafted");
+    expect(d.text).not.toContain("have waited more than 4 hours.");
   });
 
   it("one owner's failure doesn't stop the others, and the error log names no content (A3, A29)", async () => {
@@ -1236,7 +1238,8 @@ describe("#34 in the morning summary and on the phone (counts only)", () => {
     await synced(TUE_13_01_NY);
     const c = await digestCounts(workspaceId, TUE_13_01_NY, NY);
     const d = buildDigest(c, links, { now: TUE_13_01_NY, timeZone: NY });
-    expect(d.text).toContain("1 quote request has waited more than 4 hours.");
+    // Check 18 P8: no queue card, so it is said once, under Needs you.
+    expect(d.text).toContain("1 quote request waiting with no reply drafted");
     expect(`${d.text}${d.html}`).not.toMatch(/SECRET/);
   });
 
@@ -1255,7 +1258,8 @@ describe("#34 in the morning summary and on the phone (counts only)", () => {
     expect(d.html).toContain("1 thing waiting.");
     expect(d.html).not.toContain("all clear.");
     expect(`${d.text}${d.html}`).not.toContain("No emails need a decision from you today.");
-    expect(d.text).toContain("1 quote request has waited more than 4 hours.");
+    // Check 18 P8: said once, under Needs you (not again as "has waited more than 4 hours").
+    expect(d.text).not.toContain("has waited more than 4 hours.");
     expect(d.text).toContain(
       "• 1 quote request waiting with no reply drafted — see your quotes: https://app/quotes",
     );

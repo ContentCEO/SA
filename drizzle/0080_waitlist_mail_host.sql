@@ -1,0 +1,1 @@
+ALTER TABLE "waitlist" ADD COLUMN "mail_host" text;
