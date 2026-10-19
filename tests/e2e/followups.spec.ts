@@ -122,9 +122,19 @@ test("Space on the Follow-ups switch saves, keeps focus there and reads 'Saved.'
   await expect(toggle()).toBeFocused();
   await expect.poll(async () => (await announced(page)).polite).toContain("Saved.");
 
-  // Turn it back (same screen, same notice): focus stays on the switch.
+  // Turn it back (same screen, same notice): focus stays on the switch. E2E hardening
+  // (2026-10-19): this save lands on the same address, and the screen is rendered anew with a
+  // new switch. Checked before that, focus was still on the old one, so the check passed while
+  // a keyboard owner actually lost focus (and failed only when the save landed first). Wait for
+  // the router to commit the address again (the save has landed), then check.
+  await page.evaluate(() => {
+    const w = window as unknown as { navigation: EventTarget; saLanded?: boolean };
+    w.saLanded = false;
+    w.navigation.addEventListener("currententrychange", () => (w.saLanded = true), { once: true });
+  });
   await page.keyboard.press("Space");
   await expect(toggle()).toBeChecked();
+  await page.waitForFunction(() => (window as unknown as { saLanded: boolean }).saLanded);
   await expect(toggle()).toBeFocused();
   await expect.poll(async () => (await announced(page)).polite).toContain("Saved.");
 });

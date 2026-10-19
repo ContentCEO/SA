@@ -18,6 +18,43 @@ function visible(el: Element): el is HTMLElement {
 }
 
 /**
+ * Puts focus back after a settings save, if one just landed on this screen (takeEntry: same
+ * path, a ?done= / ?error= notice, fresh). Runs where the URL changes (FocusAfterSave) and as
+ * each Notice mounts: a second save on the same screen lands on the same address, so the URL
+ * doesn't change, yet the screen is rendered anew and the focused switch is replaced (E2E
+ * hardening, 2026-10-19: focus dropped to the page on every save after the first). Whichever
+ * runs first takes the entry. Returns a cleanup for the retry timer.
+ */
+export function restoreFocusAfterSave(): () => void {
+  const entry = takeEntry();
+  if (!entry) return () => {};
+  let tries = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const attempt = () => {
+    const notice = document.querySelector<HTMLElement>("main [data-notice]");
+    const target = targetSelectors(entry, CSS.escape)
+      .map((sel) => Array.from(document.querySelectorAll(`main ${sel}`)).find(visible))
+      .find(Boolean);
+    // The screen may still be streaming in: look again for up to about a second.
+    if (!target && !notice && tries++ < 10) {
+      timer = setTimeout(attempt, 100);
+      return;
+    }
+    if (target) target.focus();
+    else if (notice) {
+      notice.tabIndex = -1;
+      notice.focus();
+    }
+    // A save that lands on the same words again is read again (strong notices are alerts,
+    // announced as they appear).
+    if (notice?.textContent && notice.dataset.notice !== "strong")
+      announce(findRegion, notice.textContent);
+  };
+  attempt();
+  return () => clearTimeout(timer);
+}
+
+/**
  * Check 32 P5: after a settings save lands back on its screen, put focus where the owner left
  * it (or on the notice) and read the notice out once more. Renders nothing.
  */
@@ -45,34 +82,8 @@ export function FocusAfterSave() {
     return () => document.removeEventListener("submit", onSubmit, true);
   }, []);
 
-  useEffect(() => {
-    const entry = takeEntry();
-    if (!entry) return;
-    let tries = 0;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const attempt = () => {
-      const notice = document.querySelector<HTMLElement>("main [data-notice]");
-      const target = targetSelectors(entry, CSS.escape)
-        .map((sel) => Array.from(document.querySelectorAll(`main ${sel}`)).find(visible))
-        .find(Boolean);
-      // The screen may still be streaming in: look again for up to about a second.
-      if (!target && !notice && tries++ < 10) {
-        timer = setTimeout(attempt, 100);
-        return;
-      }
-      if (target) target.focus();
-      else if (notice) {
-        notice.tabIndex = -1;
-        notice.focus();
-      }
-      // A save that lands on the same words again is read again (strong notices are alerts,
-      // announced as they appear).
-      if (notice?.textContent && notice.dataset.notice !== "strong")
-        announce(findRegion, notice.textContent);
-    };
-    attempt();
-    return () => clearTimeout(timer);
-  }, [pathname, search]);
+  // A save that lands on a new address (?done= after none, or a different notice).
+  useEffect(() => restoreFocusAfterSave(), [pathname, search]);
 
   return null;
 }
