@@ -46,6 +46,8 @@ export async function sendAdminTestEmail(
       text,
       html,
       idempotencyKey: `admin-test-${minute}`,
+      // Addressed to Davi himself: no Reply-To (Check 18 P5).
+      replyTo: null,
     });
     if (outcome === "not_configured") return { result: "not_set_up" };
     return { result: "sent" };

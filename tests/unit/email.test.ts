@@ -157,6 +157,33 @@ describe("sendEmail (Resend)", () => {
     expect((await refusedTally(7)).total).toBe(3);
   });
 
+  it("Check 18 P5: an owner email replies to SUPPORT_EMAIL, else ADMIN_EMAIL, else nobody; a notice to Davi gets none", async () => {
+    const body = (fetchMock: ReturnType<typeof answer>) =>
+      JSON.parse(
+        (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string,
+      ) as Record<string, unknown>;
+    vi.stubEnv("SUPPORT_EMAIL", " help@squaredaway.example ");
+    vi.stubEnv("ADMIN_EMAIL", "davi@example.com");
+    let f = answer(200, { id: "1" });
+    await sendEmail(email);
+    expect(body(f).reply_to).toBe("help@squaredaway.example");
+    vi.stubEnv("SUPPORT_EMAIL", "");
+    f = answer(200, { id: "2" });
+    await sendEmail({ ...email, idempotencyKey: "k2" });
+    expect(body(f).reply_to).toBe("davi@example.com");
+    // An explicit address still wins; null means none on purpose (notices to Davi himself).
+    f = answer(200, { id: "3" });
+    await sendEmail({ ...email, idempotencyKey: "k3", replyTo: "shop@example.com" });
+    expect(body(f).reply_to).toBe("shop@example.com");
+    f = answer(200, { id: "4" });
+    await sendEmail({ ...email, idempotencyKey: "k4", to: "davi@example.com", replyTo: null });
+    expect(body(f)).not.toHaveProperty("reply_to");
+    vi.stubEnv("ADMIN_EMAIL", "");
+    f = answer(200, { id: "5" });
+    await sendEmail({ ...email, idempotencyKey: "k5" });
+    expect(body(f)).not.toHaveProperty("reply_to");
+  });
+
   it("a refusal's error carries the status only, never Resend's message", async () => {
     answer(422, { statusCode: 422, name: "validation_error", message: "SECRET owner@shop.com" });
     const err = await sendEmail(email).catch((e: unknown) => e);

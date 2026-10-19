@@ -100,8 +100,12 @@ export type OutgoingEmail = {
   text: string;
   /** Same key within 24h = Resend sends it once, so job retries can't double-send. */
   idempotencyKey: string;
-  /** Where a reply to this email goes (Resend `reply_to`). Only set from SUPPORT_EMAIL. */
-  replyTo?: string;
+  /**
+   * Where a reply to this email goes (Resend `reply_to`). Check 18 P5: left out, an owner-facing
+   * email gets SUPPORT_EMAIL, else ADMIN_EMAIL (both env), so a reply reaches a person and not
+   * the sending address. `null` means none on purpose: notices addressed to ADMIN_EMAIL itself.
+   */
+  replyTo?: string | null;
   /**
    * Extra headers (Resend `headers`): only the one-click unsubscribe pair on trial emails
    * (`List-Unsubscribe` / `List-Unsubscribe-Post`), never anything an email or a person typed.
@@ -187,10 +191,26 @@ async function errorName(res: Response): Promise<string | null> {
  * RESEND_API_KEY and EMAIL_FROM ("Squared Away <hello@yourdomain>"); without
  * them nothing is sent and the caller is told so.
  */
+/** Check 18 P5: the Reply-To for an owner-facing email — SUPPORT_EMAIL, else ADMIN_EMAIL, else none. */
+export function defaultReplyTo(env: {
+  SUPPORT_EMAIL?: string | undefined;
+  ADMIN_EMAIL?: string | undefined;
+}): string | undefined {
+  return env.SUPPORT_EMAIL?.trim() || env.ADMIN_EMAIL?.trim() || undefined;
+}
+
 export const sendEmail: EmailSender = async (email) => {
   const key = process.env.RESEND_API_KEY;
   const from = process.env.EMAIL_FROM;
   if (!key || !from) return "not_configured";
+  const replyTo =
+    email.replyTo === null
+      ? undefined
+      : email.replyTo ||
+        defaultReplyTo({
+          SUPPORT_EMAIL: process.env.SUPPORT_EMAIL,
+          ADMIN_EMAIL: process.env.ADMIN_EMAIL,
+        });
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
@@ -204,7 +224,7 @@ export const sendEmail: EmailSender = async (email) => {
       subject: email.subject,
       html: email.html,
       text: email.text,
-      ...(email.replyTo ? { reply_to: email.replyTo } : {}),
+      ...(replyTo ? { reply_to: replyTo } : {}),
       ...(email.headers ? { headers: email.headers } : {}),
     }),
   });

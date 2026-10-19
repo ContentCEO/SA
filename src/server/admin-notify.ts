@@ -53,6 +53,8 @@ export async function notifyAdminOnce(
     text,
     html,
     idempotencyKey: `admin-${key}`.replace(/[^A-Za-z0-9_-]/g, "-"),
+    // Check 18 P5: addressed to Davi himself, so no Reply-To.
+    replyTo: null,
   });
   if (outcome === "not_configured") return "not_configured";
   await db()

@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
+import { AppEmailsGoTo } from "@/components/app/app-emails-go-to";
 import { AutoSaveForm } from "@/components/forms/auto-save-form";
 import { Button } from "@/components/ui/button";
+import { listMailboxes } from "@/server/mailboxes";
 import { DIGEST_HOURS, getBusinessProfile } from "@/server/profile";
 import { requireOwner } from "@/server/session";
 import { nowLine, zoneChoices, zoneLine } from "@/server/time-zone-rules";
@@ -15,8 +17,11 @@ export const metadata: Metadata = { title: "Morning email" };
 export default async function MorningEmailSettingsPage(
   props: PageProps<"/settings/morning-email">,
 ) {
-  const { workspace } = await requireOwner();
-  const profile = await getBusinessProfile(workspace.id);
+  const { workspace, session } = await requireOwner();
+  const [profile, mailboxes] = await Promise.all([
+    getBusinessProfile(workspace.id),
+    listMailboxes(workspace.id),
+  ]);
   const zone = usableTimeZone(profile?.timeZone);
   return (
     <SettingsScreen
@@ -38,6 +43,13 @@ export default async function MorningEmailSettingsPage(
         <p id="digest-monthly-note" className="-mt-2 pl-9 text-muted-foreground">
           (and a short one on the 1st of each month)
         </p>
+        {/* Check 42 P6: where it goes — the sign-in address, from the session (never logged). */}
+        <AppEmailsGoTo
+          kind="digest"
+          signInEmail={session.user.email}
+          connectedEmails={mailboxes.map((m) => m.email)}
+          className="-mt-1 pl-9 text-muted-foreground"
+        />
         <label className="flex flex-col gap-1.5">
           <span className="font-semibold">Send it at</span>
           <select

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { AppEmailsGoTo } from "@/components/app/app-emails-go-to";
 import { DisconnectButton } from "@/components/app/disconnect-button";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -29,7 +30,7 @@ const statusWords = {
 } as const;
 
 export default async function GmailSettingsPage(props: PageProps<"/settings/gmail">) {
-  const { workspace } = await requireOwner();
+  const { workspace, session } = await requireOwner();
   const now = new Date();
   const mailboxes = await listMailboxes(workspace.id);
   const counts = new Map(
@@ -220,6 +221,14 @@ export default async function GmailSettingsPage(props: PageProps<"/settings/gmai
             })}
           </ul>
         )}
+        {mailboxes.length > 0 ? (
+          // Check 42 P6: the access-lost alert goes to the sign-in address, not a connected inbox.
+          <AppEmailsGoTo
+            kind="access"
+            signInEmail={session.user.email}
+            connectedEmails={mailboxes.map((m) => m.email)}
+          />
+        ) : null}
 
         {mailboxes.length > 0 && canAddMore ? (
           <div className="flex flex-col gap-1">

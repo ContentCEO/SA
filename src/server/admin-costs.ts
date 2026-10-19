@@ -132,6 +132,7 @@ export async function sendCostAlerts(
           )
           .join(""),
         idempotencyKey: `cost-${r.workspaceId}-${month}`,
+        replyTo: null,
       });
       // "already_sent": an earlier try this month got through but its marker didn't save.
       if (result === "not_configured") return { sent, failed };

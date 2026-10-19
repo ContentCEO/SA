@@ -823,6 +823,7 @@ export async function notifyPaymentReceived(
       text,
       html,
       idempotencyKey: `payment-${sessionId}`,
+      replyTo: null,
     });
     if (outcome === "not_configured") return "skipped";
     await db()
@@ -864,6 +865,7 @@ export async function notifyBillingChange(
       text,
       html,
       idempotencyKey: `billing-${eventId}`,
+      replyTo: null,
     });
     if (outcome === "not_configured") return "skipped";
     await db()

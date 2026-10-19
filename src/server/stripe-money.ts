@@ -166,6 +166,7 @@ async function notifyDispute(
       text,
       html,
       idempotencyKey: `dispute-${disputeId}`,
+      replyTo: null,
     });
   } catch (err) {
     console.error("dispute_notice_failed", { error: err instanceof Error ? err.name : "unknown" });
