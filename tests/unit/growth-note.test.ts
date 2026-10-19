@@ -235,3 +235,17 @@ describe("Check 5 P2 + Check 45 P5: heard from, sent by, state and time zone", (
     ).toContain("Heard from: group");
   });
 });
+
+describe("Check 2 P3: both forms' trap input is the server's TRAP_FIELD", () => {
+  it("names it sa_hp in the waitlist and Growth forms", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { TRAP_FIELD } = await import("@/server/trap-rules");
+    expect(TRAP_FIELD).toBe("sa_hp");
+    for (const f of [
+      "src/components/marketing/waitlist-form.tsx",
+      "src/components/marketing/growth/growth-call-form.tsx",
+    ]) {
+      expect(readFileSync(f, "utf8"), f).toContain(`<input name="${TRAP_FIELD}" tabIndex={-1}`);
+    }
+  });
+});

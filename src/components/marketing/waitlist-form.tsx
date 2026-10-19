@@ -11,7 +11,6 @@ import { siteConfig } from "@/config/site";
 import { TRADE_OPTIONS } from "@/config/trades";
 import { ReferralField } from "@/components/marketing/referral-field";
 import { SourceFields } from "./source-fields";
-import { TRAP_FIELD } from "@/server/trap-rules";
 
 const trades = TRADE_OPTIONS.map((t) =>
   t.value === "other" ? { ...t, label: "Another trade" } : t,
@@ -133,7 +132,7 @@ export function WaitlistForm({ referrals = false }: { referrals?: boolean } = {}
       <div aria-hidden className="absolute -left-[9999px] h-0 w-0 overflow-hidden">
         <label>
           Leave this empty
-          <input name={TRAP_FIELD} tabIndex={-1} autoComplete="off" />
+          <input name="sa_hp" tabIndex={-1} autoComplete="off" />
         </label>
       </div>
       <SourceFields />

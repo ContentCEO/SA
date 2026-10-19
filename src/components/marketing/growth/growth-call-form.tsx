@@ -16,7 +16,6 @@ import { siteConfig } from "@/config/site";
 import { TRADE_OPTIONS } from "@/config/trades";
 import { US_STATES } from "@/config/us-states";
 import { phoneHref } from "@/lib/phone-href";
-import { TRAP_FIELD } from "@/server/trap-rules";
 import { growthCopy } from "./growth-copy";
 
 const c = growthCopy.form;
@@ -228,7 +227,7 @@ export function GrowthCallForm({ referrals = false }: { referrals?: boolean } = 
       <div aria-hidden className="absolute -left-[9999px] h-0 w-0 overflow-hidden">
         <label>
           {c.honeypot}
-          <input name={TRAP_FIELD} tabIndex={-1} autoComplete="off" />
+          <input name="sa_hp" tabIndex={-1} autoComplete="off" />
         </label>
       </div>
       {referrals ? <ReferralField kept={v.ref} /> : null}
