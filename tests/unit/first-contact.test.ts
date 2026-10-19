@@ -9,7 +9,7 @@ import {
   replyDraftSchema,
   type ModelReplyDraft,
 } from "@/ai/prompts/draft.v9";
-import { draftSchema } from "@/ai/prompts/draft.v6";
+import { followupSchema } from "@/ai/prompts/followup.v5";
 import { DRAFT_INSTRUCTIONS as ACTIVE_DRAFT_INSTRUCTIONS } from "@/ai/prompts/draft.v9";
 import { OPENING_TWEAKS } from "@/ai/prompts/opening-tweaks.v1";
 import { MAX_REVISIONS_PER_DRAFT } from "@/config/drafting";
@@ -418,7 +418,8 @@ describe("first replies: drafting (stand-in model)", () => {
     const { transport, calls } = fakeTransport([reply("Hi Dana, just checking in.")]);
     setModelTransportForTests(transport);
     await createDraftForThread(t.id, { trigger: "followup", ...deps() });
-    expect(calls[0]!.schema).toBe(draftSchema);
+    // followup.v5: a nudge has its own output (draft fields + skip), never the reply's `opening`.
+    expect(calls[0]!.schema).toBe(followupSchema);
     expect((await draftOf(t.id))!.opening).toBeNull();
   });
 

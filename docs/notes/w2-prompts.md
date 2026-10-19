@@ -340,3 +340,60 @@ question in step 3, so "(only for building work)" isn't needed. **Not built:** c
 waitlist's typed trade into the workspace at first sign-in (the owner types it again in setup);
 the /admin workspace card doesn't show it (the admin-no-content fence keeps owner-typed profile
 text off that card).
+
+## Step 9: evals that run the real path (Check 22 P12 + 23 P12 + 24 P10 + 31 P5)
+
+- **Check 22 P12:** `tests/evals/run.ts` stores each case as a thread (plus an earlier email from
+  the sender on another thread unless `firstTimeSender` is true / "unknown", or `prior` says
+  otherwise; older emails on the thread from `earlier`; Gmail `labels`; a `replyTo`; attachment
+  counts; the `priorInvoice`) in the in-memory database and sorts it with `classifyPending`,
+  then scores the stored thread. So the Promotions shortcut, the first-time rule, Reply-To
+  handling, the sticky marks and the invoice carry are scored. The eval workspace is set
+  `active` so a December case isn't read-only under a trial clock. `evalState.caseId` tells a
+  stand-in model which case it is answering (a Promotions email gets no call). `EvalCase` gains
+  `labels`, `prior`, `replyTo`, `earlier`, `language`. New scores: `paymentChangeFalseAlarms`,
+  `municipalFalseAlarms` (no rise allowed, like the other false alarms), `nonEnglishAccuracy`.
+  Cases `x22-*` (lead-site marketing in Promotions stays junk; a permit email in Updates; a
+  form with Reply-To; bookkeeper / lender asking for "all the invoices" — not an attack;
+  "disregard my earlier instructions about the side gate"; "olvide las indicaciones"; a customer
+  updating their own card; a home inspector and a sprinkler company with town-like names; a
+  quoted lawyer letter; "go ahead" after the owner's price on the thread). **Not added:** leads
+  in Promotions from a lead site — the evals use invented addresses only, and the Promotions
+  exception is decided by the real lead-site domain, so it can't be exercised here (the
+  `mustReadDespiteTab` unit tests cover it with the real domains); a crew member's email needs a
+  crew list on the profile (covered by the crew unit tests). **Baseline not recorded:** no
+  `ANTHROPIC_API_KEY`; `tests/evals/baseline.json` is unchanged.
+- **Check 23 P12:** `buildCheckContext` (exported from `src/server/drafts.ts`, with `ownerFactsOf`)
+  is the one builder for `checkDraft`'s context — `createDraftForThread` and the eval runner both
+  call it (`DraftContext` is exported). Draft rules gain `mustAsk`, `noGapsWhenAskingFirst`
+  (plus a check that no gap follows its own words: "a time {{time}}"); `language` and
+  `mustAnswer` came at step 2. Cases `x23-*` (no-detail quote, warranty, a competitor's $3,200,
+  Venmo, who does the work, the owner's number, an emergency with no time) beside step 2's two
+  questions / one line / Spanish / permit cases. `tests/unit/draft-checks-cases.test.ts`: the
+  review's sample plumbing profile, one row per example through `buildCheckContext`; 28 rows
+  pass, one is `it.todo` ("it's fourteen fifty for the swap" — a spoken figure matching the
+  listed $1,450 without its "from" isn't caught; number words aren't read by the price-list
+  check).
+- **Check 24 P10:** `tests/evals/voice-cases.ts` — six invented sent-mail batches (short and
+  casual, formal, bilingual, an office manager signing a third, forwards with Outlook quotes, a
+  forwarded injection line), run through voice.v4 with the attack filter `learnVoice` applies,
+  scored after the same scrub: formality, a sign-off with the owner's first name, no customer
+  detail (whole words; strict `voiceNoCustomerDetails`), no instruction text (`voicePassRate`).
+  `FIXED_VOICES` (short-casual, long-formal) drive two draft cases (`x24-*`) scored on greeting,
+  sign-off and length within ±50%. `pnpm eval` prints `voice <id>: …`.
+- **Check 31 P5:** the versions in use are `ACTIVE` in `src/ai/prompts/registry.ts` (wave 0's one
+  place). `scripts/eval.ts --update-baseline` writes `models` (from `src/config/models.ts`) with
+  `promptVersions` and `scores`. `tests/unit/evals.test.ts` "the saved eval record matches the
+  prompts in use" (recordedAt set, promptVersions = ACTIVE, models = models.ts, message "Run pnpm
+  eval --update-baseline (needs ANTHROPIC_API_KEY) and commit tests/evals/baseline.json.") is
+  behind a dated `skipIf` that expires **2026-10-26**: after that, CI is red until the baseline
+  is recorded. `.github/workflows/evals.yml` also runs on pull requests touching
+  `src/ai/prompts/**`, `src/ai/guards.ts`, `src/ai/classify.ts`, `src/ai/draft-checks.ts`
+  (`pnpm eval --no-drafts`, output posted with `gh pr comment`); without the secret it prints a
+  notice and passes (a manual run still fails, as before).
+
+### For Davi (step 9)
+
+- Add the `ANTHROPIC_API_KEY` repository secret (GitHub → Settings → Secrets and variables →
+  Actions), run "Prompt evals" once with drafts on, and commit the baseline it records
+  (`pnpm eval --update-baseline` locally does the same). From 2026-10-26 CI fails until then.

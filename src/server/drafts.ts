@@ -19,7 +19,12 @@ import {
   or,
   sql,
 } from "drizzle-orm";
-import { chooseReplyLanguage, detectLanguage, isReplyLanguage } from "@/ai/language";
+import {
+  chooseReplyLanguage,
+  detectLanguage,
+  isReplyLanguage,
+  type ReplyLanguage,
+} from "@/ai/language";
 import { callStructured } from "@/ai/client";
 import {
   checkDraft,
@@ -710,7 +715,7 @@ function replyReader(
   return typeof w.getMessage === "function" ? (w as Pick<MailboxReader, "getMessage">) : null;
 }
 
-type DraftContext = WorkspaceContext & {
+export type DraftContext = WorkspaceContext & {
   reviewUrl: string | null;
   /** The owner's time zone, for "Today is…" and each email's time (review A8). */
   timeZone: string | null;
@@ -760,6 +765,79 @@ function termsCheck(
 /** Check 23 P5: the owner's written terms — payment terms, policies and price list. */
 function ownerTerms(ctx: DraftContext): string {
   return [ctx.paymentTerms, ctx.policies, ctx.pricingNotes].filter(Boolean).join("\n");
+}
+
+/** The owner's own facts a draft may draw from (profile, price list, licenses, notes). */
+function ownerFactsOf(ctx: DraftContext): (string | null)[] {
+  return [
+    ctx.pricingNotes,
+    ctx.hours,
+    ctx.leadTime,
+    ctx.policies,
+    ctx.paymentTerms,
+    ctx.services,
+    ctx.signature,
+    // Check 38 P6: the saved license numbers are the owner's own words.
+    licenseFacts(ctx.licenses),
+    ...ctx.seasonalNotes.map((n) => n.text),
+    // Check 23 P3: a seasonal note's last day, as a draft would write it ("November 27").
+    ...ctx.seasonalNotes.map((n) => spellDate(n.endsOn)),
+  ];
+}
+
+/**
+ * Check 23 P12: the context `checkDraft` gets for a reply or nudge — what the draft may draw
+ * facts from (the conversation and the owner's facts), the owner's own words apart (an amount
+ * only the customer named is flagged), the when-words rules, the never-say / never-promise
+ * lists, licenses, price list and terms. createDraftForThread and the prompt evals both use it.
+ * Deposit / review terms checks are added by the caller.
+ */
+export function buildCheckContext(o: {
+  ctx: DraftContext;
+  conversation: { m: { direction: string; sentAt: Date }; text: string }[];
+  ownerNote: string | null;
+  now: Date;
+  replyLanguage?: ReplyLanguage;
+  invoiceReminder?: boolean;
+  firstContact?: boolean;
+  knownNames?: string[];
+}) {
+  const { ctx, conversation, ownerNote } = o;
+  const ownerFacts = ownerFactsOf(ctx);
+  const ownerWrote = conversation.filter((x) => x.m.direction === "out").map((x) => x.text);
+  const lastInbound = [...conversation].reverse().find((x) => x.m.direction === "in");
+  return {
+    ...(o.replyLanguage ? { replyLanguage: o.replyLanguage } : {}),
+    // Check 12 P7: an invoice reminder never offers an easy out.
+    invoiceReminder: o.invoiceReminder ?? false,
+    sourceText: [conversation.map((x) => x.text).join("\n"), ...ownerFacts, ownerNote]
+      .filter(Boolean)
+      .join("\n"),
+    ...whenContext(
+      ctx,
+      conversation,
+      [ownerNote],
+      o.now,
+      asksWhenAvailable(lastInbound?.text ?? ""),
+    ),
+    // Amounts only the customer named aren't the owner's price (round 2 A4).
+    ownerSourceText: [...ownerWrote, ...ownerFacts, ownerNote].filter(Boolean).join("\n"),
+    ownerInstruction: ownerNote ?? null,
+    doNotPromise: ctx.doNotPromise,
+    phrasesAvoided: ctx.voice?.phrasesAvoided ?? [],
+    neverSay: ctx.neverSay,
+    licenses: ctx.licenses,
+    state: ctx.state,
+    // Check 23 P14: hold the price list's "from" and the job each price is for.
+    priceList: ctx.pricingNotes,
+    // Check 23 P13: a first reply's "Thanks for reaching out" isn't filler.
+    firstContact: o.firstContact ?? false,
+    // Check 23 P6: the names on the conversation's From lines may be used.
+    knownNames: o.knownNames ?? [],
+    // Check 23 P5: every reply carries the owner's terms for the light payment-terms check.
+    termsSource: ownerTerms(ctx),
+    ownerWrote: ownerWrote.join("\n"),
+  };
 }
 
 /**
@@ -1482,64 +1560,21 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
     })),
   });
 
-  // What the draft may draw facts from, and what it must never say.
-  const ownerFacts = [
-    ctx.pricingNotes,
-    ctx.hours,
-    ctx.leadTime,
-    ctx.policies,
-    ctx.paymentTerms,
-    ctx.services,
-    ctx.signature,
-    // Check 38 P6: the saved license numbers are the owner's own words.
-    licenseFacts(ctx.licenses),
-    ...ctx.seasonalNotes.map((n) => n.text),
-    // Check 23 P3: a seasonal note's last day, as a draft would write it ("November 27").
-    ...ctx.seasonalNotes.map((n) => spellDate(n.endsOn)),
-  ];
+  // What the draft may draw facts from, and what it must never say (Check 23 P12: one builder,
+  // shared with the evals so they can't drift).
   const checkContext = {
-    replyLanguage: language.reply,
-    // Check 12 P7: an invoice reminder never offers an easy out.
-    invoiceReminder: followup && isInvoiceThread(thread),
-    sourceText: [withText.map((x) => x.text).join("\n"), ...ownerFacts, opts.ownerNote]
-      .filter(Boolean)
-      .join("\n"),
-    ...whenContext(
+    ...buildCheckContext({
       ctx,
-      withText,
-      [opts.ownerNote],
+      conversation: withText,
+      ownerNote: opts.ownerNote ?? null,
       now,
-      asksWhenAvailable(lastInbound?.text ?? ""),
-    ),
-    // Amounts only the customer named aren't the owner's price (round 2 A4).
-    ownerSourceText: [
-      ...withText.filter((x) => x.m.direction === "out").map((x) => x.text),
-      ...ownerFacts,
-      opts.ownerNote,
-    ]
-      .filter(Boolean)
-      .join("\n"),
-    ownerInstruction: opts.ownerNote ?? null,
-    doNotPromise: ctx.doNotPromise,
-    phrasesAvoided: ctx.voice?.phrasesAvoided ?? [],
-    neverSay: ctx.neverSay,
-    licenses: ctx.licenses,
-    state: ctx.state,
-    // Check 23 P14: hold the price list's "from" and the job each price is for.
-    priceList: ctx.pricingNotes,
-    // Check 23 P13: a first reply's "Thanks for reaching out" isn't filler.
-    firstContact,
-    // Check 23 P6: the names on the conversation's From lines may be used.
-    knownNames: withText
-      .flatMap(({ m }) => [m.fromName, customerReplyName(m)])
-      .filter((n): n is string => !!n),
-    // Check 23 P5: every reply carries the owner's terms for the light payment-terms check
-    // (deposit and review notes replace these with their own, stricter check below).
-    termsSource: ownerTerms(ctx),
-    ownerWrote: withText
-      .filter((x) => x.m.direction === "out")
-      .map((x) => x.text)
-      .join("\n"),
+      replyLanguage: language.reply,
+      invoiceReminder: followup && isInvoiceThread(thread),
+      firstContact,
+      knownNames: withText
+        .flatMap(({ m }) => [m.fromName, customerReplyName(m)])
+        .filter((n): n is string => !!n),
+    }),
     // Deposit and review notes: no percentage, way to pay or incentive the owner never set (A4).
     ...termsCheck(purpose, ctx, {
       wrote: withText.filter((x) => x.m.direction === "out").map((x) => x.text),

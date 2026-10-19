@@ -1,4 +1,6 @@
 import { readFileSync } from "node:fs";
+import { ACTIVE } from "@/ai/prompts/registry";
+import { models } from "@/config/models";
 import { describe, expect, it } from "vitest";
 import { setModelTransportForTests, type Transport } from "@/ai/client";
 import { CATEGORIES } from "@/ai/prompts/classify.v6";
@@ -9,9 +11,19 @@ import { REVISE_CASES, TONE_CASES } from "../evals/edits";
 import { FOLLOWUP_CASES } from "../evals/followups";
 import { VOICE_EXAMPLES_CASES } from "../evals/voice-examples";
 import { PURPOSE_CASES } from "../evals/purposes";
-import { runEvals } from "../evals/run";
+import { evalState, runEvals } from "../evals/run";
+import { FIXED_VOICES, VOICE_CASES } from "../evals/voice-cases";
 import { regressions, score, type Baseline, type EvalResult, type Scores } from "../evals/score";
 import { classification, type LooseClassification } from "../support/fake-model";
+
+/** A reply in one of the fixed voices: its greeting, about its length, its sign-off. */
+function voiceBody(key: keyof typeof FIXED_VOICES): string {
+  const v = FIXED_VOICES[key];
+  const words = Math.max(10, (v.avgLengthWords ?? 60) - 8);
+  const line = "happy to take a look and talk through what you need";
+  const text = Array.from({ length: Math.ceil(words / 11) }, () => line).join(", ");
+  return `${v.greetingStyle} {{custom:name}},\n\nThanks for writing, ${text}. What's the address?\n\n${v.signoffStyle}`;
+}
 
 describe("evaluation set (#46)", () => {
   it("has 60+ invented cases covering every category and trade", () => {
@@ -225,6 +237,22 @@ describe("evaluation set (#46)", () => {
     }
   });
 
+  // Check 31 P5: a prompt version change without a new baseline turns CI red. The baseline
+  // can't be recorded here (no ANTHROPIC_API_KEY); this waits until 2026-10-26, a week from the
+  // change, for Davi to add the repo secret and run the "Prompt evals" workflow once. Delete
+  // the date check then.
+  it.skipIf(Date.now() < Date.parse("2026-10-26T00:00:00Z"))(
+    "the saved eval record matches the prompts in use",
+    () => {
+      const b = JSON.parse(readFileSync("tests/evals/baseline.json", "utf8")) as Baseline;
+      const fix =
+        "Run pnpm eval --update-baseline (needs ANTHROPIC_API_KEY) and commit tests/evals/baseline.json.";
+      expect(b.recordedAt, fix).toBeTruthy();
+      expect(b.promptVersions, fix).toEqual({ ...ACTIVE });
+      expect(b.models, fix).toEqual({ ...models });
+    },
+  );
+
   it("a baseline file exists and is well-formed", () => {
     const b = JSON.parse(readFileSync("tests/evals/baseline.json", "utf8")) as Baseline;
     expect(b).toHaveProperty("scores");
@@ -292,7 +320,6 @@ describe("evaluation set (#46)", () => {
         },
       };
     };
-    let i = -1;
     let tone = -1;
     let nudge = -1;
     let samples = -1;
@@ -303,7 +330,32 @@ describe("evaluation set (#46)", () => {
       const isTone = sys.startsWith("You compare two versions");
       const isFollowup = sys.startsWith("You write a short follow-up");
       const isSamples = sys.startsWith("You write five short sample email replies");
-      if (!isDraft && !isRevise && !isTone && !isFollowup && !isSamples) i++;
+      const isVoice = sys.startsWith("You study how the owner");
+      // Check 22 P12: the case being sorted (a Promotions email gets no model call at all).
+      const current = EVAL_CASES.find((c) => c.id === evalState.caseId)!;
+      // voice.v4 (Check 24 P10): a good model reads the batch's owner and formality right and
+      // keeps no customer detail.
+      if (isVoice) {
+        const v = VOICE_CASES.find((c) => c.id === evalState.voiceId)!;
+        return {
+          parsed: {
+            summary: "You write plainly and to the point.",
+            greeting_style:
+              v.expect.formality === "formal"
+                ? "Good morning {{custom:name}},"
+                : "Hi {{custom:name}},",
+            signoff_style: `Thanks, ${v.ownerFirstName}`,
+            avg_length_words: 40,
+            formality: v.expect.formality,
+            phrases_used: ["sounds good"],
+            phrases_avoided: ["kindly"],
+            examples: Array(5).fill("Hi {{custom:name}}, {{date}} at {{time}} works."),
+            writers: [{ name: v.ownerFirstName, share: "most" }],
+          },
+          usage: { inputTokens: 100, outputTokens: 20, cacheReadTokens: 0, cacheWriteTokens: 0 },
+          stopReason: "end_turn",
+        };
+      }
       // voice-examples.v1: a good model follows the settings in the block exactly.
       if (isSamples) {
         const c = VOICE_EXAMPLES_CASES[++samples]!;
@@ -356,7 +408,7 @@ describe("evaluation set (#46)", () => {
             ? "Hi Jordan,\n\nHappy to come take a look. What day suits you, and what's the address?\n\nAlex"
             : "Hi Jordan,\n\nWhat's the address? A photo or two helps.\n\nAlex";
       // draft.v7: a first contact answers with the case's shape, as a good model would.
-      const firstContact = req.user.includes("FIRST CONTACT") ? EVAL_CASES[i]!.firstContact : null;
+      const firstContact = req.user.includes("FIRST CONTACT") ? current.firstContact : null;
       // Purpose drafts (#28 #29): echo the payment terms / the review link, as a good model would.
       const terms = /- Payment terms: (.*)/.exec(req.system[1]?.text ?? "")?.[1]?.trim();
       const purposeBody = req.user.includes("## Task: deposit")
@@ -380,14 +432,17 @@ describe("evaluation set (#46)", () => {
             ? {
                 body:
                   purposeBody ??
+                  // Check 24 P10: a fixed voice's greeting, sign-off and length, as a good model.
+                  (current?.voice ? voiceBody(current.voice) : null) ??
                   (firstContact === "urgent"
                     ? "Hi,\n\nSorry to hear it. What's the best number to reach you, and the address?\n\nThanks,\nAlex"
                     : firstContact
                       ? "Hi,\n\nThanks for reaching out, happy to help. Could you send a couple of photos?\n\nThanks,\nAlex"
                       : // draft.v9: a good model answers each question (the key's words).
                         `Hi,\n\nHappy to help — what's the address?${[
-                          ...(EVAL_CASES[i]?.draft?.mustAnswer ?? []),
-                          ...(EVAL_CASES[i]?.draft?.mustContain ?? []),
+                          ...(current?.draft?.mustAnswer ?? []),
+                          ...(current?.draft?.mustContain ?? []),
+                          ...(current?.draft?.mustAsk ?? []),
                         ]
                           .map((w) => ` Also ${w}.`)
                           .join("")}\n\nThanks,\nAlex`),
@@ -397,7 +452,7 @@ describe("evaluation set (#46)", () => {
                 used_facts: [],
                 opening: firstContact ?? "not_first",
               }
-            : oracle(EVAL_CASES[i]!);
+            : oracle(current);
       return {
         parsed,
         usage: { inputTokens: 100, outputTokens: 20, cacheReadTokens: 0, cacheWriteTokens: 0 },
@@ -452,11 +507,17 @@ describe("evaluation set (#46)", () => {
       followupPassRate: 1,
       followupSkipAccuracy: 1,
       voiceExamplesPassRate: 1,
+      voicePassRate: 1,
+      voiceNoCustomerDetails: 1,
+      paymentChangeFalseAlarms: 0,
+      municipalFalseAlarms: 0,
+      nonEnglishAccuracy: 1,
       openingAccuracy: 1,
     });
     expect(run.purposeProblems).toEqual({});
     expect(run.followupProblems).toEqual({});
     expect(run.voiceExamplesProblems).toEqual({});
+    expect(run.voiceProblems).toEqual({});
     expect(run.reviseProblems).toEqual({});
     // Every first-contact case was drafted and named its shape.
     const fc = EVAL_CASES.filter((c) => c.firstContact).map((c) => c.id);

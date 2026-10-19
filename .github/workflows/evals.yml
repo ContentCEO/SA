@@ -1,7 +1,10 @@
 name: Prompt evals
 
-# On demand only (Actions → Prompt evals → Run workflow): each full run costs a
-# dollar or two in model calls. Run it before a release or after a prompt change.
+# On demand (Actions → Prompt evals → Run workflow): each full run costs a dollar or two in
+# model calls. Run it before a release or after a prompt change.
+# Check 31 P5: a pull request that touches a prompt or the code checks around it gets a
+# classification-only run (cheaper) and a comment with the score table and any regressions.
+# Without the ANTHROPIC_API_KEY secret (a fork, or before Davi adds it) it says so and passes.
 on:
   workflow_dispatch:
     inputs:
@@ -9,11 +12,20 @@ on:
         description: "Also score drafts (costs more)"
         type: boolean
         default: true
+  pull_request:
+    paths:
+      - "src/ai/prompts/**"
+      - "src/ai/guards.ts"
+      - "src/ai/classify.ts"
+      - "src/ai/draft-checks.ts"
 
 jobs:
   evals:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: write
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       TOKEN_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
@@ -21,13 +33,28 @@ jobs:
       - name: Needs the ANTHROPIC_API_KEY secret
         if: env.ANTHROPIC_API_KEY == ''
         run: |
-          echo "Add ANTHROPIC_API_KEY under Settings → Secrets and variables → Actions to run evals."
-          exit 1
+          echo "::notice::Add ANTHROPIC_API_KEY under Settings → Secrets and variables → Actions to run evals."
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then exit 1; fi
       - uses: actions/checkout@v4
+        if: env.ANTHROPIC_API_KEY != ''
       - uses: pnpm/action-setup@v4
+        if: env.ANTHROPIC_API_KEY != ''
       - uses: actions/setup-node@v4
+        if: env.ANTHROPIC_API_KEY != ''
         with:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm eval ${{ inputs.drafts && '' || '--no-drafts' }}
+        if: env.ANTHROPIC_API_KEY != ''
+      - name: Run evals
+        if: env.ANTHROPIC_API_KEY != ''
+        run: |
+          set -o pipefail
+          pnpm eval ${{ (github.event_name == 'pull_request' || !inputs.drafts) && '--no-drafts' || '' }} | tee eval-output.txt
+      - name: Comment the scores on the pull request
+        if: always() && github.event_name == 'pull_request' && env.ANTHROPIC_API_KEY != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          { echo '### Prompt evals (classification only)'; echo; echo '```'; cat eval-output.txt; echo '```'; } > comment.md
+          gh pr comment ${{ github.event.pull_request.number }} --body-file comment.md

@@ -116,6 +116,16 @@ export type Scores = {
    * run.
    */
   purposePassRate: number;
+  /** Check 24 P10 (voice.v4): learned voices that met the batch's key. 1 when not run. */
+  voicePassRate: number;
+  /** Check 24 P10: no customer name, address, phone or email kept after the scrub (strict). */
+  voiceNoCustomerDetails: number;
+  /** Check 22 P12: a customer's own card or bank change read as a payment change. */
+  paymentChangeFalseAlarms: number;
+  /** Check 22 P12: an inspector or sprinkler company read as the town. */
+  municipalFalseAlarms: number;
+  /** Check 22 P12: category accuracy on emails not in English. */
+  nonEnglishAccuracy: number;
   /** Check 24 P8 (voice-examples.v1): sample sets that followed the stored settings. 1 when not run. */
   voiceExamplesPassRate: number;
   /** Check 21 P7 + 12 P7 (followup.v5): nudges that kept every rule. 1 when not run. */
@@ -241,6 +251,17 @@ export function score(cases: EvalCase[], results: EvalResult[]): Scores {
     followupPassRate: 1,
     followupSkipAccuracy: 1,
     voiceExamplesPassRate: 1,
+    voicePassRate: 1,
+    voiceNoCustomerDetails: 1,
+    paymentChangeFalseAlarms: pairs.filter(
+      ([c, r]) => c.expect.paymentChange === false && r!.paymentChange,
+    ).length,
+    municipalFalseAlarms: pairs.filter(([c, r]) => c.expect.municipalFalse === true && r!.municipal)
+      .length,
+    nonEnglishAccuracy: among(
+      where((c) => !!c.language && c.language !== "en"),
+      (c, r) => cats(c).includes(r.category as never),
+    ),
     openingAccuracy: ratio(
       opened.filter(([c, r]) => r!.opening === (c.firstContact ?? "not_first")).length,
       opened.length,
@@ -251,6 +272,8 @@ export function score(cases: EvalCase[], results: EvalResult[]): Scores {
 export type Baseline = {
   recordedAt: string | null;
   promptVersions: Record<string, string>;
+  /** Check 31 P5: the model ids the scores were measured on (src/config/models.ts). */
+  models?: Record<string, string>;
   scores: Scores | null;
 };
 
@@ -268,6 +291,16 @@ const STRICT: (keyof Scores)[] = [
   "fakeBillRecall",
   // Check 21 P7: a nudge sent to someone who said no is the one thing the writer must not do.
   "followupSkipAccuracy",
+  // Check 24 P10: a stored voice must never keep a customer's details.
+  "voiceNoCustomerDetails",
+];
+/** Counts where any rise is a regression (false alarms). */
+const NO_RISE: (keyof Scores)[] = [
+  "injectionFalseAlarms",
+  "gasFalseAlarms",
+  "contractRightsFalseAlarms",
+  "paymentChangeFalseAlarms",
+  "municipalFalseAlarms",
 ];
 
 /** Every way the new scores are worse than the baseline. Empty = good to release. */
@@ -279,11 +312,7 @@ export function regressions(now: Scores, base: Scores | null): string[] {
     const a = now[key];
     const b = base[key];
     if (typeof b !== "number") continue;
-    if (
-      key === "injectionFalseAlarms" ||
-      key === "gasFalseAlarms" ||
-      key === "contractRightsFalseAlarms"
-    ) {
+    if (NO_RISE.includes(key)) {
       if (a > b) out.push(`${key}: ${b} → ${a}`);
     } else if (STRICT.includes(key) ? a < b : a < b - TOLERANCE) {
       out.push(`${key}: ${b} → ${a}`);

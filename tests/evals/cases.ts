@@ -11,6 +11,7 @@ import type { AttachmentCounts } from "@/server/attachment-rules";
 import type { FirstContactOpening } from "@/server/first-contact-rules";
 import type { InvoiceFacts } from "@/server/money-rules";
 import { DRAFT_V9_CASES } from "./cases-draft-v9";
+import { PIPELINE_CASES } from "./cases-pipeline";
 
 export type EvalCase = {
   id: string;
@@ -29,6 +30,21 @@ export type EvalCase = {
   attachments?: AttachmentCounts;
   /** Check 44 P1 + 45 P2 (draft.v9): the owner's two-letter state for the business block. */
   state?: string;
+  /** Check 22 P12: the email's Gmail labels (default INBOX), e.g. CATEGORY_PROMOTIONS. */
+  labels?: string[];
+  /**
+   * Check 22 P12: an earlier email from this sender exists (on another thread). Defaults to
+   * true unless `firstTimeSender` is true or "unknown".
+   */
+  prior?: boolean;
+  /** Check 22 P12: the email's Reply-To address (a form or lead site answering for a person). */
+  replyTo?: string;
+  /** Check 22 P12: older emails on the same thread (the owner's price before "go ahead"). */
+  earlier?: { direction: "in" | "out"; body: string; minutesBefore: number }[];
+  /** Check 22 P12: the email's language, for the per-language accuracy line. */
+  language?: "en" | "es" | "pt";
+  /** Check 24 P10: draft with one of the fixed voices (voice-cases.ts FIXED_VOICES). */
+  voice?: "short_casual" | "long_formal";
   /**
    * Check 12 P2: the invoice facts the thread already held before this email, so the balance
    * after `carryInvoiceFacts` can be scored (`expect.owedDollars`).
@@ -73,6 +89,8 @@ export type EvalCase = {
     waitUntil?: string | null;
     /** Check 22 P9: the summary must be English even when the email isn't. */
     summaryEnglish?: boolean;
+    /** Check 22 P12: false = the sender must NOT be read as a town office. */
+    municipalFalse?: boolean;
     /** classify.v3 signals; undefined = not scored for this case. */
     acceptsQuote?: boolean;
     jobDone?: boolean;
@@ -114,6 +132,10 @@ export type EvalCase = {
     maxWords?: number;
     /** draft.v9 (Check 43 P8): the language the reply must read as. */
     language?: "en" | "es" | "pt";
+    /** Check 23 P12: words that show it asked for what's missing ("photo", "address"). */
+    mustAsk?: string[];
+    /** Check 23 P12: a request with no details gets questions, never a {{price}} gap. */
+    noGapsWhenAskingFirst?: boolean;
   };
   /**
    * draft.v7 (replies package): drafted as a FIRST CONTACT (the owner never wrote to them),
@@ -3045,4 +3067,6 @@ export const EVAL_CASES: EvalCase[] = [
 
   // ── wave 2, Prompt versions step 2: draft.v9 (tests/evals/cases-draft-v9.ts) ──────
   ...DRAFT_V9_CASES,
+  // ── wave 2, Prompt versions step 9: the real sorting path and what owners care about ──
+  ...PIPELINE_CASES,
 ];
