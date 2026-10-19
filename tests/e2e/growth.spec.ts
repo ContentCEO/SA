@@ -163,15 +163,21 @@ const scrollBoundaryTo = (page: Page, fraction: number) =>
     window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY - f * window.innerHeight);
   }, fraction);
 
-/** The same, in small steps (`step` of a screen a frame, a fifth by default), like scrolling. */
+/**
+ * The same, in small steps (`step` of a screen a frame, a fifth by default), like scrolling. The
+ * goal is re-read every step: the sections above the boundary (content-visibility: auto) take
+ * their real height only as they come on screen, and where that differs from their estimate
+ * (another browser's text widths, e.g. CI's Chromium) the boundary moves down during the scroll.
+ */
 const stepBoundaryTo = (page: Page, fraction: number, step = 0.2) =>
   page.evaluate(
     async ([f, s]) => {
       const el = document.querySelector('[data-sa-half="growth"]')!;
       const vh = window.innerHeight;
-      const goal = el.getBoundingClientRect().top + window.scrollY - f * vh;
+      const goalNow = () => el.getBoundingClientRect().top + window.scrollY - f * vh;
       const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-      for (let i = 0; i < 400 && Math.abs(window.scrollY - goal) > 1; i++) {
+      for (let i = 0; i < 400 && Math.abs(window.scrollY - goalNow()) > 1; i++) {
+        const goal = goalNow();
         const d = goal - window.scrollY;
         const before = window.scrollY;
         window.scrollTo(0, Math.abs(d) <= s * vh ? goal : before + Math.sign(d) * s * vh);
