@@ -91,7 +91,10 @@ Davi runs several builder sessions at once. The build order for review prompts i
    the pinned GitHub issue titled "Migration lane" (create it if missing, with `gh issue create`)
    and unassigns after its PR merges. Others don't run `pnpm db:generate` while the lane is taken.
    Write the schema change last: rebase on the tip, then `pnpm db:generate`, then push at once.
-   Never renumber or edit a migration that has run on the shared database.
+   Never renumber or edit a migration that has run on the shared database. **A migration is frozen
+   the moment its branch is pushed, because the preview build applies it to the shared database**
+   (regenerating it with a new hash or `when` makes the migrator re-run it and the build fails).
+   Undo a pushed migration only with a new one.
 4. Shared files: `CLAUDE.md`, `docs/LAUNCH.md` and `docs/privacy-policy.md` are edited only by the
    session that merges branches (the integrator). Other builders write what those files need to
    say in `docs/notes/<branch>.md`; the integrator folds it in and deletes the note.
@@ -3521,14 +3524,21 @@ big)`; the hourly job runs `captureQuoteAmounts` first.
     expression lives once in `replyAddressExpr` (schema.ts) so the planner matches its index
     (`tests/unit/query-plans.test.ts`). `/admin`'s "last sorted" / "last morning email" are
     per-mailbox / per-workspace scalar subqueries (`lastSortedQuery` / `lastDigestQuery`).
-    **Held back (2026-10-19, CI `old-code-new-schema` on PR #14):** `0070` ships seven indexes,
-    not eight — `messages_mailbox_reply_address_idx` (Check 30 P4, `customerDetail`'s lookup) is
-    out of `schema.ts` and the regenerated 0070–0075 snapshots. With it, main's `notesForThreads`
-    (no ORDER BY; it takes the first row at `max(sent_at)`) gets same-second inbound emails from
-    the planner in reply-address order instead of insertion order, and main's control test
-    reads the wrong note. It can return (an additive `CREATE INDEX IF NOT EXISTS`, plus the plan
-    assertion in `query-plans.test.ts`) once main carries this branch's `order by id` tie-break
-    (this PR). At today's sizes the lookup is one mailbox's inbound rows; no measured loss.
+    **`messages_mailbox_reply_address_idx` (Check 30 P4, `customerDetail`'s lookup) shipped in
+    `0070` and is dropped again in `0076_drop_reply_address_index` (2026-10-19, CI
+    `old-code-new-schema` on PR #14).** With it, main's `notesForThreads` (no ORDER BY; it takes
+    the first row at `max(sent_at)`) gets same-second inbound emails from the planner in
+    reply-address order instead of insertion order, and main's control test reads the wrong note.
+    A first attempt (238dd83) regenerated 0070–0075 without the index — wrong: 0070–0075 had
+    already run on the shared database from the previous push's preview build, so the new hashes
+    and `when` values made the migrator try them again and the build failed at `0071`'s
+    `ADD COLUMN`. The repair restored 0070–0075 byte-for-byte and added `0076`, a plain
+    `DROP INDEX IF EXISTS` and the one reviewed non-additive migration in
+    `migrations-additive.test.ts` (dropping an index never breaks old code). `schema.ts` has no
+    index; the planner matches `replyAddressExpr` only when it returns (an additive
+    `CREATE INDEX IF NOT EXISTS` in a new migration, plus the plan assertion in
+    `query-plans.test.ts`) once main carries this branch's `order by id` tie-break (this PR). At
+    today's sizes the lookup is one mailbox's inbound rows; no measured loss.
   - **Extracted facts (Check 30 P6):** `threads.classified_prompt_version` records the classify
     version that wrote `extracted`; read `extracted` with `readExtracted(extracted, version?)`
     (src/server/extracted.ts), not casts. A new classify version that adds keys adds its schema

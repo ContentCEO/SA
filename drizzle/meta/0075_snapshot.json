@@ -1,6 +1,6 @@
 {
-  "id": "929dd774-b92b-426e-8df2-b19acb0e379d",
-  "prevId": "e3634c35-e927-41e0-aaee-c723ad589ead",
+  "id": "cbf25a33-b7a8-4c38-bb7a-e6d57c1cd00b",
+  "prevId": "ab5b25c7-9ac0-431e-bff9-5ae40ca5db2d",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -2125,6 +2125,28 @@
             }
           ],
           "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "messages_mailbox_reply_address_idx": {
+          "name": "messages_mailbox_reply_address_idx",
+          "columns": [
+            {
+              "expression": "mailbox_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "lower(trim(coalesce(\"reply_to_header\"->>'address', \"from_address\")))",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "direction = 'in'",
           "concurrently": false,
           "method": "btree",
           "with": {}

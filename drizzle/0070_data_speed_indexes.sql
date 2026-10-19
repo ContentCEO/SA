@@ -1,5 +1,4 @@
--- Data and speed, step 1 (Check 30 P1 + Check 29 P6 + Check 30 P4): seven indexes, nothing else.
--- (Check 30 P4's messages_mailbox_reply_address_idx is held back: see src/db/schema.ts, messages.)
+-- Data and speed, step 1 (Check 30 P1 + Check 29 P6 + Check 30 P4): eight indexes, nothing else.
 -- Additive only: old code keeps working; nothing is dropped or changed.
 -- Plain CREATE INDEX, not CONCURRENTLY: drizzle's migrator runs every pending migration inside
 -- one transaction, and CREATE INDEX CONCURRENTLY can't run in a transaction. A plain build holds
@@ -16,5 +15,6 @@ CREATE INDEX IF NOT EXISTS "customer_notes_mailbox_idx" ON "customer_notes" USIN
 CREATE INDEX IF NOT EXISTS "drafts_thread_created_idx" ON "drafts" USING btree ("thread_id","created_at");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "drafts_reply_to_message_idx" ON "drafts" USING btree ("reply_to_message_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "messages_mailbox_from_sent_idx" ON "messages" USING btree ("mailbox_id","from_address","sent_at");--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "messages_mailbox_reply_address_idx" ON "messages" USING btree ("mailbox_id",lower(trim(coalesce("reply_to_header"->>'address', "from_address")))) WHERE direction = 'in';--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "push_subscriptions_workspace_idx" ON "push_subscriptions" USING btree ("workspace_id");--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "threads_mailbox_classified_idx" ON "threads" USING btree ("mailbox_id","classified_at");
