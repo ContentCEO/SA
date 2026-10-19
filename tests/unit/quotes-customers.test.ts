@@ -1494,6 +1494,7 @@ describe("win/loss auto-guess", () => {
         confidence: 0.9,
         extracted: {
           ...classification().extracted,
+          wait_until: undefined,
           accepts_quote: true,
           quote_accepted: true,
           injection: true,

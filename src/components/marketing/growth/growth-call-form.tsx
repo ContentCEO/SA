@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { GROWTH_SERVICES } from "@/config/growth";
 import { siteConfig } from "@/config/site";
 import { TRADE_OPTIONS } from "@/config/trades";
+import { OtherTradeField } from "@/components/forms/other-trade-field";
 import { phoneHref } from "@/lib/phone-href";
 import { growthCopy } from "./growth-copy";
 
@@ -131,6 +132,13 @@ export function GrowthCallForm({ referrals = false }: { referrals?: boolean } = 
         required
         defaultValue={v.trade}
         error={e.trade}
+      />
+      {/* Check 41 P4: say which trade "Another trade" is. */}
+      <OtherTradeField
+        initialTrade={v.trade}
+        defaultValue={v.tradeOther}
+        error={e.tradeOther}
+        idBase="growth-trade-other"
       />
       <fieldset
         className="flex flex-col gap-2"

@@ -18,6 +18,7 @@ import {
 import { isReferralCode, referralsVisible } from "./referral-rules";
 import { firstTouch, NO_SOURCE, type SignupSource } from "./source-rules";
 import { workspaceByReferralCode } from "./referrals";
+import { tradeOtherField, tradeOtherFor } from "@/lib/trade-other";
 
 export const TEAM_SIZES = ["Just me", "2–5", "6–15", "16+"] as const;
 
@@ -42,6 +43,8 @@ export const waitlistInput = z.object({
     .email("That doesn't look like an email address."),
   phone: optional(40),
   trade: z.enum(tradeEnum.enumValues, { message: "Pick your trade." }),
+  /** Check 41 P4: "Which trade?" for "Another trade" (optional, one line, max 60). */
+  tradeOther: tradeOtherField.optional(),
   teamSize: z.enum(TEAM_SIZES, { message: "Pick how many people are in the business." }),
   note: optional(1000),
   /** Plan #47: the code from a referral link (?ref=). Anything malformed is dropped, not an error. */
@@ -68,7 +71,14 @@ export async function joinWaitlist(
   return db().transaction(async (tx) => {
     const [row] = await tx
       .insert(waitlist)
-      .values({ ...input, email, note, referralCode, ...source })
+      .values({
+        ...input,
+        tradeOther: tradeOtherFor(input.trade, input.tradeOther),
+        email,
+        note,
+        referralCode,
+        ...source,
+      })
       .onConflictDoNothing()
       .returning({ email: waitlist.email });
     if (row) return "joined" as const;
@@ -92,6 +102,7 @@ export async function joinWaitlist(
       .set({
         teamSize: input.teamSize,
         trade: input.trade,
+        tradeOther: tradeOtherFor(input.trade, input.tradeOther),
         // The growth-only row's phone came from Growth and is still in its block; this column
         // now holds only what the app form was given (so a later Growth request can't leave an
         // old number behind here).

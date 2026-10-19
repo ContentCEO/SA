@@ -268,7 +268,7 @@ describe("deposit (#28)", () => {
     expect(d).toMatchObject({
       purpose: "deposit",
       kind: "reply",
-      promptVersion: "draft.v8+purpose.v2",
+      promptVersion: "draft.v9+purpose.v2",
       status: "pending",
       toAddress: "dana@customer.com",
       flags: [],
@@ -337,7 +337,7 @@ describe("deposit (#28)", () => {
       const t = await acceptedQuote({ extracted });
       const { draftId, calls } = await created(t, reply({ body: "Hi Dana,\n\nSure.\n\nDavi" }));
       expect((await draftRow(draftId)).purpose).toBeNull();
-      expect((await draftRow(draftId)).promptVersion).toBe("draft.v8");
+      expect((await draftRow(draftId)).promptVersion).toBe("draft.v9");
       expect(calls[0]!.user).not.toContain("## Task:");
     }
   });
@@ -508,7 +508,7 @@ describe("deposit (#28)", () => {
       expect(r.status).toBe("created");
       const d = await draftRow((r as { draftId: string }).draftId);
       expect(d.purpose).toBeNull();
-      expect(d.promptVersion).toBe("draft.v8");
+      expect(d.promptVersion).toBe("draft.v9");
       expect(calls[0]!.user).not.toContain("## Task: deposit");
       // Clear it for the next trigger.
       await database.update(drafts).set({ status: "discarded" }).where(eq(drafts.id, d.id));

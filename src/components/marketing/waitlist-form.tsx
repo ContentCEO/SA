@@ -11,6 +11,7 @@ import { siteConfig } from "@/config/site";
 import { TRADE_OPTIONS } from "@/config/trades";
 import { ReferralField } from "@/components/marketing/referral-field";
 import { SourceFields } from "./source-fields";
+import { OtherTradeField } from "@/components/forms/other-trade-field";
 
 const trades = TRADE_OPTIONS.map((t) =>
   t.value === "other" ? { ...t, label: "Another trade" } : t,
@@ -110,6 +111,8 @@ export function WaitlistForm({ referrals = false }: { referrals?: boolean } = {}
           error={e.teamSize}
         />
       </div>
+      {/* Check 41 P4: say which trade "Another trade" is. */}
+      <OtherTradeField initialTrade={v.trade} defaultValue={v.tradeOther} error={e.tradeOther} />
       <TextField
         name="phone"
         type="tel"

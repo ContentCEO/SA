@@ -81,6 +81,17 @@ export function describeActivity(
       return `Drafted a question${to} asking if they went another way`;
     case "followup_drafted":
       return `Drafted a follow-up${to}${detail.nudgeNumber === 2 ? " (the last one)" : ""}${about}`;
+    // Check 21 P7: the writer read the conversation and left the nudge out (a code, no text).
+    case "followup_skipped": {
+      const why: Record<string, string> = {
+        declined: "they said no",
+        asked_to_wait: "they asked you to wait",
+        already_answered: "it was already answered",
+        paid: "they said they paid",
+      };
+      const reason = typeof detail.code === "string" ? why[detail.code] : undefined;
+      return `No follow-up written${to}${reason ? `: ${reason}` : ""}${about}`;
+    }
     case "reply_sent":
       if (detail.autopilot) return `Autopilot sent a reply${to}${about}`;
       return `You sent ${detail.kind === "followup" ? "a follow-up" : "a reply"}${to}${
@@ -384,6 +395,7 @@ export const DESCRIBED_ACTIONS = [
   "signed_out_everywhere",
   "closing_question",
   "followup_drafted",
+  "followup_skipped",
   "reply_sent",
   "reply_sent_from_gmail",
   "owner_wrote_own_reply",

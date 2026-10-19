@@ -21,6 +21,7 @@ import {
 } from "./growth-note";
 import { isReferralCode, referralsVisible } from "./referral-rules";
 import { firstTouch, NO_SOURCE, type SignupSource } from "./source-rules";
+import { tradeOtherField, tradeOtherFor } from "@/lib/trade-other";
 
 const msg = growthCopy.errors;
 
@@ -66,6 +67,8 @@ export const growthInput = z.object({
     .max(254, msg.emailBad)
     .email(msg.emailBad),
   trade: z.enum(tradeEnum.enumValues, { message: msg.trade }),
+  /** Check 41 P4: "Which trade?" for "Another trade" (optional, one line, max 60). */
+  tradeOther: tradeOtherField.optional(),
   services: z
     .array(z.enum(GROWTH_SERVICE_VALUES, { message: msg.serviceUnknown }))
     .min(1, msg.servicesNone)
@@ -112,6 +115,7 @@ export async function requestGrowthCall(
         name: input.name,
         phone: input.phone,
         trade: input.trade,
+        tradeOther: tradeOtherFor(input.trade, input.tradeOther),
         teamSize: GROWTH_ONLY_TEAM_SIZE,
         note: formatGrowthBlock(request),
         referralCode,
@@ -132,6 +136,9 @@ export async function requestGrowthCall(
       .update(waitlist)
       .set({
         trade: existing.trade ?? input.trade,
+        tradeOther: existing.trade
+          ? existing.tradeOther
+          : tradeOtherFor(input.trade, input.tradeOther),
         // A growth-only row's phone only ever came from Growth: keep the newest. An app entry's
         // phone is only ever the one they gave the app form; the Growth number lives in the block,
         // so a replaced request leaves no old number behind (as the privacy policy says).

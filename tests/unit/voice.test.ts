@@ -89,7 +89,7 @@ describe("learning the owner's voice", () => {
     expect(await learnVoice(workspaceId, deps())).toBe("ready");
     expect(calls).toHaveLength(1);
     expect(calls[0]!.model).toBe("claude-sonnet-5");
-    expect(calls[0]!.user).toContain("Here are 8 emails the owner sent");
+    expect(calls[0]!.user).toContain("Here are 8 emails sent from the business");
     expect(calls[0]!.user).not.toContain("QUOTED-CUSTOMER-TEXT");
     expect(calls[0]!.user).not.toContain("INBOUND-CUSTOMER-TEXT");
 
@@ -262,7 +262,7 @@ describe("Check 24 P2: only the owner's own words go to the model", () => {
     setModelTransportForTests(transport);
     expect(await learnVoice(workspaceId, deps())).toBe("ready");
     const user = calls[0]!.user;
-    expect(user).toContain("Here are 6 emails the owner sent");
+    expect(user).toContain("Here are 6 emails sent from the business");
     expect(user).toContain("OWNER-OUTLOOK");
     expect(user).toContain("Sounds good");
     expect(user).not.toContain("CUSTOMER-");

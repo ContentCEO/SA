@@ -19,6 +19,7 @@ import { normalizeTown } from "./service-area-rules";
 import { isTimeZone } from "./time-zone-rules";
 import { BIG_QUOTE_DAY_CHOICES } from "./followup-rules";
 import { orStored, unknownStored } from "./stored-value-rules";
+import { tradeOtherField, tradeOtherFor } from "@/lib/trade-other";
 
 /** Textareas: trim, cap, empty → null. */
 const longText = (max = 2000) =>
@@ -195,6 +196,8 @@ export const businessProfileInput = z.object({
     .min(1, "What's the business called?")
     .max(120, "Keep the name under 120 characters."),
   trade: tradeField,
+  /** Check 41 P4: "Which trade?" for "Something else". Left out = leave it as it is. */
+  tradeOther: tradeOtherField.optional(),
   /**
    * Round 2 (TW A4): up to two more trades, as the form's ticked boxes joined by commas.
    * Left out entirely = leave them as they are.
@@ -306,6 +309,7 @@ export async function saveBusinessProfile(
   const {
     businessName,
     trade,
+    tradeOther,
     extraTrades,
     timeZone,
     hicNumber,
@@ -355,6 +359,10 @@ export async function saveBusinessProfile(
     .set({
       businessName,
       trade,
+      // Check 41 P4: kept only for "Something else"; a listed trade clears it.
+      ...(tradeOther !== undefined || trade !== "other"
+        ? { tradeOther: tradeOtherFor(trade, tradeOther ?? null) }
+        : {}),
       ...(extraTrades
         ? {
             extraTrades: [...keptExtra, ...cleanExtraTrades(extraTrades, trade)] as Trade[],

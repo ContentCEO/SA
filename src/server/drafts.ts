@@ -1,4 +1,6 @@
 import "server-only";
+import { LEAD_RELAY_LOCAL_PATTERN } from "@/config/lead-sources";
+import { leadPlatformOf } from "./monthly-rules";
 import { MAX_FOLLOWUPS } from "@/config/rules";
 import { chaseTiming, isBigQuote, needsOwnerBlocksNudge, nudgeDueDate } from "./followup-rules";
 import { createHash } from "node:crypto";
@@ -17,7 +19,12 @@ import {
   or,
   sql,
 } from "drizzle-orm";
-import { chooseReplyLanguage, detectLanguage, isReplyLanguage } from "@/ai/language";
+import {
+  chooseReplyLanguage,
+  detectLanguage,
+  isReplyLanguage,
+  type ReplyLanguage,
+} from "@/ai/language";
 import { callStructured } from "@/ai/client";
 import {
   checkDraft,
@@ -50,7 +57,8 @@ import {
   type ModelDraft,
   type Opening,
   type WorkspaceContext,
-} from "@/ai/prompts/draft.v8";
+  localDay,
+} from "@/ai/prompts/draft.v9";
 import {
   OPENING_TWEAKS,
   OPENING_TWEAKS_PROMPT_VERSION,
@@ -66,8 +74,10 @@ import {
 import {
   FOLLOWUP_INSTRUCTIONS,
   FOLLOWUP_PROMPT_VERSION,
+  followupSchema,
   followupTask,
-} from "@/ai/prompts/followup.v4";
+  type FollowupSkip,
+} from "@/ai/prompts/followup.v5";
 import {
   closingQuestionTask,
   depositTask,
@@ -131,7 +141,7 @@ import {
   SendingBlockedError,
 } from "./lifecycle";
 import { batchEligible, firstLine } from "./batch-rules";
-import { isInvoiceThread, paymentSaid } from "./money-rules";
+import { invoiceOf, isInvoiceThread, paymentSaid, saidSentBlocksNudge } from "./money-rules";
 import { isQuoteThread, isServiceCall, quoteStopsNudges } from "./quote-rules";
 import { BACK_ON_TOP_MS, isEmergency, usableTimeZone } from "./snooze-rules";
 import { inEmergencyLane, recentEmergency } from "./emergency-rules";
@@ -252,6 +262,14 @@ export type CreateOutcome =
         | "payment_change"
         /** Check 48 P1: "is this a bot?" — only the owner's tap drafts it. */
         | "asks_if_ai"
+        /** Check 39 P5: rebate letters, registrations, dispatches — only the owner's tap. */
+        | "paperwork"
+        /** Check 40 P4: the reply would go to a lead marketplace's robot (Modernize, eLocal…). */
+        | "lead_platform"
+        /** Check 21 P7: the nudge writer declined (they said no, asked to wait, paid…). */
+        | "writer_declined"
+        /** Check 38 P5: cancelling the contract / their rights under it — the owner's tap only. */
+        | "contract_rights"
         // Round 2 (FW E11): the owner said they called after the newest email.
         | "answered_by_phone"
         // Purpose drafts (plan #26 #28 #29). S6 adds the per-purpose eligibility reasons.
@@ -498,12 +516,17 @@ export async function purposeSentOn(
  * newest email said they paid (we may not have marked it — a deposit is not the job being
  * paid — but they aren't chased right after paying), or a purpose note went out (A3).
  */
-async function nudgeBlocked(thread: {
-  id: string;
-  category: string | null;
-  extracted: unknown;
-}): Promise<boolean> {
+async function nudgeBlocked(
+  thread: {
+    id: string;
+    category: string | null;
+    extracted: unknown;
+  },
+  now: Date = new Date(),
+): Promise<boolean> {
   if (paymentSaid(thread.extracted) === "paid") return true;
+  // Check 12 P3: "the check is in the mail" gets 7 days to clear before any reminder.
+  if (saidSentBlocksNudge(invoiceOf(thread.extracted), now)) return true;
   return purposeSentOn(thread.id, { invoiceThread: isInvoiceThread(thread) });
 }
 
@@ -631,6 +654,57 @@ async function customerOf(threadId: string) {
   return m ? { name: customerReplyName(m), address: customerReplyAddress(m) } : null;
 }
 
+/**
+ * Check 21 P7: the nudge writer declined on this thread and nothing has been written since
+ * (`extracted.nudge_skip_at` is newer than the thread's newest message). Pure.
+ */
+export function nudgeSkipStands(extracted: unknown, lastMessageAt: Date | null): boolean {
+  const x = (extracted ?? {}) as { nudge_skip?: unknown; nudge_skip_at?: unknown };
+  if (typeof x.nudge_skip !== "string" || typeof x.nudge_skip_at !== "string") return false;
+  const at = Date.parse(x.nudge_skip_at);
+  if (!Number.isFinite(at)) return false;
+  return lastMessageAt == null || at > lastMessageAt.getTime();
+}
+
+/** Check 21 P7: the writer's decline, as a code on the thread and a content-free Activity row. */
+async function recordNudgeSkip(
+  threadId: string,
+  workspaceId: string,
+  code: FollowupSkip,
+  now: Date,
+) {
+  await db()
+    .update(threads)
+    .set({
+      extracted: sql`coalesce(${threads.extracted}, '{}'::jsonb) || ${JSON.stringify({
+        nudge_skip: code,
+        nudge_skip_at: now.toISOString(),
+      })}::jsonb`,
+    })
+    .where(eq(threads.id, threadId));
+  await db().insert(activityLog).values({
+    workspaceId,
+    actor: "squared_away",
+    action: "followup_skipped",
+    threadId,
+    detail: { code },
+  });
+}
+
+/** Check 40 P2: a stored email's attachment counts for the drafter's "Attached:" line, or null. */
+function attachmentCounts(m: {
+  attachmentImages?: number | null;
+  attachmentPdfs?: number | null;
+  attachmentOther?: number | null;
+}): { images: number; pdfs: number; other: number } | null {
+  const c = {
+    images: m.attachmentImages ?? 0,
+    pdfs: m.attachmentPdfs ?? 0,
+    other: m.attachmentOther ?? 0,
+  };
+  return c.images + c.pdfs + c.other > 0 ? c : null;
+}
+
 /** A reader for a stored email's Reply-To: the one given, else the Gmail client itself. */
 function replyReader(
   mailbox: Mailbox,
@@ -641,7 +715,7 @@ function replyReader(
   return typeof w.getMessage === "function" ? (w as Pick<MailboxReader, "getMessage">) : null;
 }
 
-type DraftContext = WorkspaceContext & {
+export type DraftContext = WorkspaceContext & {
   reviewUrl: string | null;
   /** The owner's time zone, for "Today is…" and each email's time (review A8). */
   timeZone: string | null;
@@ -691,6 +765,79 @@ function termsCheck(
 /** Check 23 P5: the owner's written terms — payment terms, policies and price list. */
 function ownerTerms(ctx: DraftContext): string {
   return [ctx.paymentTerms, ctx.policies, ctx.pricingNotes].filter(Boolean).join("\n");
+}
+
+/** The owner's own facts a draft may draw from (profile, price list, licenses, notes). */
+function ownerFactsOf(ctx: DraftContext): (string | null)[] {
+  return [
+    ctx.pricingNotes,
+    ctx.hours,
+    ctx.leadTime,
+    ctx.policies,
+    ctx.paymentTerms,
+    ctx.services,
+    ctx.signature,
+    // Check 38 P6: the saved license numbers are the owner's own words.
+    licenseFacts(ctx.licenses),
+    ...ctx.seasonalNotes.map((n) => n.text),
+    // Check 23 P3: a seasonal note's last day, as a draft would write it ("November 27").
+    ...ctx.seasonalNotes.map((n) => spellDate(n.endsOn)),
+  ];
+}
+
+/**
+ * Check 23 P12: the context `checkDraft` gets for a reply or nudge — what the draft may draw
+ * facts from (the conversation and the owner's facts), the owner's own words apart (an amount
+ * only the customer named is flagged), the when-words rules, the never-say / never-promise
+ * lists, licenses, price list and terms. createDraftForThread and the prompt evals both use it.
+ * Deposit / review terms checks are added by the caller.
+ */
+export function buildCheckContext(o: {
+  ctx: DraftContext;
+  conversation: { m: { direction: string; sentAt: Date }; text: string }[];
+  ownerNote: string | null;
+  now: Date;
+  replyLanguage?: ReplyLanguage;
+  invoiceReminder?: boolean;
+  firstContact?: boolean;
+  knownNames?: string[];
+}) {
+  const { ctx, conversation, ownerNote } = o;
+  const ownerFacts = ownerFactsOf(ctx);
+  const ownerWrote = conversation.filter((x) => x.m.direction === "out").map((x) => x.text);
+  const lastInbound = [...conversation].reverse().find((x) => x.m.direction === "in");
+  return {
+    ...(o.replyLanguage ? { replyLanguage: o.replyLanguage } : {}),
+    // Check 12 P7: an invoice reminder never offers an easy out.
+    invoiceReminder: o.invoiceReminder ?? false,
+    sourceText: [conversation.map((x) => x.text).join("\n"), ...ownerFacts, ownerNote]
+      .filter(Boolean)
+      .join("\n"),
+    ...whenContext(
+      ctx,
+      conversation,
+      [ownerNote],
+      o.now,
+      asksWhenAvailable(lastInbound?.text ?? ""),
+    ),
+    // Amounts only the customer named aren't the owner's price (round 2 A4).
+    ownerSourceText: [...ownerWrote, ...ownerFacts, ownerNote].filter(Boolean).join("\n"),
+    ownerInstruction: ownerNote ?? null,
+    doNotPromise: ctx.doNotPromise,
+    phrasesAvoided: ctx.voice?.phrasesAvoided ?? [],
+    neverSay: ctx.neverSay,
+    licenses: ctx.licenses,
+    state: ctx.state,
+    // Check 23 P14: hold the price list's "from" and the job each price is for.
+    priceList: ctx.pricingNotes,
+    // Check 23 P13: a first reply's "Thanks for reaching out" isn't filler.
+    firstContact: o.firstContact ?? false,
+    // Check 23 P6: the names on the conversation's From lines may be used.
+    knownNames: o.knownNames ?? [],
+    // Check 23 P5: every reply carries the owner's terms for the light payment-terms check.
+    termsSource: ownerTerms(ctx),
+    ownerWrote: ownerWrote.join("\n"),
+  };
 }
 
 /**
@@ -813,7 +960,13 @@ export function scoreDraft(
  */
 export async function workspaceContext(
   workspaceId: string,
-  ws: { businessName: string | null; trade: string | null; extraTrades?: string[] | null },
+  ws: {
+    businessName: string | null;
+    trade: string | null;
+    extraTrades?: string[] | null;
+    /** Check 41 P4: the owner's own words for "Something else". */
+    tradeOther?: string | null;
+  },
   now: Date = new Date(),
 ): Promise<DraftContext> {
   const [profile] = await db()
@@ -828,6 +981,7 @@ export async function workspaceContext(
     businessName: ws.businessName,
     trade: ws.trade,
     extraTrades: ws.extraTrades ?? [],
+    tradeOther: ws.tradeOther ?? null,
     services: profile?.services ?? null,
     serviceArea: profile?.serviceArea ?? null,
     hours: profile?.hours ?? null,
@@ -1006,6 +1160,8 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
     co_alarm?: boolean;
     electrical_hazard?: boolean;
     asks_if_ai?: boolean;
+    contract_rights?: boolean;
+    routine_paperwork?: boolean;
     bill_direction?: string;
     model_category?: string;
     bounced?: boolean;
@@ -1021,6 +1177,10 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
     if (marks.payment_change) return { status: "skipped", reason: "payment_change" };
     // Check 48 P1 + 43 P2: "is this a bot?" — the owner answers it (their tap drafts it).
     if (marks.asks_if_ai) return { status: "skipped", reason: "asks_if_ai" };
+    // Check 38 P5: cancelling the contract, the deposit back — the owner answers (their tap).
+    if (marks.contract_rights) return { status: "skipped", reason: "contract_rights" };
+    // Check 39 P5: a rebate processor, a registration desk or a dispatch robot reads no reply.
+    if (marks.routine_paperwork) return { status: "skipped", reason: "paperwork" };
     // Ideas H4: a kind the owner chose feeds a job's draft only when the sorter's own kind
     // would have been drafted too ("out of Junk" on something it called junk is a tap only).
     if (
@@ -1087,7 +1247,7 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
         !isInvoiceThread(thread)) ||
       // Nor a thread where a deposit, review request or closing question went out (A3) —
       // a deposit only while it's a quote — or whose customer just said they paid.
-      (await nudgeBlocked(thread))
+      (await nudgeBlocked(thread, now))
     ) {
       return { status: "skipped", reason: "followup_not_allowed" };
     }
@@ -1096,6 +1256,9 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
     // Check 21 P2: they asked us to wait ("after the holidays"): not before that day.
     if (thread.nudgeAfter && thread.nudgeAfter.getTime() > now.getTime())
       return { status: "skipped", reason: "wait_requested" };
+    // Check 21 P7: the writer declined on this conversation and nobody has written since.
+    if (nudgeSkipStands(thread.extracted, thread.lastMessageAt))
+      return { status: "skipped", reason: "writer_declined" };
     const sentNudges = await countSentFollowups(threadId);
     if (sentNudges >= MAX_FOLLOWUPS) return { status: "skipped", reason: "followup_cap" };
     nudgeNumber = sentNudges === 0 ? 1 : 2;
@@ -1266,6 +1429,11 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
   if (isEmailToTextAddress(to)) return { status: "skipped", reason: "text_address" };
   // A thread sorted before lead channels existed: the address itself says it's a lead site.
   if (channelOf(to)?.kind === "site") return { status: "skipped", reason: "lead_site" };
+  // Check 40 P4: a lead marketplace or quote widget with no usable Reply-To (Modernize, eLocal,
+  // Roofle): the reply would reach the robot. Not even on the owner's tap. A per-customer relay
+  // address (reply+…@) reaches one person and still drafts.
+  if (leadPlatformOf(to) && !new RegExp(LEAD_RELAY_LOCAL_PATTERN).test(to.split("@")[0] ?? ""))
+    return { status: "skipped", reason: "lead_platform" };
   // A phone-number-shaped address at a gateway we don't know: jobs skip it; the owner's tap
   // drafts it with a flag first (which also keeps it out of batch and autopilot). An address
   // the owner has written to before is theirs to use.
@@ -1346,7 +1514,14 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
   const dispute = !safety && disputeThread(thread);
   const wsBlock = workspaceBlock(ctx);
   const baseTask = followup
-    ? followupTask({ nudgeNumber, daysQuiet })
+    ? followupTask({
+        nudgeNumber,
+        daysQuiet,
+        // Check 12 P7: an invoice reminder is a different job from a quote nudge.
+        kind: isInvoiceThread(thread) ? "invoice" : "quote",
+        // Check 21 P1: "The customer said they'd look it over on Thursday, October 16."
+        acknowledgedOn: onlyAcksSince ? localDay(last.sentAt, ctx.timeZone) : null,
+      })
     : purpose === "deposit"
       ? depositTask({ paymentTerms: ctx.paymentTerms })
       : purpose === "review_request"
@@ -1358,6 +1533,10 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
             : firstContact
               ? FIRST_CONTACT_TASK
               : undefined;
+  const lastInbound = [...withText].reverse().find((x) => x.m.direction === "in");
+  // Check 43 P8: the reply's language, decided in code from the customer's newest email; the
+  // conversation block tells the drafter (draft.v9) and the check reads the same choice.
+  const language = chooseReplyLanguage(detectLanguage(lastInbound?.text), ctx.replyLanguages);
   const convo = conversationBlock({
     now,
     timeZone: ctx.timeZone,
@@ -1367,6 +1546,7 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
     extracted: thread.extracted,
     ownerNote: opts.ownerNote,
     task: dispute ? `${baseTask ?? DEFAULT_REPLY_TASK}\n\n${DISPUTE_TASK}` : baseTask,
+    replyLanguage: language,
     messages: withText.map(({ m, text }) => ({
       from:
         m.direction === "out"
@@ -1375,68 +1555,26 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
       direction: m.direction,
       sentAt: m.sentAt,
       body: text,
+      // Check 40 P2: what the customer attached (counts only; the drafter can't see them).
+      attachments: attachmentCounts(m),
     })),
   });
 
-  // What the draft may draw facts from, and what it must never say.
-  const ownerFacts = [
-    ctx.pricingNotes,
-    ctx.hours,
-    ctx.leadTime,
-    ctx.policies,
-    ctx.paymentTerms,
-    ctx.services,
-    ctx.signature,
-    // Check 38 P6: the saved license numbers are the owner's own words.
-    licenseFacts(ctx.licenses),
-    ...ctx.seasonalNotes.map((n) => n.text),
-    // Check 23 P3: a seasonal note's last day, as a draft would write it ("November 27").
-    ...ctx.seasonalNotes.map((n) => spellDate(n.endsOn)),
-  ];
-  const lastInbound = [...withText].reverse().find((x) => x.m.direction === "in");
-  // Check 43 P8: the reply's language, decided in code from the customer's newest email.
-  const language = chooseReplyLanguage(detectLanguage(lastInbound?.text), ctx.replyLanguages);
+  // What the draft may draw facts from, and what it must never say (Check 23 P12: one builder,
+  // shared with the evals so they can't drift).
   const checkContext = {
-    replyLanguage: language.reply,
-    sourceText: [withText.map((x) => x.text).join("\n"), ...ownerFacts, opts.ownerNote]
-      .filter(Boolean)
-      .join("\n"),
-    ...whenContext(
+    ...buildCheckContext({
       ctx,
-      withText,
-      [opts.ownerNote],
+      conversation: withText,
+      ownerNote: opts.ownerNote ?? null,
       now,
-      asksWhenAvailable(lastInbound?.text ?? ""),
-    ),
-    // Amounts only the customer named aren't the owner's price (round 2 A4).
-    ownerSourceText: [
-      ...withText.filter((x) => x.m.direction === "out").map((x) => x.text),
-      ...ownerFacts,
-      opts.ownerNote,
-    ]
-      .filter(Boolean)
-      .join("\n"),
-    ownerInstruction: opts.ownerNote ?? null,
-    doNotPromise: ctx.doNotPromise,
-    phrasesAvoided: ctx.voice?.phrasesAvoided ?? [],
-    neverSay: ctx.neverSay,
-    licenses: ctx.licenses,
-    state: ctx.state,
-    // Check 23 P14: hold the price list's "from" and the job each price is for.
-    priceList: ctx.pricingNotes,
-    // Check 23 P13: a first reply's "Thanks for reaching out" isn't filler.
-    firstContact,
-    // Check 23 P6: the names on the conversation's From lines may be used.
-    knownNames: withText
-      .flatMap(({ m }) => [m.fromName, customerReplyName(m)])
-      .filter((n): n is string => !!n),
-    // Check 23 P5: every reply carries the owner's terms for the light payment-terms check
-    // (deposit and review notes replace these with their own, stricter check below).
-    termsSource: ownerTerms(ctx),
-    ownerWrote: withText
-      .filter((x) => x.m.direction === "out")
-      .map((x) => x.text)
-      .join("\n"),
+      replyLanguage: language.reply,
+      invoiceReminder: followup && isInvoiceThread(thread),
+      firstContact,
+      knownNames: withText
+        .flatMap(({ m }) => [m.fromName, customerReplyName(m)])
+        .filter((n): n is string => !!n),
+    }),
     // Deposit and review notes: no percentage, way to pay or incentive the owner never set (A4).
     ...termsCheck(purpose, ctx, {
       wrote: withText.filter((x) => x.m.direction === "out").map((x) => x.text),
@@ -1455,7 +1593,7 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
     ? `${basePromptVersion}+${DISPUTE_CAUTION_PROMPT_VERSION}`
     : basePromptVersion;
 
-  let result: (ModelDraft & { opening?: Opening }) | null = null;
+  let result: (ModelDraft & { opening?: Opening; skip?: FollowupSkip | null }) | null = null;
   if (safety && safetyKind) result = SAFETY_NOTES[safetyKind].note(ctx);
   else if (opts.beforeModelCall && !(await opts.beforeModelCall()))
     return { status: "skipped", reason: "rate_limited" };
@@ -1474,11 +1612,18 @@ async function writeDraftForThread(threadId: string, opts: CreateOpts): Promise<
           { text: wsBlock, cache: true },
         ],
         user: convo,
-        // Replies (and purpose notes) carry draft.v7's `opening`; nudges keep their own output.
-        schema: followup ? draftSchema : replyDraftSchema,
+        // Replies (and purpose notes) carry draft.v7's `opening`; nudges carry `skip`.
+        schema: followup ? followupSchema : replyDraftSchema,
         now,
       };
       result = (await callStructured(request)) ?? (await callStructured(request));
+      // Check 21 P7: the writer declined ("they said no", "they asked to wait"): no draft, no
+      // Gmail draft, a content-free log, and the thread remembers it until someone writes.
+      const skip = followup ? (result as { skip?: FollowupSkip | null } | null)?.skip : null;
+      if (skip) {
+        await recordNudgeSkip(threadId, workspace.id, skip, now);
+        return { status: "skipped", reason: "writer_declined" };
+      }
       if (result?.body.trim()) {
         // Something the owner explicitly banned slipped in: one fresh attempt, then flag (plan #23).
         const first = checkDraft(result.body.trim(), checkContext);
@@ -2918,6 +3063,10 @@ export async function reviseDraft(
     task: dispute
       ? `${reviseTask(startText, ask, spoken !== null)}\n\n${DISPUTE_TASK}`
       : reviseTask(startText, ask, spoken !== null),
+    // Check 43 P8: a change keeps the language the draft was written for.
+    replyLanguage: isReplyLanguage(draft.replyLanguage)
+      ? { customer: null, reply: draft.replyLanguage }
+      : null,
     messages: withText.map(({ m, text }) => ({
       from:
         m.direction === "out"
@@ -2926,6 +3075,7 @@ export async function reviseDraft(
       direction: m.direction,
       sentAt: m.sentAt,
       body: text,
+      attachments: attachmentCounts(m),
     })),
   });
   const request = {
@@ -4022,7 +4172,12 @@ export async function threadsToAutoDraft(mailboxId: string, limit = 10): Promise
     // A safety note is written whatever the sort; createDraftForThread writes it once per
     // thread, then the thread waits for the owner.
     or(
-      and(eq(threads.needsOwner, false), inArray(threads.category, [...AUTO_DRAFT_CATEGORIES])),
+      and(
+        eq(threads.needsOwner, false),
+        inArray(threads.category, [...AUTO_DRAFT_CATEGORIES]),
+        // Check 39 P5: paperwork robots never take a draft slot.
+        sql`(${threads.extracted}->>'routine_paperwork') is distinct from 'true'`,
+      ),
       and(
         safetyWaiting,
         // Never on junk unless the owner has written on the conversation (the note itself

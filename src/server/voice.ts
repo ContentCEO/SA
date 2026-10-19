@@ -6,19 +6,29 @@ import {
   VOICE_INSTRUCTIONS,
   VOICE_PROMPT_VERSION,
   voiceSchema,
-} from "@/ai/prompts/voice.v3";
+} from "@/ai/prompts/voice.v4";
 import { AiCapReachedError } from "@/ai/usage";
+import { injectionCheck } from "@/ai/guards";
+import { ownerFirstName } from "@/ai/prompts/draft.v9";
+import {
+  VOICE_EXAMPLES_INSTRUCTIONS,
+  VOICE_EXAMPLES_PROMPT_VERSION,
+  voiceExamplesSchema,
+  voiceSettingsBlock,
+} from "@/ai/prompts/voice-examples.v1";
+import { voiceExamplesRequested, enqueue } from "@/jobs/client";
 import { db } from "@/db";
 import {
   activityLog,
   appSettings,
   businessProfiles,
   drafts,
+  type Mailbox,
   mailboxes,
   users,
+  type VoiceProfile,
   voiceProfiles,
   workspaces,
-  type Mailbox,
 } from "@/db/schema";
 import { sendEmail, type EmailSender } from "@/lib/email";
 import { appUrl } from "@/lib/app-url";
@@ -171,8 +181,13 @@ export async function learnVoice(
 
   await recordAttempt(workspaceId, "learning", now);
   try {
-    const stats: LearnStats = { emailsRead: 0, forwardsSkipped: 0, appSentSkipped: 0 };
-    const outcome = await learnFrom(workspaceId, mailbox, opts, now, stats);
+    const stats: LearnStats = {
+      emailsRead: 0,
+      forwardsSkipped: 0,
+      appSentSkipped: 0,
+      attackSkipped: 0,
+    };
+    const outcome = await learnFrom(workspaceId, mailbox, opts, now, stats, existing ?? null);
     // Counts only: never ids, addresses or text.
     console.info("voice_learn", { workspaceId, outcome, ...stats });
     return outcome;
@@ -188,7 +203,13 @@ export async function learnVoice(
   }
 }
 
-type LearnStats = { emailsRead: number; forwardsSkipped: number; appSentSkipped: number };
+type LearnStats = {
+  emailsRead: number;
+  forwardsSkipped: number;
+  appSentSkipped: number;
+  /** Check 24 P5: sent emails the attack check flagged (a forwarded "Note for the AI…"), never sent. */
+  attackSkipped: number;
+};
 
 /** Gmail ids of replies sent unchanged from the app, across the workspace's mailboxes. */
 async function appSentMessageIds(workspaceId: string): Promise<Set<string>> {
@@ -212,6 +233,7 @@ async function learnFrom(
   opts: VoiceDeps,
   now: Date,
   stats: LearnStats,
+  existing: VoiceProfile | null,
 ): Promise<VoiceOutcome> {
   const reader = (opts.readerFor ?? ((m) => serverMailboxClient(m)))(mailbox);
 
@@ -253,6 +275,11 @@ async function learnFrom(
     let total = 0;
     for (const b of fetched) {
       if (!b || total + b.length > TOTAL_CHARS) continue;
+      // Check 24 P5: a planted instruction in a forward never reaches the voice prompt.
+      if (injectionCheck(b).flagged) {
+        stats.attackSkipped++;
+        continue;
+      }
       bodies.push(b);
       total += b.length;
     }
@@ -272,6 +299,8 @@ async function learnFrom(
     return "not_enough_mail";
   }
 
+  // Check 24 P9: whose voice to describe — the profile signature's name, else the owner's name.
+  const ownerFirst = await ownerFirstNameFor(workspaceId);
   let result;
   try {
     const request = {
@@ -281,7 +310,7 @@ async function learnFrom(
       promptVersion: VOICE_PROMPT_VERSION,
       maxTokens: 8192,
       system: [{ text: VOICE_INSTRUCTIONS, cache: false }],
-      user: sentMailBlock(bodies),
+      user: sentMailBlock(bodies, ownerFirst),
       schema: voiceSchema,
       now,
     };
@@ -306,12 +335,30 @@ async function learnFrom(
     .where(eq(businessProfiles.workspaceId, workspaceId));
   const allow = scrubAllowFrom(business?.signature);
   const clean = (t: string, max: number) => scrubText(t, allow).slice(0, max);
+  // Check 24 P5: nothing the attack check flags is stored (it would ride along in every draft).
+  const safe = (t: string) => !injectionCheck(t).flagged;
+  // Check 24 P9: who signs the mail — first names only, scrubbed, at most five.
+  const writers = result.writers
+    .map((w) => ({
+      name: clean(w.name, 40).split(/\s+/)[0] ?? "",
+      share: w.share,
+    }))
+    .filter((w) => /^[A-Za-z][A-Za-z'’-]*$/.test(w.name))
+    .filter((w, i, xs) => xs.findIndex((o) => o.name.toLowerCase() === w.name.toLowerCase()) === i)
+    .slice(0, 5);
+  // Check 24 P9: a learned sign-off that names someone else is never the owner's. Keep the
+  // owner's stored one when it names them, else none (the signature carries their name).
+  const learnedSignoff = (result.signoff_style && clean(result.signoff_style, 100)) || null;
+  const signoffStyle =
+    ownerFirst && learnedSignoff && !signoffNames(learnedSignoff, ownerFirst)
+      ? existingSignoffFor(existing, ownerFirst)
+      : learnedSignoff;
   // Check 24 P7: ideas the owner said yes to keep holding after a re-learn.
   const shaped = ideaChanges(
     {
       avgLengthWords: Math.max(10, Math.min(400, Math.round(result.avg_length_words))),
       formality: result.formality,
-      summary: clean(result.summary, 600),
+      summary: safe(result.summary) ? clean(result.summary, 600) : "",
     },
     await acceptedIdeas(workspaceId),
   );
@@ -319,13 +366,25 @@ async function learnFrom(
     status: "ready" as const,
     source: "learned" as const,
     summary: shaped.summary,
-    greetingStyle: (result.greeting_style && clean(result.greeting_style, 100)) || null,
-    signoffStyle: (result.signoff_style && clean(result.signoff_style, 100)) || null,
+    greetingStyle:
+      (result.greeting_style && safe(result.greeting_style) && clean(result.greeting_style, 100)) ||
+      null,
+    signoffStyle,
     avgLengthWords: shaped.avgLengthWords,
     formality: shaped.formality,
-    phrasesUsed: result.phrases_used.slice(0, 10).map((p) => clean(p, 120)),
-    phrasesAvoided: result.phrases_avoided.slice(0, 10).map((p) => clean(p, 120)),
-    examples: result.examples.slice(0, 5).map((e) => clean(e, 600)),
+    phrasesUsed: result.phrases_used
+      .filter(safe)
+      .slice(0, 10)
+      .map((p) => clean(p, 120)),
+    phrasesAvoided: result.phrases_avoided
+      .filter(safe)
+      .slice(0, 10)
+      .map((p) => clean(p, 120)),
+    examples: result.examples
+      .filter(safe)
+      .slice(0, 5)
+      .map((e) => clean(e, 600)),
+    writers,
     // Check 24 P8: the samples were written for the model's length and formality; an accepted
     // idea that moved either makes them stale.
     examplesStale:
@@ -349,9 +408,109 @@ async function learnFrom(
       workspaceId,
       actor: "squared_away",
       action: "voice_learned",
-      detail: { emailsRead: bodies.length },
+      detail: { emailsRead: bodies.length, writers: writers.length },
     });
+  // Check 24 P8: samples written for another length or formality get rewritten from the settings.
+  if (values.examplesStale) await enqueue(voiceExamplesRequested.create({ workspaceId }));
   return "ready";
+}
+
+/** Check 24 P9: the owner's first name — the profile signature's, else the account's name. */
+async function ownerFirstNameFor(workspaceId: string): Promise<string | null> {
+  const [row] = await db()
+    .select({ signature: businessProfiles.signature, name: users.name })
+    .from(workspaces)
+    .leftJoin(businessProfiles, eq(businessProfiles.workspaceId, workspaces.id))
+    .leftJoin(users, eq(users.id, workspaces.ownerUserId))
+    .where(eq(workspaces.id, workspaceId));
+  return ownerFirstName(null, row?.signature) ?? ownerFirstName(null, row?.name) ?? null;
+}
+
+/** A sign-off names the owner when its first name-like word is theirs ("Thanks, Mike"). */
+function signoffNames(signoff: string, ownerFirst: string): boolean {
+  const name = ownerFirstName(signoff, null);
+  return !!name && name.toLowerCase() === ownerFirst.toLowerCase();
+}
+
+/** The stored sign-off, when it names the owner; else none. */
+function existingSignoffFor(existing: VoiceProfile | null, ownerFirst: string): string | null {
+  const stored = existing?.signoffStyle ?? null;
+  return stored && signoffNames(stored, ownerFirst) ? stored : null;
+}
+
+/** Check 24 P8: the samples from the stored settings only — nothing left stale on the row. */
+export const VOICE_EXAMPLES_MAX = 5;
+export const VOICE_EXAMPLE_CHARS = 600;
+
+/**
+ * Check 24 P8: five fresh sample replies from the owner's STORED voice settings (no sent mail),
+ * one model call (one retry), every sample scrubbed, written only while the row is as read
+ * (`updated_at` unchanged — an edit made meanwhile wins and re-flags). Unusable output twice
+ * leaves the flag set. Returns what happened, counts only.
+ */
+export async function rewriteVoiceExamples(
+  workspaceId: string,
+  now: Date = new Date(),
+): Promise<
+  "written" | "not_stale" | "no_voice" | "read_only" | "capped" | "failed" | "edited_meanwhile"
+> {
+  const [ws] = await db().select().from(workspaces).where(eq(workspaces.id, workspaceId));
+  if (!ws || !jobsAllowed(ws, now)) return "read_only";
+  const [v] = await db()
+    .select()
+    .from(voiceProfiles)
+    .where(eq(voiceProfiles.workspaceId, workspaceId));
+  if (!v || !hasVoiceContent(v)) return "no_voice";
+  if (!v.examplesStale) return "not_stale";
+  const [business] = await db()
+    .select({ signature: businessProfiles.signature })
+    .from(businessProfiles)
+    .where(eq(businessProfiles.workspaceId, workspaceId));
+  let result;
+  try {
+    const request = {
+      workspaceId,
+      role: "voice" as const,
+      purpose: "voice" as const,
+      promptVersion: VOICE_EXAMPLES_PROMPT_VERSION,
+      maxTokens: 1500,
+      system: [{ text: VOICE_EXAMPLES_INSTRUCTIONS, cache: false }],
+      user: voiceSettingsBlock({
+        greetingStyle: v.greetingStyle,
+        signoffStyle: v.signoffStyle,
+        avgLengthWords: v.avgLengthWords,
+        formality: v.formality,
+        phrasesUsed: v.phrasesUsed,
+        phrasesAvoided: v.phrasesAvoided,
+        summary: v.summary,
+      }),
+      schema: voiceExamplesSchema,
+      now,
+    };
+    result = (await callStructured(request)) ?? (await callStructured(request));
+  } catch (err) {
+    if (err instanceof AiCapReachedError) return "capped";
+    throw err;
+  }
+  if (!result) return "failed";
+  const allow = scrubAllowFrom(business?.signature);
+  const examples = result.examples
+    .filter((e) => !injectionCheck(e).flagged)
+    .slice(0, VOICE_EXAMPLES_MAX)
+    .map((e) => scrubText(e, allow).slice(0, VOICE_EXAMPLE_CHARS));
+  if (examples.length < VOICE_EXAMPLES_MAX) return "failed";
+  const changed = await db()
+    .update(voiceProfiles)
+    .set({ examples, examplesStale: false })
+    .where(
+      and(
+        eq(voiceProfiles.workspaceId, workspaceId),
+        eq(voiceProfiles.updatedAt, v.updatedAt),
+        eq(voiceProfiles.examplesStale, true),
+      ),
+    )
+    .returning({ id: voiceProfiles.workspaceId });
+  return changed.length ? "written" : "edited_meanwhile";
 }
 
 type VoiceCandidate = {

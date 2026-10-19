@@ -15,7 +15,7 @@ import {
   replyDraftSchema,
   workspaceBlock,
   type WorkspaceContext,
-} from "@/ai/prompts/draft.v8";
+} from "@/ai/prompts/draft.v9";
 import {
   closingQuestionTask,
   DEPOSIT_GAP,

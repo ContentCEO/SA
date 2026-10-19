@@ -38,6 +38,7 @@ export const GUARDRAIL_CODES = [
   "gas",
   "co_alarm",
   "asks_if_ai",
+  "contract_rights",
   "injection_cleared",
   "electrical",
   "recent_emergency",
@@ -98,6 +99,7 @@ export const GUARDRAIL_LINES: Record<GuardrailCode, string> = {
   gas: "Someone smells gas. Call them.",
   co_alarm: "A carbon monoxide alarm went off. Call them.",
   asks_if_ai: "Asks if a person is answering, so it waits for you.",
+  contract_rights: "Asks about cancelling or their rights under the contract, so it waits for you.",
   injection_cleared: "You said an email here was normal after we flagged it, so it waits for you.",
   electrical: "Sounds like an electrical fire risk. Call them.",
   recent_emergency:
@@ -141,6 +143,7 @@ export const REASON_PHRASES: Record<AutopilotReasonCode, string> = {
   gas: "someone smells gas",
   co_alarm: "a carbon monoxide alarm went off",
   asks_if_ai: "they asked if a person is answering",
+  contract_rights: "they asked about cancelling or their rights under the contract",
   injection_cleared: "an email here was flagged before",
   electrical: "it sounds like an electrical fire risk",
   recent_emergency: "there was an emergency here in the last 2 days",
@@ -252,6 +255,10 @@ export const AUTOPILOT_NEVER_LINES: readonly SettingsLine[] = [
   {
     text: "Replies when someone asks if a person is answering.",
     codes: ["asks_if_ai"],
+  },
+  {
+    text: "Replies when someone asks about cancelling or their rights under the contract.",
+    codes: ["contract_rights"],
   },
   { text: "Emails you moved to a different kind yourself.", codes: ["owner_moved"] },
   { text: "Lead-site, voicemail or text-message emails.", codes: ["lead_channel"] },

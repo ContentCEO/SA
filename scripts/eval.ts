@@ -10,6 +10,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { EVAL_CASES } from "../tests/evals/cases";
 import { PROMPT_VERSIONS, runEvals } from "../tests/evals/run";
 import { regressions, table, type Baseline } from "../tests/evals/score";
+import { models } from "../src/config/models";
 
 const BASELINE = "tests/evals/baseline.json";
 
@@ -36,11 +37,19 @@ async function main() {
     console.log(`revise ${id}: ${problems.join("; ")}`);
   for (const [id, problems] of Object.entries(run.purposeProblems))
     console.log(`purpose ${id}: ${problems.join("; ")}`);
+  for (const [id, problems] of Object.entries(run.followupProblems))
+    console.log(`followup ${id}: ${problems.join("; ")}`);
+  for (const [id, problems] of Object.entries(run.voiceProblems))
+    console.log(`voice ${id}: ${problems.join("; ")}`);
+  for (const [id, problems] of Object.entries(run.voiceExamplesProblems))
+    console.log(`voice samples ${id}: ${problems.join("; ")}`);
 
   if (args.has("--update-baseline")) {
     const next: Baseline = {
       recordedAt: new Date().toISOString(),
       promptVersions: PROMPT_VERSIONS,
+      // Check 31 P5: the record says which models it was measured on, too.
+      models: { ...models },
       scores: run.scores,
     };
     writeFileSync(BASELINE, `${JSON.stringify(next, null, 2)}\n`);

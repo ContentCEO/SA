@@ -29,6 +29,12 @@ export const FAKE_CLASSIFICATION = {
     payment_change_request: false,
     smells_gas: false,
     co_alarm: false,
+    // classify.v6 (wave 2, Prompt versions step 1).
+    not_the_payer: false,
+    looks_like_fake_bill: false,
+    new_job_requested: false,
+    acknowledgment_only: false,
+    declines_quote: false,
   },
   extracted: {
     service_requested: "water heater replacement",
@@ -38,7 +44,10 @@ export const FAKE_CLASSIFICATION = {
     urgency: "normal",
     permit: null,
     invoice: null,
+    other_invoices: [],
     invoice_direction: "unknown",
+    also_asks: [],
+    wait_until: null,
   },
 } as const;
 

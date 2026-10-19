@@ -1,12 +1,10 @@
 /**
  * Check 21 P2: "We went with someone else" stops nudges; "after the holidays" waits. The signals
- * come from the next classify version (written by the Prompt versions group); here the active
- * schema is extended with them, as that version will be, so the real classification path runs.
+ * are classify.v6's (`declines_quote`, `wait_until`), so the real classification path runs.
  */
 import { randomBytes } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { z } from "zod";
+import { beforeEach, describe, expect, it } from "vitest";
 import { setModelTransportForTests } from "@/ai/client";
 import type { Database } from "@/db";
 import { activityLog, businessProfiles, drafts, messages, threads, workspaces } from "@/db/schema";
@@ -22,18 +20,6 @@ import { guessNoAnswers, listQuotes, setQuoteOutcome } from "@/server/quotes";
 import { createTestDb } from "../support/db";
 import { classification, fakeTransport } from "../support/fake-model";
 import { FakeWriter } from "../support/fake-writer";
-
-vi.mock("@/ai/prompts/classify.v5", async (importOriginal) => {
-  const orig = await importOriginal<typeof import("@/ai/prompts/classify.v5")>();
-  const base = orig.classificationSchema;
-  return {
-    ...orig,
-    classificationSchema: base.extend({
-      signals: base.shape.signals.extend({ declines_quote: z.boolean().optional() }),
-      extracted: base.shape.extracted.extend({ wait_until: z.string().nullable().optional() }),
-    }),
-  };
-});
 
 const DAY = 86_400_000;
 let database: Database;

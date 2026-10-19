@@ -22,6 +22,7 @@ export async function profileDefaults(workspace: Workspace): Promise<ProfileDefa
   return {
     businessName: workspace.businessName,
     trade: workspace.trade,
+    tradeOther: workspace.tradeOther ?? null,
     extraTrades: workspace.extraTrades ?? [],
     services: p?.services ?? null,
     serviceArea: p?.serviceArea ?? null,

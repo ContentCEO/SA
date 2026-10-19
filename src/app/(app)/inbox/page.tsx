@@ -108,7 +108,8 @@ function Details({ row }: { row: InboxRow }) {
       invoice_number: string | null;
       amount: number | null;
       due_date: string | null;
-      status: "unpaid" | "paid" | "partly_paid" | "unknown";
+      paid?: number;
+      status: "unpaid" | "paid" | "partly_paid" | "said_sent" | "unknown";
     } | null;
   };
   const inv = x.invoice;
@@ -116,6 +117,8 @@ function Details({ row }: { row: InboxRow }) {
     unpaid: "Unpaid",
     paid: "Paid",
     partly_paid: "Partly paid",
+    // Check 12 P3: a promise, not a payment.
+    said_sent: "They say it's on the way",
     unknown: null,
   };
   const facts = [
@@ -131,8 +134,10 @@ function Details({ row }: { row: InboxRow }) {
           [
             inv.invoice_number ? `#${inv.invoice_number}` : null,
             inv.amount !== null ? `$${inv.amount.toLocaleString("en-US")}` : null,
+            // Check 12 P2: what was paid toward it so far.
+            inv.paid ? `$${inv.paid.toLocaleString("en-US")} paid so far` : null,
             inv.due_date ? `due ${inv.due_date}` : null,
-            invoiceWords[inv.status],
+            invoiceWords[inv.status] ?? null,
           ]
             .filter(Boolean)
             .join(" · "),
