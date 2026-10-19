@@ -101,7 +101,7 @@ export function isVercelHost(base: string): boolean {
 export function googleReadyChecks(input: ReadyInput): ReadyCheck[] {
   const { base, pages, limitedUseSentence } = input;
   const out: ReadyCheck[] = [];
-  const page = (name: string, p: FetchedPage, path: string) => {
+  const page = (p: FetchedPage, path: string) => {
     if (p.redirectedTo && !sameHost(base, p.redirectedTo)) {
       out.push({
         name: `${path} opens without sign-in`,
@@ -119,13 +119,12 @@ export function googleReadyChecks(input: ReadyInput): ReadyCheck[] {
       return false;
     }
     out.push({ name: `${path} opens without sign-in`, ok: true });
-    void name;
     return true;
   };
 
-  const homeOk = page("home", pages.home, "/");
-  const privacyOk = page("privacy", pages.privacy, "/privacy");
-  const termsOk = page("terms", pages.terms, "/terms");
+  const homeOk = page(pages.home, "/");
+  const privacyOk = page(pages.privacy, "/privacy");
+  const termsOk = page(pages.terms, "/terms");
 
   out.push(
     homeOk && linksTo(pages.home.body, "/privacy", base) && linksTo(pages.home.body, "/terms", base)
