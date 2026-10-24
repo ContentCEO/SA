@@ -16,10 +16,16 @@
  *   or preload: Davi's other subdomains are not ours to pin. Browsers ignore it over plain http
  *   (localhost), so local development and e2e are unaffected.
  */
+import { outlookOffered } from "./outlook";
+
 export type HeaderEnv = {
   NODE_ENV?: string;
   VERCEL_ENV?: string;
   NEXT_PUBLIC_SENTRY_DSN?: string;
+  /** Plan #49: Outlook connect ends at Microsoft's sign-in page (only while it's offered). */
+  FEATURE_OUTLOOK?: string;
+  MS_CLIENT_ID?: string;
+  MS_CLIENT_SECRET?: string;
 };
 
 function sentryOrigin(dsn: string | undefined): string | null {
@@ -53,6 +59,8 @@ export function contentSecurityPolicy(env: HeaderEnv = process.env): string {
       "https://accounts.google.com",
       "https://checkout.stripe.com",
       "https://billing.stripe.com",
+      // Plan #49: only while Outlook is offered (FEATURE_OUTLOOK + credentials): off, unchanged.
+      ...(outlookOffered(env) ? ["https://login.microsoftonline.com"] : []),
     ],
     "frame-ancestors": ["'none'"],
   };

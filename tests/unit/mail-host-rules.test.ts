@@ -1,6 +1,6 @@
 import { resolveMx } from "node:dns/promises";
 import { eq } from "drizzle-orm";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Database } from "@/db";
 import { invites, waitlist } from "@/db/schema";
 import { mxLookupAllowed } from "@/config/e2e";
@@ -55,6 +55,10 @@ describe("mailHostFor (pure)", () => {
     expect(needsInviteConfirm("other")).toBe(true);
     // DNS didn't answer: the line shows, but a custom domain stays invitable.
     expect(needsInviteConfirm("unknown")).toBe(false);
+    // Plan #49: with Outlook switched on, a Microsoft address needs no extra tap; others still do.
+    expect(needsInviteConfirm("microsoft", true)).toBe(false);
+    expect(needsInviteConfirm("microsoft", false)).toBe(true);
+    expect(needsInviteConfirm("other", true)).toBe(true);
     expect(INVITE_NOT_GOOGLE_CONFIRM).toContain("Invite anyway?");
   });
 });
@@ -154,5 +158,21 @@ describe("waitlist rows carry mail_host", () => {
     // A Google row is invited straight away.
     await join("mike@gmail.com", async () => []);
     expect(await inviteFromWaitlist("mike@gmail.com")).toBe("invited");
+  });
+
+  it("plan #49: with Outlook switched on, a Microsoft row is invited straight away", async () => {
+    vi.stubEnv("FEATURE_OUTLOOK", "1");
+    vi.stubEnv("MS_CLIENT_ID", "id");
+    vi.stubEnv("MS_CLIENT_SECRET", "secret");
+    try {
+      await join("bo@outlook.com", async () => []);
+      expect(await inviteFromWaitlist("bo@outlook.com")).toBe("invited");
+      // Switch on but no credentials: still the extra tap.
+      vi.stubEnv("MS_CLIENT_SECRET", "");
+      await join("cy@outlook.com", async () => []);
+      expect(await inviteFromWaitlist("cy@outlook.com")).toBe("needs_confirm");
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });

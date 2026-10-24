@@ -216,7 +216,7 @@ _Re-checked 2026-10-10: brief scope complete with tests; nothing else filed here
 
 ## After launch (Milestone 11+) — were MVP non-goals
 
-- [ ] **#49 Outlook / Microsoft 365.** ASK DAVI: needs an Azure app registration and Microsoft
+- [x] **#49 Outlook / Microsoft 365.** _(Built behind `FEATURE_OUTLOOK` (off) on 2026-10-24; offered only with `MS_CLIENT_ID` and `MS_CLIENT_SECRET` set too. Turning it on follows `docs/SETUP.md` §8b (Azure app registration, publisher verification, the privacy and terms lines in `docs/notes/legal-m12-outlook.md`); decisions in `docs/notes/m12-outlook.md`.)_ ASK DAVI: needs an Azure app registration and Microsoft
       publisher verification. Implement `src/mailbox/outlook/` against the existing connector
       interfaces (`src/mailbox/connector.ts`; built in `src/mailbox/clients.ts`) using Microsoft
       Graph: delta queries for sync, subscriptions for push. Same encryption, same

@@ -43,10 +43,20 @@ describe("mailboxClientFor", () => {
     expect(() =>
       mailboxClientFor({
         id: "m1",
-        provider: "outlook" as unknown as "gmail",
+        provider: "yahoo" as unknown as "gmail",
         encryptedRefreshToken: encryptSecret("x"),
       }),
-    ).toThrow(/No mailbox client for provider outlook/);
+    ).toThrow(/No mailbox client for provider yahoo/);
+  });
+
+  it("plan #49: provider outlook gets the Outlook client (tested in outlook-writer.test.ts)", () => {
+    const c = mailboxClientFor({
+      id: "m1",
+      provider: "outlook",
+      encryptedRefreshToken: encryptSecret("x"),
+    });
+    expect(typeof c.sendDraft).toBe("function");
+    expect(c.gmailUnits).toBeUndefined();
   });
 });
 

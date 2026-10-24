@@ -43,6 +43,7 @@ import {
   type FakeLead,
   type FakeMail,
 } from "./outputs";
+import { createMicrosoftFakes } from "./microsoft";
 
 const AUTH = "https://www.googleapis.com/auth/";
 /** What the app must ask for: nothing more, nothing less (src/mailbox/gmail/scopes.ts). */
@@ -793,6 +794,8 @@ export function createFakes() {
     );
   }
 
+  const microsoft = createMicrosoftFakes();
+
   async function handle(req: IncomingMessage, res: ServerResponse) {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     const path = url.pathname;
@@ -812,6 +815,8 @@ export function createFakes() {
           path,
           res,
         );
+      // Plan #49: fake Microsoft (Outlook), its own scenarios.
+      if (await microsoft.handle(req, url, res, () => readBody(req))) return;
       if (path.startsWith("/google/") && (await google(req, url, res))) return;
       record(bearer(req), { method: req.method ?? "GET", path, route: "unknown" });
       sendJson(res, 404, { error: "not_found" });

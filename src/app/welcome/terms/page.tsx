@@ -1,3 +1,4 @@
+import { OUTLOOK_REMOVE_ACCESS } from "@/lib/outlook-words";
 import type { Metadata } from "next";
 import { noticeText } from "@/lib/notice-text";
 import { cookies } from "next/headers";
@@ -39,6 +40,7 @@ export const metadata: Metadata = { title: "Our terms" };
 
 const done: Record<string, string> = {
   disconnected: "Gmail disconnected. We've removed our access at Google.",
+  disconnected_outlook: `Outlook disconnected. ${OUTLOOK_REMOVE_ACCESS}`,
 };
 
 const errors: Record<string, string> = {
@@ -139,6 +141,7 @@ export default async function TermsAgreementPage(props: PageProps<"/welcome/term
                   <DisconnectButton
                     mailboxId={m.id}
                     email={m.email}
+                    provider={m.provider}
                     action={disconnectMailboxFromTermsAction}
                   />
                 </li>

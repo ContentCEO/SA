@@ -15,6 +15,12 @@ export const FEATURE_ENV = {
    * switch is the only control. ASK DAVI before turning on (docs/SETUP.md §6d).
    */
   referrals: "FEATURE_REFERRALS",
+  /**
+   * Plan #49: Outlook / Microsoft 365 mailboxes next to Gmail. Also needs MS_CLIENT_ID and
+   * MS_CLIENT_SECRET (src/config/outlook.ts). ASK DAVI: needs his Azure app registration and
+   * Microsoft publisher verification first (docs/SETUP.md §8b).
+   */
+  outlook: "FEATURE_OUTLOOK",
 } as const;
 
 export type Feature = keyof typeof FEATURE_ENV;

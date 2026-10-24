@@ -4,6 +4,8 @@ import { db } from "@/db";
 import { appSettings, invites, mailboxes, referralCredits, users, workspaces } from "@/db/schema";
 import { decryptSecret } from "@/lib/crypto";
 import type { MailboxConnector } from "@/mailbox/connector";
+import { connectorForRow } from "@/mailbox/connectors";
+import { removeOutlookSubscription } from "./outlook-subscription-remove";
 import { cancelSubscriptionNow, liveSubscriptionIds, workspaceBillingKeyPattern } from "./billing";
 
 export class SubscriptionCancelError extends Error {
@@ -59,8 +61,10 @@ export async function deleteAccount(userId: string, connector: MailboxConnector)
     : [];
   let revoked = 0;
   for (const m of boxes) {
+    // Plan #49: an Outlook mailbox's push subscription too (best effort).
+    await removeOutlookSubscription(m);
     try {
-      await connector.revoke(decryptSecret(m.encryptedRefreshToken));
+      await connectorForRow(connector, m.provider).revoke(decryptSecret(m.encryptedRefreshToken));
       revoked++;
     } catch {
       // Deleting our copy still removes our access; the screen points to Google's page too.

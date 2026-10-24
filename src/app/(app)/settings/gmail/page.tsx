@@ -166,6 +166,7 @@ export default async function GmailSettingsPage(props: PageProps<"/settings/gmai
                     <DisconnectButton
                       mailboxId={m.id}
                       email={m.email}
+                      provider={m.provider}
                       action={disconnectMailboxAction}
                     />
                   </li>
@@ -208,12 +209,13 @@ export default async function GmailSettingsPage(props: PageProps<"/settings/gmai
                       href={`/connect?reconnect=${m.id}`}
                       className={cn(buttonVariants({ size: "lg" }), "w-full")}
                     >
-                      Reconnect Gmail
+                      {m.provider === "outlook" ? "Reconnect Outlook" : "Reconnect Gmail"}
                     </Link>
                   ) : null}
                   <DisconnectButton
                     mailboxId={m.id}
                     email={m.email}
+                    provider={m.provider}
                     action={disconnectMailboxAction}
                   />
                 </li>

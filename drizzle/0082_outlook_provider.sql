@@ -1,0 +1,1 @@
+ALTER TYPE "public"."mailbox_provider" ADD VALUE 'outlook';

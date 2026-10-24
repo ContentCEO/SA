@@ -956,6 +956,7 @@ export async function listSyncableMailboxes(
   const rows = await db()
     .select({
       id: mailboxes.id,
+      provider: mailboxes.provider,
       backfillCompletedAt: mailboxes.backfillCompletedAt,
       watchExpiresAt: mailboxes.watchExpiresAt,
       lastSyncedAt: mailboxes.lastSyncedAt,
@@ -965,10 +966,19 @@ export async function listSyncableMailboxes(
     .innerJoin(workspaces, eq(workspaces.id, mailboxes.workspaceId))
     .where(mailboxRunning());
   const pushOn = !!process.env.GMAIL_PUBSUB_TOPIC;
-  return rows
-    .filter((r) => jobsAllowed(r.workspace, now))
-    .filter((r) => !opts.forPoll || !r.backfillCompletedAt || pollDue(r, now, pushOn))
-    .map(({ id, backfillCompletedAt }) => ({ id, backfillCompletedAt }));
+  return (
+    rows
+      .filter((r) => jobsAllowed(r.workspace, now))
+      // Plan #49: an Outlook mailbox is always polled (its Graph subscription can lapse without
+      // a word; the poll is the backstop), so push only counts for Gmail.
+      .filter(
+        (r) =>
+          !opts.forPoll ||
+          !r.backfillCompletedAt ||
+          pollDue(r, now, pushOn && r.provider === "gmail"),
+      )
+      .map(({ id, backfillCompletedAt }) => ({ id, backfillCompletedAt }))
+  );
 }
 
 /** Gmail's push watch lasts 7 days; renew anything expiring within 2. No-op without a topic. */
@@ -983,6 +993,8 @@ export async function renewWatches(deps: SyncDeps = {}): Promise<number> {
     .innerJoin(workspaces, eq(workspaces.id, mailboxes.workspaceId))
     .where(
       and(
+        // Plan #49: Outlook's push is Graph subscriptions (src/server/outlook-push.ts).
+        eq(mailboxes.provider, "gmail"),
         mailboxRunning(),
         isNotNull(mailboxes.backfillCompletedAt),
         or(isNull(mailboxes.watchExpiresAt), lt(mailboxes.watchExpiresAt, soon)),

@@ -24,7 +24,8 @@ export async function ReconnectBanner() {
         href={broken.length === 1 ? `/connect?reconnect=${broken[0]!.id}` : "/connect"}
         className="inline-flex min-h-tap items-center justify-center rounded-lg bg-primary px-4 font-semibold text-primary-foreground"
       >
-        Reconnect Gmail
+        {/* Plan #49: an Outlook-only loss says Outlook (only possible with FEATURE_OUTLOOK). */}
+        {broken.every((m) => m.provider === "outlook") ? "Reconnect Outlook" : "Reconnect Gmail"}
       </Link>
     </div>
   );

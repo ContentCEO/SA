@@ -109,3 +109,68 @@ export async function runHook(request: APIRequestContext, body: HookStep): Promi
     `Test hook '${body.step}' failed (${res.status()}): ${json.error ?? "no detail"}`,
   );
 }
+
+/** Plan #49: one fake Outlook mailbox (one customer email in the inbox) for one test. */
+export async function registerOutlookScenario(
+  request: APIRequestContext,
+  ownerEmail: string,
+  opts: { grantedScopes?: string[]; noMailbox?: boolean } = {},
+): Promise<{ id: string }> {
+  const id = randomUUID();
+  const res = await request.post(`${fakesUrl()}/__outlook/scenarios`, {
+    data: { id, ownerEmail, ...opts },
+  });
+  if (res.status() !== 201)
+    throw new Error(`Fake Outlook scenario not registered (${res.status()}).`);
+  return { id };
+}
+
+export type OutlookRecord = {
+  calls: { method: string; path: string; noImmutableId?: boolean; insufficientScope?: boolean }[];
+  sends: {
+    id: string;
+    to: string[];
+    cc: string[];
+    subject: string;
+    conversationId: string;
+    inReplyTo?: string;
+  }[];
+  drafts: { id: string; conversationId: string }[];
+  subscriptions: number;
+};
+
+/** What the app asked fake Microsoft for in this scenario (no tokens, codes or bodies). */
+export async function outlookRecord(
+  request: APIRequestContext,
+  scenarioId: string,
+): Promise<OutlookRecord> {
+  const res = await request.get(`${fakesUrl()}/__outlook/calls?scenario=${scenarioId}`);
+  if (!res.ok()) throw new Error(`Fake Outlook record unavailable (${res.status()}).`);
+  return (await res.json()) as OutlookRecord;
+}
+
+/**
+ * Plan #49: Microsoft's sign-in page is answered by the fake's (same query string); any other
+ * request to a Microsoft host is aborted and listed in `blocked`.
+ */
+export async function routeMicrosoftSignIn(page: Page, context: BrowserContext) {
+  const blocked: string[] = [];
+  await context.route(
+    /^https?:\/\/([^/]*\.)?(microsoftonline\.com|microsoft\.com|live\.com|office\.com)\//,
+    (r) => {
+      blocked.push(new URL(r.request().url()).host);
+      return r.abort();
+    },
+  );
+  await page.route(
+    "https://login.microsoftonline.com/common/oauth2/v2.0/authorize**",
+    async (route) => {
+      const asked = new URL(route.request().url());
+      const response = await route.fetch({
+        url: `${fakesUrl()}/microsoft/authorize${asked.search}`,
+      });
+      await route.fulfill({ response });
+    },
+  );
+  return { blocked };
+}

@@ -32,9 +32,16 @@ export interface MailboxConnector {
      * "consent select_account" shows Google's account chooser (adding another inbox).
      */
     prompt?: "consent" | "consent select_account";
+    /** Plan #49: a PKCE S256 challenge (Outlook); Gmail ignores it. */
+    codeChallenge?: string;
   }): string;
   /** Exchange the callback code for a long-lived credential. */
-  exchangeCode(opts: { code: string; redirectUri: string }): Promise<ConnectResult>;
+  exchangeCode(opts: {
+    code: string;
+    redirectUri: string;
+    /** Plan #49: the PKCE verifier from the state cookie (Outlook). */
+    codeVerifier?: string;
+  }): Promise<ConnectResult>;
   /** Revoke our access at the provider. Must not throw if already revoked. */
   revoke(refreshToken: string): Promise<void>;
 }
@@ -55,6 +62,30 @@ export class NoGmailError extends Error {
   constructor() {
     super("This Google account has no Gmail.");
     this.name = "NoGmailError";
+  }
+}
+
+/**
+ * Plan #49: the Microsoft account has no Exchange Online mailbox Graph can reach (a work
+ * account without a mail licence, or a mailbox still on a company's own servers). Nothing is
+ * saved.
+ */
+export class NoOutlookMailboxError extends Error {
+  constructor() {
+    super("This Microsoft account has no Outlook mailbox we can reach.");
+    this.name = "NoOutlookMailboxError";
+  }
+}
+
+/**
+ * Plan #49: Microsoft has no "revoke this app's token" call for a delegated grant. Thrown by the
+ * Outlook connector's `revoke`, so Disconnect logs `revokedAtProvider: false` and still deletes
+ * our tokens and the mailbox; the screen tells the owner where to remove the app themselves.
+ */
+export class ProviderCannotRevokeError extends Error {
+  constructor() {
+    super("This provider has no token revoke.");
+    this.name = "ProviderCannotRevokeError";
   }
 }
 

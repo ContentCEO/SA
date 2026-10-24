@@ -9,7 +9,7 @@ import { OFFLINE_COOKIE } from "@/lib/device-prefs";
 import { createGmailConnector } from "@/mailbox/gmail/connector";
 import { deleteAccount, SubscriptionCancelError } from "@/server/account-deletion";
 import { CheckoutNotAllowedError, createPortal } from "@/server/billing";
-import { disconnectMailbox } from "@/server/mailboxes";
+import { disconnectMailbox, listMailboxes } from "@/server/mailboxes";
 import { hitLimit } from "@/server/rate-limit";
 import { deleteConfirmed, DELETE_RECENT_SIGN_IN_MINUTES } from "@/server/account-deletion-rules";
 import { requireRecentSignIn, requireSignedIn } from "@/server/session";
@@ -63,8 +63,16 @@ export async function disconnectMailboxFromTermsAction(formData: FormData) {
   const { workspace } = await requireSignedIn();
   const parsed = mailboxInput.safeParse({ mailboxId: formData.get("mailboxId") });
   if (!parsed.success) redirect("/welcome/terms?error=unknown");
+  // Plan #49: an Outlook mailbox's notice says where to remove the app at Microsoft.
+  const provider = (await listMailboxes(workspace.id)).find(
+    (m) => m.id === parsed.data.mailboxId,
+  )?.provider;
   const ok = await disconnectMailbox(workspace.id, parsed.data.mailboxId, createGmailConnector());
-  redirect(ok ? "/welcome/terms?done=disconnected" : "/welcome/terms?error=unknown");
+  redirect(
+    ok
+      ? `/welcome/terms?done=${provider === "outlook" ? "disconnected_outlook" : "disconnected"}`
+      : "/welcome/terms?error=unknown",
+  );
 }
 
 /** Stripe's billing page (to cancel the plan), from the terms screen; it comes back here. */

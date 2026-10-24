@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { outlookOffered } from "@/config/outlook";
 import type { Trade } from "@/config/trades";
 import { noticeText } from "@/lib/notice-text";
 import { describeSource } from "@/server/source-rules";
@@ -349,7 +350,7 @@ function WaitlistEntry({
             </span>
           ) : null}
           <input type="hidden" name="email" value={w.email} />
-          {needsInviteConfirm(w.mailHost) ? (
+          {needsInviteConfirm(w.mailHost, outlookOffered()) ? (
             // Check 47 P3: an extra tap for an address that isn't on Gmail.
             <details className="rounded-lg border">
               <summary className="flex min-h-tap cursor-pointer items-center px-4 font-semibold">
