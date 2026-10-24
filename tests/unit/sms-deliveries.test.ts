@@ -141,7 +141,9 @@ describe("what Twilio reports", () => {
         "workspaceId",
       ].sort(),
     );
-    expect(JSON.stringify(rows)).not.toMatch(/508|555|1234|Squared Away|quote|code is/i);
+    // Our own random uuids can hold "508" or "1234" by chance: only the other values are checked.
+    const values = rows.map((r) => [r.messageSid, r.kind, r.status, r.errorCode]);
+    expect(JSON.stringify(values)).not.toMatch(/508|555|1234|Squared Away|quote|code is/i);
     // Texts ask Twilio to report back to our signed callback.
   });
 
