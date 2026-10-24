@@ -59,6 +59,22 @@ describe("security headers", () => {
     expect(contentSecurityPolicy({ ...e2e } as HeaderEnv)).not.toContain("127.0.0.1");
   });
 
+  it("plan #49: Microsoft's sign-in page is a form end only while Outlook is offered", () => {
+    expect(csp({})["form-action"]).not.toContain("https://login.microsoftonline.com");
+    expect(csp({ FEATURE_OUTLOOK: "1" })["form-action"]).not.toContain(
+      "https://login.microsoftonline.com",
+    );
+    expect(
+      csp({ FEATURE_OUTLOOK: "1", MS_CLIENT_ID: "a", MS_CLIENT_SECRET: "b" })["form-action"],
+    ).toEqual([
+      "'self'",
+      "https://accounts.google.com",
+      "https://checkout.stripe.com",
+      "https://billing.stripe.com",
+      "https://login.microsoftonline.com",
+    ]);
+  });
+
   it("M11 C7: HTTPS is remembered for a year, for this host only (no subdomains, no preload)", () => {
     for (const env of [{}, { NODE_ENV: "production" }, { VERCEL_ENV: "preview" }]) {
       const h = Object.fromEntries(securityHeaders(env).map((x) => [x.key, x.value]));

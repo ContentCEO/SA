@@ -8,7 +8,7 @@ import { signOut } from "@/auth";
 import { createGmailConnector } from "@/mailbox/gmail/connector";
 import { deleteAccount, SubscriptionCancelError } from "@/server/account-deletion";
 import { signOutEverywhere } from "@/server/sign-out-everywhere";
-import { disconnectMailbox } from "@/server/mailboxes";
+import { disconnectMailbox, listMailboxes } from "@/server/mailboxes";
 import { hitLimit } from "@/server/rate-limit";
 import { deleteConfirmed, DELETE_RECENT_SIGN_IN_MINUTES } from "@/server/account-deletion-rules";
 import { requireOwner, requireRecentSignIn } from "@/server/session";
@@ -21,8 +21,16 @@ export async function disconnectMailboxAction(formData: FormData) {
   const { workspace } = await requireOwner();
   const parsed = input.safeParse({ mailboxId: formData.get("mailboxId") });
   if (!parsed.success) redirect("/settings/gmail?error=unknown");
+  // Plan #49: an Outlook mailbox's notice says where to remove the app at Microsoft.
+  const provider = (await listMailboxes(workspace.id)).find(
+    (m) => m.id === parsed.data.mailboxId,
+  )?.provider;
   const ok = await disconnectMailbox(workspace.id, parsed.data.mailboxId, createGmailConnector());
-  redirect(ok ? "/settings/gmail?done=disconnected" : "/settings/gmail?error=unknown");
+  redirect(
+    ok
+      ? `/settings/gmail?done=${provider === "outlook" ? "disconnected_outlook" : "disconnected"}`
+      : "/settings/gmail?error=unknown",
+  );
 }
 
 /**

@@ -4,8 +4,10 @@ import { cache } from "react";
 import { db } from "@/db";
 import { activityLog, mailboxes, type Mailbox, type Workspace } from "@/db/schema";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
+import { connectorForRow } from "@/mailbox/connectors";
 import type { ConnectResult, MailboxConnector, MailboxProvider } from "@/mailbox/connector";
 import { fitMailboxesToPlan } from "./mailbox-plan";
+import { removeOutlookSubscription } from "./outlook-subscription-remove";
 import type { FirstReadProgress } from "./mailbox-health";
 import { mailboxLimitFor } from "./mailbox-plan-rules";
 import { effectivePlan } from "./referral-rules";
@@ -261,12 +263,15 @@ export async function disconnectMailbox(
     .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.workspaceId, workspaceId)));
   if (!row) return false;
 
+  // Plan #49: Outlook's push subscription goes first (best effort, needs the token).
+  await removeOutlookSubscription(row);
   let revoked = true;
   try {
-    await connector.revoke(decryptSecret(row.encryptedRefreshToken));
+    await connectorForRow(connector, row.provider).revoke(decryptSecret(row.encryptedRefreshToken));
   } catch {
     // Still delete our copy — the owner asked us to let go. They can also remove
-    // access at myaccount.google.com/permissions; the UI says so.
+    // access at myaccount.google.com/permissions; the UI says so. Microsoft has no revoke at
+    // all (ProviderCannotRevokeError): the screen says where to remove the app.
     revoked = false;
   }
 

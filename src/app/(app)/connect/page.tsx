@@ -10,10 +10,14 @@ import { pricing } from "@/config/pricing";
 import { siteConfig } from "@/config/site";
 import { listMailboxes } from "@/server/mailboxes";
 import { requireOwner } from "@/server/session";
-import { startGmailConnect } from "./actions";
+import { startGmailConnect, startOutlookConnect } from "./actions";
+import { outlookOffered } from "@/config/outlook";
 
 // Check 32 P6: every screen has its own title ("… · Squared Away" from the root template).
-export const metadata: Metadata = { title: "Connect Gmail" };
+// Plan #49: "Connect your email" only while Outlook is offered; off, exactly as before.
+export async function generateMetadata(): Promise<Metadata> {
+  return { title: outlookOffered() ? "Connect your email" : "Connect Gmail" };
+}
 
 const errors: Record<string, string> = {
   busy: "That's a lot in a short time, so we've paused it for a bit. Try again in a few minutes.",
@@ -26,9 +30,23 @@ const errors: Record<string, string> = {
   no_gmail: `This Google account doesn't have Gmail, so there's nothing for Squared Away to read. It works with Gmail and Google Workspace for now. If your business email is on Outlook, call or text Davi at ${siteConfig.phone}; Outlook is on the list.`,
 };
 
+/** Plan #49: only reachable while Outlook is offered (the Outlook callback is off otherwise). */
+const outlookErrors: Record<string, string> = {
+  no_gmail:
+    "This Google account doesn't have Gmail, so there's nothing for Squared Away to read. If your business email is on Outlook or Microsoft 365, tap Connect Outlook instead.",
+  outlook_denied:
+    "No problem — Outlook wasn't connected. You can connect it whenever you're ready.",
+  outlook_scopes:
+    "Microsoft didn't give Squared Away every permission it needs, so nothing was saved. Try again and allow all of them. If your company's IT manages your Microsoft account, they may need to allow Squared Away first.",
+  no_outlook: `This Microsoft account doesn't have an Outlook mailbox Squared Away can reach (some work accounts keep email on the company's own servers). Nothing was saved. Call or text Davi at ${siteConfig.phone} and we'll sort it out.`,
+  other_provider:
+    "That address is already connected here the other way (Gmail or Outlook). Disconnect it in Settings first if you want to switch.",
+};
+
 export default async function ConnectPage(props: PageProps<"/connect">) {
   const { workspace } = await requireOwner();
   const boxes = await listMailboxes(workspace.id);
+  const outlook = outlookOffered();
   // Round 2 (FW): setup's honest step count starts here (2: your shop, 3: reading your email).
   const firstConnect = boxes.length === 0;
   const params = await props.searchParams;
@@ -55,9 +73,15 @@ export default async function ConnectPage(props: PageProps<"/connect">) {
       ? `That's ${again.email} again, which is already connected. Tap Connect another Gmail and pick the other account on Google's screen.`
       : error === "wrong_account" && card
         ? `You picked ${picked ? picked.email : "a different Google account"} but this card is for ${card.email}. Try again and pick ${card.email}.`
-        : noticeText(errors, error);
+        : noticeText(outlook ? { ...errors, ...outlookErrors } : errors, error);
   const days = dayWord(pricing.evaluationDays);
   const googleWarning = googleWarningLine(googleAppState(), siteConfig.name);
+  // Plan #49: which button a reconnect belongs to. A card's own provider gets the reconnect;
+  // the other button offers a new address (first or another).
+  const fresh = firstConnect ? ("first" as const) : ("add" as const);
+  const targetIsOutlook = target?.provider === "outlook";
+  const gmailMode = targetIsOutlook ? fresh : mode;
+  const outlookMode = outlook && targetIsOutlook ? mode : fresh;
 
   return (
     <>
@@ -77,7 +101,9 @@ export default async function ConnectPage(props: PageProps<"/connect">) {
           </li>
           <li>Read up to 200 of your sent emails to learn how you write.</li>
           <li>
-            Write reply drafts and put them in your Gmail Drafts folder, where you can see them too.
+            {outlook
+              ? "Write reply drafts and put them in your Drafts folder (in Gmail or Outlook), where you can see them too."
+              : "Write reply drafts and put them in your Gmail Drafts folder, where you can see them too."}
           </li>
           <li>
             Send a reply only when you tap <strong>Send reply</strong>, or by autopilot if you
@@ -123,17 +149,55 @@ export default async function ConnectPage(props: PageProps<"/connect">) {
           You can disconnect any time in Settings. That also removes our access at Google.
         </p>
         <form action={startGmailConnect}>
-          <input type="hidden" name="mode" value={mode} />
-          {target ? <input type="hidden" name="mailboxId" value={target.id} /> : null}
+          <input type="hidden" name="mode" value={gmailMode} />
+          {target && gmailMode === "reconnect" ? (
+            <input type="hidden" name="mailboxId" value={target.id} />
+          ) : null}
           <Button type="submit" size="lg" className="w-full">
-            {mode === "add"
+            {gmailMode === "add"
               ? "Connect another Gmail"
-              : mode === "reconnect"
+              : gmailMode === "reconnect"
                 ? "Reconnect Gmail"
                 : "Connect Gmail"}
           </Button>
         </form>
       </section>
+
+      {outlook ? (
+        <section aria-labelledby="outlook" className="flex flex-col gap-3">
+          <h2 id="outlook" className="text-xl font-black">
+            Email on Outlook or Microsoft 365?
+          </h2>
+          <p className="text-muted-foreground">
+            The same promises apply. Microsoft will ask you to allow four things, in its own words:{" "}
+            <strong>Read and write access to your mail</strong>, <strong>Send mail as you</strong>,{" "}
+            <strong>Maintain access to data you have given it access to</strong>, and{" "}
+            <strong>Sign you in and read your profile</strong>. Allow all four. The first is how
+            drafts get into your Drafts folder; the second is how a reply goes out, and it still
+            goes out only when you tap <strong>Send reply</strong> (or by autopilot, if you switch
+            it on for a kind of email); the third lets Squared Away check for new email while
+            you&apos;re away; the last tells us your address.
+          </p>
+          <p className="text-muted-foreground">
+            You can disconnect any time in Settings. Microsoft doesn&apos;t let apps remove their
+            own access, so we delete our access keys and show you where to remove Squared Away at
+            account.microsoft.com.
+          </p>
+          <form action={startOutlookConnect}>
+            <input type="hidden" name="mode" value={outlookMode} />
+            {target && outlookMode === "reconnect" ? (
+              <input type="hidden" name="mailboxId" value={target.id} />
+            ) : null}
+            <Button type="submit" size="lg" variant="outline" className="w-full">
+              {outlookMode === "add"
+                ? "Connect another Outlook"
+                : outlookMode === "reconnect"
+                  ? "Reconnect Outlook"
+                  : "Connect Outlook"}
+            </Button>
+          </form>
+        </section>
+      ) : null}
     </>
   );
 }

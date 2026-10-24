@@ -1,3 +1,5 @@
+import { OUTLOOK_REMOVE_ACCESS } from "@/lib/outlook-words";
+
 /**
  * The notices each Settings screen shows after a save (`?done=`) or a refusal (`?error=`).
  * One map per screen, keyed by its own path; every redirect in the settings actions names a
@@ -12,6 +14,7 @@ export const SCREEN_MESSAGES = {
     done: {
       connected: "Gmail connected.",
       disconnected: "Gmail disconnected. We've removed our access at Google.",
+      disconnected_outlook: `Outlook disconnected. ${OUTLOOK_REMOVE_ACCESS}`,
       swapped: "Done. That Gmail is on now, and the other one is paused.",
       resumed: "Done. That Gmail is on now.",
     },

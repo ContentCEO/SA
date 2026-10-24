@@ -279,6 +279,7 @@ describe("C3: every route handler is in the table with the guard it uses", () =>
     "src/app/api/gmail/callback/route.ts": "session+state",
     "src/app/api/gmail/push/route.ts": "token",
     "src/app/api/outlook/notify/route.ts": "graph-client-state",
+    "src/app/api/outlook/callback/route.ts": "session+state",
     "src/app/api/stripe/webhook/route.ts": "stripe-signature",
     "src/app/api/inngest/route.ts": "inngest-signature",
     "src/app/api/test-hooks/run/route.ts": "e2e-hook",
@@ -994,6 +995,10 @@ describe("C4: no open redirects", () => {
       "Google's consent screen, built by our connector with our own callback URL",
     ],
     [
+      'src/app/(app)/connect/actions.ts: redirect(createOutlookConnector().authorizationUrl({ state, redirectUri: appUrl(outlookRedirectPath), loginHint, prompt: connect.mode === "add" ? "consent select_account" : "consent", codeChallenge: pkceChallenge(verifier), }))',
+      "Plan #49: Microsoft's sign-in page (a fixed login.microsoftonline.com URL), built by our connector with our own callback URL",
+    ],
+    [
       'src/app/(app)/settings/profile-actions.ts: redirect(returnTo.catch("/settings/business?done=profile").parse(raw.returnTo))',
       "a z.enum of two fixed paths (pinned by the returnTo test below)",
     ],
@@ -1571,6 +1576,13 @@ const LIMIT_SITES: LimitSite[] = [
   {
     file: "src/app/(app)/connect/actions.ts",
     fn: "startGmailConnect",
+    limit: "connect",
+    work: ["newOAuthState", "authorizationUrl"],
+  },
+  // Plan #49: Outlook connect (FEATURE_OUTLOOK), the same limit.
+  {
+    file: "src/app/(app)/connect/actions.ts",
+    fn: "startOutlookConnect",
     limit: "connect",
     work: ["newOAuthState", "authorizationUrl"],
   },

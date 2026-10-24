@@ -29,6 +29,7 @@ import { workspaceByReferralCode } from "./referrals";
 import { tradeOtherField, tradeOtherFor } from "@/lib/trade-other";
 import { lookupMailHost, type MxResolver } from "./mail-host";
 import { needsInviteConfirm } from "./mail-host-rules";
+import { outlookOffered } from "@/config/outlook";
 
 export const TEAM_SIZES = ["Just me", "2–5", "6–15", "16+"] as const;
 
@@ -230,7 +231,8 @@ export async function inviteFromWaitlist(
   if (!entry) return "not_found" as const;
   const facts = describeWaitlistEntry(entry);
   if (!facts.app) return "growth_only" as const;
-  if (needsInviteConfirm(entry.mailHost) && !opts.confirmed) return "needs_confirm" as const;
+  if (needsInviteConfirm(entry.mailHost, outlookOffered()) && !opts.confirmed)
+    return "needs_confirm" as const;
   // Plan #47: carry the referral only while referrals are on; an unknown code is ignored.
   const referredByWorkspaceId = referralsVisible()
     ? await workspaceByReferralCode(entry.referralCode)

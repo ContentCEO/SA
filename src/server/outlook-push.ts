@@ -131,23 +131,4 @@ export async function renewOutlookSubscriptions(deps: OutlookPushDeps = {}): Pro
   return done;
 }
 
-/**
- * Disconnect / Delete my account: drop the subscription at Microsoft, best effort (a failure
- * never stops the delete; an orphan expires by itself within a week and its notifications
- * match no mailbox). Only when Outlook is offered — otherwise no Microsoft host is contacted.
- */
-export async function removeOutlookSubscription(
-  m: Pick<Mailbox, "id" | "provider" | "encryptedRefreshToken" | "pushSubscriptionId">,
-  deps: OutlookPushDeps = {},
-): Promise<void> {
-  if (m.provider !== "outlook" || !m.pushSubscriptionId || !outlookOffered(deps.env)) return;
-  try {
-    const client = (deps.clientFor ?? serverMailboxClient)(m as Mailbox);
-    await client.pushSubscriptions?.remove(m.pushSubscriptionId);
-  } catch (err) {
-    console.error("outlook_subscription_remove_failed", {
-      mailboxId: m.id,
-      error: err instanceof Error ? err.name : "unknown",
-    });
-  }
-}
+export { removeOutlookSubscription } from "./outlook-subscription-remove";

@@ -57,5 +57,7 @@ export function mailHostLine(mailHost: string | null): string | null {
  */
 export const INVITE_NOT_GOOGLE_CONFIRM =
   "This address isn't on Gmail, so they can't connect yet. Invite anyway?";
-export const needsInviteConfirm = (mailHost: string | null) =>
-  mailHost === "microsoft" || mailHost === "other";
+export const needsInviteConfirm = (mailHost: string | null, outlookOn = false) =>
+  // Plan #49: once Outlook can connect (FEATURE_OUTLOOK on), a Microsoft address is invited
+  // like a Google one. Callers pass outlookOffered(); off, nothing changes.
+  (mailHost === "microsoft" && !outlookOn) || mailHost === "other";
