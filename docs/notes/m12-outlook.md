@@ -102,6 +102,15 @@ microsoft.ts` serves it under `/microsoft`).
 - Migrations: `0081_outlook_provider` (`ALTER TYPE mailbox_provider ADD VALUE 'outlook'`, alone)
   and `0082_outlook_push_subscription` (two nullable columns + a unique index). Both additive.
 
+## Turning the switch off again
+
+With Outlook mailboxes still connected, their jobs fail closed: the Outlook client refuses to
+refresh a token while Outlook isn't offered, so no Microsoft host is contacted, and each sync
+shows as `sync_failed` in Settings → Your Gmail. Disconnect them first (Disconnect works with the
+switch off; it only skips dropping the Graph subscription, which then expires within a week).
+The reconnect banner, the "access lost" email and the queue's lost-access lines still say
+"Gmail" for an Outlook mailbox; the banner and Settings button say "Reconnect Outlook".
+
 ## Not checked live (no Azure app in the sandbox)
 
 - That Exchange puts a MIME-uploaded reply into the customer's conversation by its
