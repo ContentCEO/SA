@@ -9,7 +9,11 @@ function ConfirmButton({ name }: { name: string }) {
   const { pending } = useFormStatus();
   return (
     <Button type="submit" disabled={pending}>
-      {pending ? "Disconnecting…" : `Yes, disconnect ${name}`}
+      {pending
+        ? "Disconnecting…"
+        : name === "Outlook"
+          ? "Yes, disconnect Outlook"
+          : "Yes, disconnect Gmail"}
     </Button>
   );
 }
@@ -36,7 +40,7 @@ export function DisconnectButton({
   if (!confirming) {
     return (
       <Button variant="outline" onClick={() => setConfirming(true)}>
-        Disconnect {name}
+        {provider === "outlook" ? "Disconnect Outlook" : "Disconnect Gmail"}
       </Button>
     );
   }

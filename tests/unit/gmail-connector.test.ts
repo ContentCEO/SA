@@ -333,7 +333,13 @@ describe("scopes and oauth state", () => {
         .filter((x) => /\.scopes\b|grantedScopes/.test(x.text))
         .map((x) => x.f)
         .sort(),
-    ).toEqual(["mailbox/connector.ts", "mailbox/gmail/connector.ts", "server/mailboxes.ts"]);
+    ).toEqual([
+      "mailbox/connector.ts",
+      "mailbox/gmail/connector.ts",
+      // Plan #49: Outlook's connect reads the token response's scopes (never the stored grant).
+      "mailbox/outlook/connector.ts",
+      "server/mailboxes.ts",
+    ]);
     expect(readFileSync("src/server/mailboxes.ts", "utf8")).toContain(
       'scopes: result.grantedScopes.join(" "),',
     );
