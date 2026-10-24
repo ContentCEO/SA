@@ -52,6 +52,9 @@ marked. No feature flag: the owner's switch (default off) is the switch, as for 
   quiet hours, business hours, the 10-minute text slot and the ten texts a day. A refused text
   hands its slot back (as `alertOne`); STOP turns every text off; if neither a phone nor the
   text took it, the marks are taken back and nothing is logged.
+  When only one of the two slots is free (a new-lead push or text in the last 10 minutes), the
+  alert goes by the free one and the episode is marked: the owner heard once, so the other
+  channel doesn't repeat it later for the same wait.
 - **Ten texts a day, shared:** `textsSentToday` counts `sms_alert_sent`, `sms_summary_sent`
   and `lead_at_risk_push_sent` rows with `texted: true`, from local midnight. The tenth of any
   kind ends with "That's today's last text…". Emergencies keep their own caps (unchanged).
