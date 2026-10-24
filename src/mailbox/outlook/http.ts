@@ -105,7 +105,19 @@ export function createGraphCaller(opts: GraphOptions): GraphCaller {
   let accessToken: string | undefined;
   let refreshToken = opts.refreshToken;
 
-  async function refresh(): Promise<string> {
+  /**
+   * One refresh at a time: Microsoft rotates the refresh token on every refresh, so two
+   * parallel refreshes would race and the second would present an already-replaced token.
+   */
+  let refreshing: Promise<string> | undefined;
+  function refresh(): Promise<string> {
+    refreshing ??= doRefresh().finally(() => {
+      refreshing = undefined;
+    });
+    return refreshing;
+  }
+
+  async function doRefresh(): Promise<string> {
     const creds = outlookClientCredentials();
     if (!creds) throw new Error("Outlook is not switched on (FEATURE_OUTLOOK / MS_CLIENT_ID).");
     for (let attempt = 0; ; attempt++) {
@@ -169,7 +181,8 @@ export function createGraphCaller(opts: GraphOptions): GraphCaller {
       if (res.status === 401) {
         if (refreshedAfter401) throw new MailboxAuthError();
         refreshedAfter401 = true;
-        accessToken = undefined;
+        // Only drop the token this request used: a parallel request may have refreshed already.
+        if (accessToken === token) accessToken = undefined;
         continue;
       }
       const err = (await res.json().catch(() => ({}))) as { error?: { code?: string } };

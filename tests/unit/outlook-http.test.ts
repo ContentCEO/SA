@@ -194,3 +194,19 @@ describe("Graph requests", () => {
     expect(() => graphUrl("https://graph.microsoft.com.evil.example/v1.0/me")).toThrow();
   });
 });
+
+describe("refreshes never race (Microsoft rotates the refresh token every time)", () => {
+  it("parallel first requests share one refresh", async () => {
+    let refreshes = 0;
+    const f = vi.fn().mockImplementation(async (url: string) => {
+      if (url.endsWith("/token")) {
+        refreshes++;
+        return token(`rt-${refreshes + 1}`);
+      }
+      return json({ ok: 1 });
+    });
+    const { g } = caller(f);
+    await Promise.all([g.call("/a"), g.call("/b"), g.call("/c"), g.call("/d")]);
+    expect(refreshes).toBe(1);
+  });
+});

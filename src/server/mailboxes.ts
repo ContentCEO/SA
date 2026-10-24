@@ -4,7 +4,7 @@ import { cache } from "react";
 import { db } from "@/db";
 import { activityLog, mailboxes, type Mailbox, type Workspace } from "@/db/schema";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
-import type { ConnectResult, MailboxConnector } from "@/mailbox/connector";
+import type { ConnectResult, MailboxConnector, MailboxProvider } from "@/mailbox/connector";
 import { fitMailboxesToPlan } from "./mailbox-plan";
 import type { FirstReadProgress } from "./mailbox-health";
 import { mailboxLimitFor } from "./mailbox-plan-rules";
@@ -60,6 +60,14 @@ export class MailboxInUseError extends Error {
   }
 }
 
+/** Plan #49: this address is already connected here through the other provider. */
+export class MailboxProviderMismatchError extends Error {
+  constructor() {
+    super("This address is already connected through another provider.");
+    this.name = "MailboxProviderMismatchError";
+  }
+}
+
 /**
  * Check 29 P7: React cache() — one query per request however many places ask (requireOwner and
  * the layout's banners). Outside a server render (jobs, tests) it is a plain call.
@@ -91,6 +99,8 @@ export const listMailboxes = cache(async (workspaceId: string): Promise<MailboxS
 export async function saveConnectedMailbox(
   workspace: Pick<Workspace, "id" | "plan" | "freePlan" | "freePlanUntil">,
   result: ConnectResult,
+  /** Plan #49: which provider the connect came through (Outlook only behind FEATURE_OUTLOOK). */
+  provider: MailboxProvider = "gmail",
 ): Promise<MailboxSummary> {
   const email = result.email.toLowerCase();
   // Check 25 P7: never the same Gmail in two accounts. Nothing is saved and the try is logged
@@ -110,7 +120,11 @@ export async function saveConnectedMailbox(
     throw new MailboxInUseError();
   }
   const existing = await listMailboxes(workspace.id);
-  const isReconnect = existing.some((m) => m.email.toLowerCase() === email);
+  const same = existing.find((m) => m.email.toLowerCase() === email);
+  // Plan #49: one address, one provider. The same address through the other provider is
+  // refused, never switched over silently.
+  if (same && same.provider !== provider) throw new MailboxProviderMismatchError();
+  const isReconnect = !!same;
   const limit = mailboxLimit(workspace);
   if (!isReconnect && existing.length >= limit) throw new MailboxLimitError(limit);
 
@@ -139,7 +153,7 @@ export async function saveConnectedMailbox(
         .returning()
     : await db()
         .insert(mailboxes)
-        .values({ workspaceId: workspace.id, provider: "gmail", email, ...values })
+        .values({ workspaceId: workspace.id, provider, email, ...values })
         .returning();
   if (!row) throw new Error("Could not save mailbox.");
 
