@@ -216,7 +216,7 @@ _Re-checked 2026-10-10: brief scope complete with tests; nothing else filed here
 
 ## After launch (Milestone 11+) — were MVP non-goals
 
-- [x] **#49 Outlook / Microsoft 365.** _(Built behind `FEATURE_OUTLOOK` (off) on 2026-10-24; offered only with `MS_CLIENT_ID` and `MS_CLIENT_SECRET` set too. Turning it on follows `docs/SETUP.md` §8b (Azure app registration, publisher verification, the privacy and terms lines in `docs/notes/legal-m12-outlook.md`); decisions in `docs/notes/m12-outlook.md`.)_ ASK DAVI: needs an Azure app registration and Microsoft
+- [x] **#49 Outlook / Microsoft 365.** _(Built behind `FEATURE_OUTLOOK` (off) on 2026-10-24; offered only with `MS_CLIENT_ID` and `MS_CLIENT_SECRET` set too. Turning it on follows `docs/SETUP.md` §8b (Azure app registration, publisher verification, the privacy and terms lines in `docs/notes/legal-m12-outlook.md`); decisions in `docs/decisions/gmail-and-sync.md` ("Outlook / Microsoft 365").)_ ASK DAVI: needs an Azure app registration and Microsoft
       publisher verification. Implement `src/mailbox/outlook/` against the existing connector
       interfaces (`src/mailbox/connector.ts`; built in `src/mailbox/clients.ts`) using Microsoft
       Graph: delta queries for sync, subscriptions for push. Same encryption, same
@@ -239,7 +239,7 @@ _Re-checked 2026-10-10: brief scope complete with tests; nothing else filed here
       refresh token), `User.Read` (the address). - **Publisher verification** needs a verified Microsoft AI Cloud Partner Program account and
       a publisher domain that isn't `*.onmicrosoft.com`
       ([publisher-verification-overview](https://learn.microsoft.com/en-us/entra/identity-platform/publisher-verification-overview)).
-- [x] **#50 Text me a summary.** _(Partly done 2026-10-09: opt-in, code-verified number, content-free new-lead alerts, quiet hours, caps — off until Twilio env is set. Done 2026-10-24 (branch `m12-sms-summary`): the morning summary by text and leads at risk by text, each its own opt-in on Settings → Text alerts, off by default — still off until Twilio env is set. Notes: `docs/notes/m12-sms-summary.md`.)_ ASK DAVI: needs a Twilio account, A2P 10DLC registration, and has a
+- [x] **#50 Text me a summary.** _(Partly done 2026-10-09: opt-in, code-verified number, content-free new-lead alerts, quiet hours, caps — off until Twilio env is set. Done 2026-10-24 (branch `m12-sms-summary`): the morning summary by text and leads at risk by text, each its own opt-in on Settings → Text alerts, off by default — still off until Twilio env is set. Decisions: `docs/decisions/queue-and-sending.md` ("Text summaries and waiting-quote texts"); the privacy lines in `docs/notes/legal-m12-sms-summary.md`.)_ ASK DAVI: needs a Twilio account, A2P 10DLC registration, and has a
       per-message cost. Opt-in per owner, verified phone number, digest summary + leads-at-risk
       alerts by SMS. Content-free like push ("2 quote requests need you — open Squared Away").
       STOP/HELP handled. Owner can't reply to customers by SMS.

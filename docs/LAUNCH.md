@@ -1457,6 +1457,44 @@ Nothing below is switched on or changed until you say so.
   2026-10-16 (`c1bf580`), and both documents still open with the Draft banner. The wording waiting
   for your okay, and the lawyer's review, are the items under "Wave 3 merge A" ("One legal
   release") and "A lawyer's review" below.
+- **M12 merge (2026-10-24): text summaries (#50) and Outlook (#49).** Both are built, tested and
+  off; nothing changes for any owner until the steps below.
+  - **The legal lines come first, for each one.** The privacy-policy and terms sentences wait in
+    `docs/notes/legal-m12-sms-summary.md` (the morning summary and waiting-quote texts) and
+    `docs/notes/legal-m12-outlook.md` (Microsoft as a place your mail is read from). Okay them and
+    have them added in the one legal release (a new terms version, so owners agree again)
+    **before** each switch is turned on: before Twilio goes into Vercel for the new texts, and
+    before `FEATURE_OUTLOOK` is set.
+  - **Morning summary and waiting-quote texts (#50).** Two more texts to the owner's own phone,
+    each its own switch on Settings → Text alerts, off by default, shown only while text alerts
+    are on. Nothing new to set: they work once Twilio is set up ([step 10](#10-optional-text-alerts-and-instant-gmail-notifications)).
+    When you register the A2P 10DLC campaign (SETUP.md §6c step 3), add the two new sample
+    messages from SETUP.md ("Squared Away: 3 replies ready, 1 needs you. Open: …" and "Squared
+    Away: 2 quote requests have waited over 4 hours. Open: …"); a campaign approved without them
+    may get these texts filtered. Each text costs a segment like any other: at most one summary a
+    day and three waiting-quote texts a day, all inside the existing ten texts a day per owner.
+    Built the safe way, your call: an owner can't get the morning text without new-lead texts on
+    (one switch for STOP to turn off). Want "summary only" as well?
+  - **Outlook / Microsoft 365 (#49).** To turn it on (SETUP.md §8b): register the app in the
+    Microsoft Entra admin center (any organizational directory and personal Microsoft accounts;
+    redirect `https://<production domain>/api/outlook/callback`); copy the client id and a client
+    secret's Value into `MS_CLIENT_ID` / `MS_CLIENT_SECRET` (put a reminder in your calendar before
+    the secret expires: an expired secret stops every Outlook mailbox); give it exactly the four
+    Graph permissions `Mail.ReadWrite`, `Mail.Send`, `offline_access`, `User.Read`; get publisher
+    verification (a Microsoft AI Cloud Partner Program account and your production domain;
+    without it owners see "unverified" and many work accounts block the app); the legal lines
+    above; then `FEATURE_OUTLOOK=1` with the two settings on **Production only**, and redeploy.
+    Never checked against a real Microsoft account yet: the engineers should run one test
+    outlook.com account through connect, a draft, an edit and a send before any owner uses it.
+    Questions:
+    - Offer Outlook to every owner once it's on, or only to owners you invite who are on
+      Microsoft? (The switch is all-or-nothing today.)
+    - While Outlook is on, the connect screen's title reads "Connect your email". Fine?
+    - Outlook's "Other" tab isn't treated like Gmail's Promotions: every Outlook email is sorted
+      by the AI, which costs a little more per Outlook owner. Fine, or should "Other" newsletters
+      skip sorting?
+    - If you turn it off again later, disconnect any Outlook mailboxes first (they stop syncing
+      while it's off). Some reconnect wording still says "Gmail" for an Outlook mailbox.
 - **Wave 3 merge A (2026-10-19): prompt versions, legal text, Google review.** Built the safe way;
   say if you want it different:
   - **One legal release.** Every wording change for the terms and the privacy policy waits in
@@ -1464,8 +1502,9 @@ Nothing below is switched on or changed until you say so.
     customers, how changes are announced, Google's Limited Use wording, six small lines, the
     breach sentence, text alerts, and two lines from the new prompts and trades), plus
     `docs/notes/legal-w3-emails.md` (looking up who hosts a waitlist address's email) and
-    `docs/notes/legal-w3-growth-site.md` (the Growth confirmation email and form answers). Nothing is in
-    the documents yet. Okay each sentence (and the lawyer, where you want one); then the engineers
+    `docs/notes/legal-w3-growth-site.md` (the Growth confirmation email and form answers), plus the
+    two M12 notes below (`docs/notes/legal-m12-sms-summary.md`, `docs/notes/legal-m12-outlook.md`).
+    Nothing is in the documents yet. Okay each sentence (and the lawyer, where you want one); then the engineers
     apply all of them at once, so owners agree again only once (`docs/LEGAL-RELEASE.md`).
   - **How changes are announced:** the documents say owners hear about big changes before they
     take effect; the app shows "What changed" and asks again the day a new version goes live.
@@ -1949,6 +1988,8 @@ Nothing below is switched on or changed until you say so.
   client's written okay (the date goes in `permissionOn`) and a yearly check that it's still true
   (`checkedOn`); nothing is shown without both.
 - The `ANTHROPIC_API_KEY` repository secret for the "Prompt evals" GitHub action.
+- Only if you want Outlook: the Microsoft app registration, its secret and publisher verification
+  ("M12 merge" under Still open).
 - Your Massachusetts sales tax registration: start it now (it takes days;
   [details](#start-your-sales-tax-registration-now-it-takes-days)), then [step 7e](#7-stripe-live-mode).
 - The Neon plan check ([this week](#check-your-free-plans-now-this-week)).

@@ -912,3 +912,40 @@ big)`; the hourly job runs `captureQuoteAmounts` first.
     while signed in as …. Anyone who uses this sign-in can okay replies." Reconcile's note and
     Activity's `reply_sent_from_gmail` say "sent from Gmail, outside the app". Settings → Account
     shows "Signed in as … (Google)" from the session.
+- **Text summaries and waiting-quote texts (plan #50 remaining parts, 2026-10-24, branch
+  `m12-sms-summary`; migration `0081_sms_summary_texts`):** two more owner texts, each its own
+  switch (`business_profile.sms_summary_enabled`, `sms_at_risk_enabled`), default **off**, shown
+  and active only while `sms_alerts_enabled` is on. No feature flag: the Twilio env plus the
+  owner's switch is the switch, as for new-lead texts. That one master switch is what a STOP
+  (send-time 21610 or a delivery report), "not a mobile" (30006) and "Remove my number" turn off;
+  they also clear both new switches (`ALL_TEXTS_OFF` in `sms-delivery-rules.ts`), so after START
+  the owner turns each back on. Every text asks `textsOn(p)` (confirmed number, alerts on, no
+  `sms_stopped_reason`). Trade-off on purpose: no summary without new-lead texts (one switch for
+  STOP to flip); Davi can ask for "summary only" later (LAUNCH step 13).
+  - **Morning summary by text** (`src/server/sms-summary.ts`, rules in `sms-summary-rules.ts`):
+    step `texts` of the hourly `morning-digest` job. Due at/after `digest_hour` in the owner's
+    zone, once a local day, **before noon** (`SUMMARY_TEXT_LAST_HOUR` 12), never in quiet hours
+    (5am/6am waits for 7am), never for read-only accounts; **independent of `digest_enabled`**.
+    Counts from `digestCounts` (the queue's content-free membership): "N replies ready, N
+    follow-ups ready, N need you" (needs you = needs-you cards + waiting leads with no card +
+    not-answered-yet), link `/queue` (or `/quotes` when only a lead with no card waits). A quiet
+    morning: no text, day marked done. Otherwise the shared text slot is claimed (10-minute gap,
+    only while today isn't marked), then sent; `sms_summary_last_sent_on` ('YYYY-MM-DD') is
+    written **only after Twilio accepted it**; refused / not configured / STOP → slot handed back,
+    nothing marked. Activity `sms_summary_sent` {replies, followups, needsYou, deliveryId};
+    failures log `sms_summary_failed` (workspace id, Twilio status, error name) and don't fail
+    the job.
+  - **Leads at risk by text** (`sendLeadAtRiskPushes`, `leads-at-risk.ts`): same run, moment and
+    episode marks as the #34 push — one `atRiskAlertedAt` mark covers push and text. Owners with
+    `sms_at_risk_enabled` count even with no phone subscribed. "N quote requests have waited over
+    4 hours. Open: …" (link from `notificationUrl`). Shares `LEAD_AT_RISK_PUSHES_PER_DAY` (one
+    `lead_at_risk_push_sent` row per episode, `texted: true` + `deliveryId` when texted), quiet and
+    business hours, the 10-minute text slot and ten texts a day. A refused text hands its slot
+    back; if neither a phone nor the text took it, the marks are taken back and nothing is
+    logged. When only one of the two slots is free, the alert goes by the free one and the
+    episode is marked (the other channel doesn't repeat it for the same wait).
+  - **Ten texts a day, shared:** `textsSentToday` counts `sms_alert_sent`, `sms_summary_sent` and
+    texted `lead_at_risk_push_sent` rows from local midnight; the tenth of any kind ends with
+    "That's today's last text…" (`LAST_TEXT_OF_DAY`, now in `sms-summary-rules.ts`, re-exported
+    from `sms-alerts`). Emergencies keep their own caps. New `SmsErrorCode` `alerts_off`; delivery
+    rows use kind `alert`. Tests: `sms-summary`, `sms-at-risk`, `sms-texts-screen`.

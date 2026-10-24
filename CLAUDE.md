@@ -61,7 +61,8 @@ src/app/(app)/      signed-in screens: queue, inbox, connect (pre-OAuth explaine
 src/ai/             model client (cap, usage, logging), classify, prompts/ (versioned)
 src/jobs/           Inngest client, events, functions (served at /api/inngest)
 src/app/api/gmail/  Gmail OAuth callback (connect is a server action in (app)/connect/actions.ts)
-src/mailbox/        connector interface + gmail/ implementation (scopes, OAuth, state)
+src/mailbox/        connector interface + gmail/ implementation (scopes, OAuth, state);
+                    outlook/ (Microsoft Graph, behind FEATURE_OUTLOOK)
 src/server/         domain logic: accounts, mailboxes, session (requireOwner/requireAdmin), sync,
                     classification, inbox, profile, voice, drafts, lifecycle (pure rules),
                     workspace-lifecycle (DB transitions), admin (overview, invites),
@@ -77,7 +78,8 @@ scripts/invite.ts   pnpm invite owner@shop.com [trade] ["note"] (or /admin → I
 src/styles/theme.css   THE theme file — every color/token
 tests/unit/         Vitest; DB tests use in-memory PGlite (tests/support/db.ts)
 tests/e2e/          Playwright (mobile 375px + desktop); real Postgres; forged Auth.js cookie;
-                    fakes/ = fake Google consent + Gmail + Anthropic (127.0.0.1, PORT+1)
+                    fakes/ = fake Google consent + Gmail + Anthropic + Graph (127.0.0.1,
+                    PORT+1); a second app with Outlook on runs outlook.spec.ts on PORT+2
 docs/               BRIEF.md, SETUP.md, LAUNCH.md (Davi's launch checklist),
                     RUNBOOK.md (when the app stops), google-verification.md, legal drafts
 ```

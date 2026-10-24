@@ -280,3 +280,77 @@ original order. Rules that a test or gate depends on are also stated in `CLAUDE.
     line, job addresses and stage per card; `wroteWords`, `headlineName`, `listStartsOn`.
   - **Names link to the page (Check 13 P9):** `customerKeySql` (opaque uuid) on Queue, Quotes and
     Money; `CustomerName` (44px). No address in any URL.
+- **Outlook / Microsoft 365 (plan #49, 2026-10-24, branch `m12-outlook`; migrations
+  `0082_outlook_provider` (the enum ADD VALUE, alone) and `0083_outlook_push_subscription`):**
+  behind `FEATURE_OUTLOOK` (off); offered only when the switch is on **and** `MS_CLIENT_ID` +
+  `MS_CLIENT_SECRET` are set (`outlookOffered()`, `src/config/outlook.ts`). Off: no Outlook
+  button or wording, `/api/outlook/notify` 404s, the callback sends the owner back to Connect, the
+  daily Outlook step returns before any query, CSP and waitlist rule unchanged, and an Outlook
+  client refuses to refresh a token (no Microsoft host contacted).
+  - **Client** (`src/mailbox/outlook/`, Microsoft Graph over plain `fetch`, built only in
+    `mailboxClientFor`): one request path (`http.ts`), `Prefer: IdType="ImmutableId"` everywhere;
+    refresh with rotation through `onRefreshTokenRotated`, **single-flight** (Microsoft rotates the
+    refresh token every time); 401 re-refresh once → `MailboxAuthError`; `invalid_grant` /
+    `interaction_required` / `unauthorized_client` / permanent 403 → `MailboxAuthError`;
+    `invalid_client` (our secret expired) is a plain error, never "reconnect"; 429/503/504 with
+    Retry-After ≤ 60 s slept, longer → `MailboxRateLimitError`, else full-jitter backoff; errors
+    carry status + Graph's error code only, never Graph's message text.
+  - **Permissions:** exactly `Mail.ReadWrite`, `Mail.Send`, `offline_access`, `User.Read`; any of
+    the first three missing, or no refresh token → `MissingScopesError`, nothing saved.
+  - **Connect:** `common` endpoint (work and personal), `prompt=consent` (`select_account` for
+    "Connect another Outlook"), PKCE S256 (verifier in the httpOnly cookie
+    `sa_outlook_oauth_state`, path `/api/outlook`, 10 minutes, beside the random state compared in
+    constant time). Address = `/me` `mail`, else `userPrincipalName`. No reachable mailbox →
+    `?error=no_outlook`; the same address on the other provider → `MailboxProviderMismatchError`
+    (`?error=other_provider`), never switched silently. Rate-limited like Gmail connect.
+  - **Sync:** thread = `conversationId`; folders map onto `MAIL_LABELS` (inbox, Sent Items,
+    Drafts, Deleted Items → TRASH, Junk → SPAM; Archive and own folders = no label). **No
+    Promotions / Social mapping** (Focused / Other isn't the same; every Outlook email goes to the
+    model). Unsent drafts never stored (`isDraft` → DRAFT → `isUnsentDraft`). Bodies as text
+    (`Prefer: outlook.body-content-type="text"`); attachment counts by content type only. Listing
+    pages by `@odata.nextLink` (a 400 on a saved one → `InvalidPageTokenError`). Incremental =
+    per-folder **delta** (inbox, Sent, Deleted, Junk, each `receivedDateTime ge` 30 days before the
+    cursor was made); cursor in `history_id` is opaque (`o1.` + base64url JSON of four delta
+    links), only the last page's stored. Moves become label changes; `deleted` always empty
+    (Graph's `@removed` can't tell delete from restore); 410/400 on a delta link →
+    `HistoryExpiredError` → the existing re-read.
+  - **Drafts and sending:** created from our own MIME (`POST /me/messages`), never
+    `createReply`; **update = PATCH of the parts** read back from our MIME (`mime-parts.ts`), so
+    the id (`drafts.gmail_draft_id`) and threading headers stay; delete only while still a draft
+    (a sent draft's immutable id is the Sent Items copy). Send = `POST /me/messages/{id}/send`
+    after a read that checks it's still a draft; the sent id is the draft's id. The practice copy
+    is a draft then sent (`sendMail` is never used). No `listSendAs`: replies go from the connected
+    address. `sendDraft` / `practiceSend` stay the only two send sites (security-surface knows
+    Graph's `/send` / `/sendMail` and allows only `outlook/writer.ts`).
+  - **Push:** Graph subscriptions on `me/messages`, 10,000 minutes, renewed by
+    `renew-gmail-watches`' `renew-outlook` step under two days left (404 → new one); only running
+    Outlook mailboxes of accounts that may run jobs, after their first read. `clientState` kept
+    only as sha256 (`push_client_state_sha256`), id in `push_subscription_id` (unique), expiry in
+    `watch_expires_at`. `/api/outlook/notify` (guard `graph-client-state`): 404 unless offered,
+    echoes `validationToken` (text/plain, nosniff), constant-time clientState check, enqueues only
+    that mailbox's sync; no match + wrong clientState → 403, unknown subscription acknowledged. No
+    lifecycle notifications: **the 5-minute poll always syncs Outlook** (`pollDue` counts push only
+    for Gmail). Gmail's `renewWatches` skips Outlook rows.
+  - **Disconnect / Delete my account:** revoke goes to the token's own provider
+    (`connectorForRow`; a Microsoft token never reaches Google). Microsoft has no per-app revoke
+    (`ProviderCannotRevokeError` → `revokedAtProvider: false`); tokens and mailbox deleted anyway,
+    subscription dropped first (best effort), the screen says where to remove the app.
+    `?done=disconnected_outlook`.
+  - Waitlist: while offered, a `microsoft` mail-host row is invited without "Invite anyway". CSP
+    `form-action` adds `https://login.microsoftonline.com` only while offered (needs a redeploy
+    anyway). data-paths: `graph.microsoft.com` / `login.microsoftonline.com` in
+    `FETCH_HOSTS_AWAITING_POLICY` until the policy has the line. e2e seam `microsoftEndpoints`
+    (`SA_E2E_MICROSOFT_BASE_URL`); a second app on `PORT+2` with Outlook on runs
+    `tests/e2e/outlook.spec.ts`, `outlook-off.spec.ts` checks the normal app; Graph stand-in
+    `tests/support/fake-graph.ts` (served under `/microsoft` by the e2e fakes).
+  - **Switching it off again** with Outlook mailboxes connected: their jobs fail closed
+    (`sync_failed` in Settings); Disconnect still works (it skips dropping the subscription, which
+    expires within a week). Known: the reconnect banner text, the "access lost" email and the
+    queue's lost-access lines still say "Gmail" for an Outlook mailbox (the banner button and
+    Settings say "Reconnect Outlook").
+  - **Not checked live** (no Azure app): that Exchange threads a MIME-uploaded reply by
+    In-Reply-To / References (logs `outlook_draft_new_conversation`, ids only, if not); that a
+    draft's text read back equals ours for `sameText` (a mismatch asks the owner to tap Send
+    again); the exact delta-expiry and non-Exchange-Online error codes. To check with a test
+    outlook.com account: one draft, edit it in the app, send, confirm the Sent Items copy has the
+    same id in the same conversation; let a delta link sit a week for the 410.
