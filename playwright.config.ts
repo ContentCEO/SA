@@ -22,6 +22,14 @@ const startServers = !process.env.PLAYWRIGHT_BASE_URL;
  */
 const fakesPort = Number(process.env.E2E_FAKES_PORT ?? port + 1);
 const fakesUrl = `http://127.0.0.1:${fakesPort}`;
+/**
+ * Plan #49: a second app, on the port after the fakes, with Outlook switched ON (FEATURE_OUTLOOK
+ * and neutral e2e Azure app values), for tests/e2e/outlook.spec.ts only. Every other spec runs
+ * against the first app, where Outlook is off as in production today.
+ */
+const outlookPort = Number(process.env.E2E_OUTLOOK_PORT ?? fakesPort + 1);
+const outlookURL = `http://localhost:${outlookPort}`;
+process.env.E2E_OUTLOOK_URL = outlookURL;
 process.env.E2E_FAKES_URL = fakesUrl;
 process.env.SA_E2E_HOOK_SECRET ??= randomBytes(32).toString("hex");
 
@@ -36,6 +44,46 @@ if (startServers) {
     );
   }
 }
+
+/** The e2e app's env: neutral values only (see the comments inside). */
+const appEnv: Record<string, string> = {
+  SA_E2E: "1",
+  SA_E2E_GOOGLE_BASE_URL: `${fakesUrl}/google`,
+  SA_E2E_ANTHROPIC_BASE_URL: `${fakesUrl}/anthropic`,
+  // Plan #49: fake Microsoft. Unused here: Outlook stays off on this app.
+  SA_E2E_MICROSOFT_BASE_URL: `${fakesUrl}/microsoft`,
+  FEATURE_OUTLOOK: "",
+  MS_CLIENT_ID: "",
+  MS_CLIENT_SECRET: "",
+  SA_E2E_HOOK_SECRET: process.env.SA_E2E_HOOK_SECRET!,
+  AUTH_GOOGLE_ID: "e2e-client-id",
+  AUTH_GOOGLE_SECRET: "e2e-client-secret",
+  ANTHROPIC_API_KEY: "e2e-fake-key",
+  INNGEST_EVENT_KEY: "",
+  // Playwright passes the rest of this process's env (all of .env.local) to the app:
+  // blank every other real service so a run can't email, charge, text or push
+  // anyone. The specs expect these off (billing.spec.ts: no Stripe key). The Sentry
+  // DSN (NEXT_PUBLIC_*) is fixed at `pnpm build`, so blanking it here only covers
+  // what reads it at runtime; build e2e without it set.
+  ...Object.fromEntries(
+    [
+      "RESEND_API_KEY",
+      "EMAIL_FROM",
+      "STRIPE_SECRET_KEY",
+      "STRIPE_WEBHOOK_SECRET",
+      "TWILIO_ACCOUNT_SID",
+      "TWILIO_AUTH_TOKEN",
+      "TWILIO_MESSAGING_SERVICE_SID",
+      "TWILIO_FROM_NUMBER",
+      "VAPID_PUBLIC_KEY",
+      "VAPID_PRIVATE_KEY",
+      "GMAIL_PUBSUB_TOPIC",
+      "GMAIL_PUSH_VERIFICATION_TOKEN",
+      "INNGEST_SIGNING_KEY",
+      "NEXT_PUBLIC_SENTRY_DSN",
+    ].map((name) => [name, ""]),
+  ),
+};
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -64,13 +112,25 @@ export default defineConfig({
   projects: [
     {
       name: "mobile",
+      testIgnore: "**/outlook.spec.ts",
       use: {
         ...devices["iPhone 13"],
         browserName: "chromium",
         viewport: { width: 375, height: 812 },
       },
     },
-    { name: "desktop", use: { ...devices["Desktop Chrome"] } },
+    { name: "desktop", testIgnore: "**/outlook.spec.ts", use: { ...devices["Desktop Chrome"] } },
+    {
+      // Plan #49: the Outlook-on app, at phone width.
+      name: "outlook",
+      testMatch: "**/outlook.spec.ts",
+      use: {
+        ...devices["iPhone 13"],
+        browserName: "chromium",
+        viewport: { width: 375, height: 812 },
+        baseURL: outlookURL,
+      },
+    },
   ],
   webServer: startServers
     ? [
@@ -92,38 +152,20 @@ export default defineConfig({
           // Inngest key that would wake the production app) is ever handed to the fakes or sent
           // anywhere. An empty INNGEST_EVENT_KEY makes enqueue() fail, which it swallows. The
           // fakes refuse any other Google client or Anthropic key (tests/e2e/fakes/server.ts).
+          env: appEnv,
+          reuseExistingServer: !process.env.CI,
+          timeout: 120_000,
+        },
+        {
+          // Plan #49: the same build with Outlook on, for outlook.spec.ts only.
+          command: `pnpm start --port ${outlookPort} --hostname localhost`,
+          url: `${outlookURL}/api/health`,
           env: {
-            SA_E2E: "1",
-            SA_E2E_GOOGLE_BASE_URL: `${fakesUrl}/google`,
-            SA_E2E_ANTHROPIC_BASE_URL: `${fakesUrl}/anthropic`,
-            SA_E2E_HOOK_SECRET: process.env.SA_E2E_HOOK_SECRET,
-            AUTH_GOOGLE_ID: "e2e-client-id",
-            AUTH_GOOGLE_SECRET: "e2e-client-secret",
-            ANTHROPIC_API_KEY: "e2e-fake-key",
-            INNGEST_EVENT_KEY: "",
-            // Playwright passes the rest of this process's env (all of .env.local) to the app:
-            // blank every other real service so a run can't email, charge, text or push
-            // anyone. The specs expect these off (billing.spec.ts: no Stripe key). The Sentry
-            // DSN (NEXT_PUBLIC_*) is fixed at `pnpm build`, so blanking it here only covers
-            // what reads it at runtime; build e2e without it set.
-            ...Object.fromEntries(
-              [
-                "RESEND_API_KEY",
-                "EMAIL_FROM",
-                "STRIPE_SECRET_KEY",
-                "STRIPE_WEBHOOK_SECRET",
-                "TWILIO_ACCOUNT_SID",
-                "TWILIO_AUTH_TOKEN",
-                "TWILIO_MESSAGING_SERVICE_SID",
-                "TWILIO_FROM_NUMBER",
-                "VAPID_PUBLIC_KEY",
-                "VAPID_PRIVATE_KEY",
-                "GMAIL_PUBSUB_TOPIC",
-                "GMAIL_PUSH_VERIFICATION_TOKEN",
-                "INNGEST_SIGNING_KEY",
-                "NEXT_PUBLIC_SENTRY_DSN",
-              ].map((name) => [name, ""]),
-            ),
+            ...appEnv,
+            APP_URL: outlookURL,
+            FEATURE_OUTLOOK: "1",
+            MS_CLIENT_ID: "e2e-ms-client-id",
+            MS_CLIENT_SECRET: "e2e-ms-client-secret",
           },
           reuseExistingServer: !process.env.CI,
           timeout: 120_000,

@@ -107,6 +107,9 @@ put them in `.env.local`, and **never** set them on Vercel:
   calls instead of Google (the fake, `http://127.0.0.1:<PORT+1>/google`).
 - `SA_E2E_ANTHROPIC_BASE_URL` — where the AI calls go instead of Anthropic (the fake's
   `/anthropic`), with a fake key.
+- `SA_E2E_MICROSOFT_BASE_URL` — plan #49: where Outlook's Microsoft token and Graph calls go
+  instead of Microsoft (the fake's `/microsoft`). E2e mode without it never reaches the real
+  Microsoft: an Outlook call throws instead.
 - `SA_E2E_HOOK_SECRET` — a random secret (made fresh each run) that unlocks
   `/api/test-hooks/run`, which runs the job steps (backfill, sync, sorting, drafting, the send
   after the undo window) the way Inngest would.
@@ -129,6 +132,11 @@ text or push anyone, and your real keys never reach the fakes. In e2e mode the A
 drops any headers from `ANTHROPIC_CUSTOM_HEADERS`, and a `DATABASE_URL` with no host counts as
 local only if `PGHOST` is too (that is where postgres.js would connect). Build for e2e without
 `NEXT_PUBLIC_SENTRY_DSN` set (it is fixed at `pnpm build`).
+
+Plan #49: Playwright also starts a second copy of the same build on `PORT+2` (`E2E_OUTLOOK_PORT`)
+with Outlook switched on (`FEATURE_OUTLOOK=1` and neutral e2e Azure app values) for
+`tests/e2e/outlook.spec.ts` only (project "outlook"); every other spec runs on the first app, where
+Outlook is off as in production, and `tests/e2e/outlook-off.spec.ts` checks that.
 
 Other knobs (test-only, never in the app): `PORT` (default 3100; `APP_URL` must be
 `http://localhost:<PORT>` or the config stops with a message saying so), `E2E_FAKES_PORT`
