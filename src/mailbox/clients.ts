@@ -4,6 +4,7 @@ import { decryptSecret } from "@/lib/crypto";
 import type { MailboxReader, MailboxWriter } from "./connector";
 import { createGmailReader } from "./gmail/api";
 import type { GmailBudget } from "./gmail/quota";
+import { createOutlookClient } from "./outlook/api";
 
 /** One mailbox's client: read and write in one, whatever the provider. */
 export type MailboxClient = MailboxReader & MailboxWriter & { gmailUnits?(): number };
@@ -35,9 +36,12 @@ export function mailboxClientFor(
         budget: opts.budget,
       });
     case "outlook":
-      // Plan #49: the Outlook client arrives with src/mailbox/outlook/ (next step). No outlook
-      // row can exist before then: nothing saves one.
-      throw new Error("No mailbox client for provider outlook yet.");
+      // Plan #49 (FEATURE_OUTLOOK): Microsoft Graph. With the switch off the client refuses to
+      // refresh a token, so no Microsoft host is contacted even for a stored row.
+      return createOutlookClient({
+        refreshToken: decryptSecret(m.encryptedRefreshToken),
+        onRefreshTokenRotated: opts.onRefreshTokenRotated,
+      });
     default: {
       const unknown: never = m.provider;
       throw new Error(`No mailbox client for provider ${String(unknown)}.`);

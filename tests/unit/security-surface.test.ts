@@ -1344,13 +1344,17 @@ describe("Only two places can send mail", () => {
     return out;
   }
 
-  /** String literals naming a Gmail send endpoint. */
-  function sendEndpoints(sf: ts.SourceFile): string[] {
+  /**
+   * String literals naming a send endpoint: Gmail's (`/messages/send`, `/drafts/send`) and
+   * Microsoft Graph's (`/me/messages/{id}/send`, whose literal tail is `/send`, and `/sendMail`).
+   */
+  function sendEndpoints(sf: ts.SourceFile, graphShapes = true): string[] {
     const out: string[] = [];
     walk(sf, (n) => {
       if (
         (ts.isStringLiteralLike(n) || ts.isTemplateLiteralToken(n)) &&
-        /\/(messages|drafts)\/send/.test(n.text)
+        (/\/(messages|drafts)\/send/.test(n.text) ||
+          (graphShapes && /^\/send(Mail)?$|\/sendMail\b/.test(n.text)))
       ) {
         out.push(n.text);
       }
@@ -1369,16 +1373,33 @@ describe("Only two places can send mail", () => {
     for (const s of SEND_SITES) expect(s.why.length, s.site).toBeGreaterThan(10);
   });
 
-  it("names Gmail's send endpoints only in the Gmail client", () => {
+  /**
+   * The provider clients that may name a send endpoint, with why. Both only implement the
+   * MailboxWriter's sendDraft / sendMessage, which only SEND_SITES above may call.
+   */
+  const SEND_ENDPOINT_FILES: Record<string, string> = {
+    "src/mailbox/gmail/api.ts": "Gmail's drafts.send and messages.send",
+    // Plan #49 (FEATURE_OUTLOOK): Graph's POST /me/messages/{id}/send, for sendDraft and for the
+    // practice copy (made as a draft, then sent). Never sendMail, never a new send path.
+    "src/mailbox/outlook/writer.ts": "Microsoft Graph's message send (sendDraft, sendMessage)",
+  };
+
+  it("names send endpoints only in the provider clients", () => {
     const found: string[] = [];
     for (const f of ALL) {
       const file = rel(f);
-      for (const text of sendEndpoints(parse(f))) found.push(`${file}: ${text}`);
+      // Graph's bare "/send" tail is only a provider endpoint in provider code (the app's own
+      // gated route, /api/drafts/[id]/send, ends the same way).
+      for (const text of sendEndpoints(parse(f), file.startsWith("src/mailbox/")))
+        found.push(`${file}: ${text}`);
     }
-    expect(found.map((x) => x.split(":")[0]).every((f) => f === "src/mailbox/gmail/api.ts")).toBe(
-      true,
-    );
-    expect(found.length).toBeGreaterThanOrEqual(2);
+    const files = new Set(found.map((x) => x.split(":")[0]!));
+    expect([...files].sort()).toEqual(Object.keys(SEND_ENDPOINT_FILES).sort());
+    expect(
+      found.filter((x) => x.startsWith("src/mailbox/gmail/api.ts")).length,
+    ).toBeGreaterThanOrEqual(2);
+    // Outlook never uses sendMail (a send with no draft and no id).
+    expect(found.filter((x) => /sendMail/.test(x))).toEqual([]);
   });
 
   it("self-test: catches the four call shapes, and the endpoint strings", () => {
@@ -1400,6 +1421,15 @@ describe("Only two places can send mail", () => {
         parseText("f.ts", 'fetch(base + "/messages/send"); fetch(`${b}/drafts/send`);'),
       ),
     ).toHaveLength(2);
+    // Plan #49: Graph's shapes too.
+    expect(
+      sendEndpoints(
+        parseText(
+          "f.ts",
+          'g.call(`${msgPath(id)}/send`); g.call("/me/sendMail"); g.call(`/me/messages/${id}/send`);',
+        ),
+      ),
+    ).toHaveLength(3);
   });
 });
 
