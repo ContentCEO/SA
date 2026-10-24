@@ -80,6 +80,10 @@ export const SCREEN_MESSAGES = {
       sms_on: "Text alerts are on.",
       sms_off: "Text alerts are off.",
       sms_removed: "Number removed.",
+      sms_summary_on: "Morning summary texts are on.",
+      sms_summary_off: "Morning summary texts are off.",
+      sms_at_risk_on: "Waiting-quote texts are on.",
+      sms_at_risk_off: "Waiting-quote texts are off.",
       saved: "Saved.",
     },
     error: {
@@ -88,6 +92,7 @@ export const SCREEN_MESSAGES = {
       sms_code: "That code didn't match, or it expired. Send a new one.",
       sms_not_configured: "Texting isn't switched on yet.",
       sms_not_verified: "Confirm your number first.",
+      sms_alerts_off: "Turn on text alerts first.",
       sms_send_failed: "We couldn't text that number. Check it's a mobile number and try again.",
       // Check 27 P6: Twilio's 21610 when the code is sent.
       sms_opted_out:

@@ -126,7 +126,14 @@ export function secondsUntilQuiet(now: Date, timeZone: string, max = 4 * 60 * 60
 
 /** The refusals the Text alerts screen has a notice for (settings/messages.ts: `sms_<code>`). */
 export type SmsErrorCode =
-  "phone" | "busy" | "not_configured" | "code" | "not_verified" | "send_failed" | "opted_out";
+  | "phone"
+  | "busy"
+  | "not_configured"
+  | "code"
+  | "not_verified"
+  | "alerts_off"
+  | "send_failed"
+  | "opted_out";
 
 export class SmsError extends Error {
   constructor(
@@ -316,7 +323,7 @@ export async function setExtraText(
     .from(businessProfiles)
     .where(eq(businessProfiles.workspaceId, workspaceId));
   if (enabled && !p?.verified) throw new SmsError("not_verified", "Confirm your number first.");
-  if (enabled && !p?.on) throw new SmsError("not_verified", "Turn on text alerts first.");
+  if (enabled && !p?.on) throw new SmsError("alerts_off", "Turn on text alerts first.");
   await upsertProfile(
     workspaceId,
     which === "summary" ? { smsSummaryEnabled: enabled } : { smsAtRiskEnabled: enabled },
