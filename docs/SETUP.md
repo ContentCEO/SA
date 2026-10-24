@@ -189,6 +189,8 @@ sets it, in `.env.example`).
 | `CRON_SECRET`                                                                         | No                           | Lets Vercel Cron call `/api/cron/jobs-check` (Vercel sends it as a Bearer token). Without it the route is a 404 (§6g).                                                                                                                                                                                                                                                      | `openssl rand -hex 24`                                                                                                                   | Prod (sensitive)                         |
 | `FEATURE_CLOSING_QUESTION`                                                            | No (off when unset)          | Plan #26. **On** in Vercel since 2026-10-14 (Davi's okay); live from the next deploy.                                                                                                                                                                                                                                                                                       | `1` (§6d).                                                                                                                               | Prod + Preview                           |
 | `FEATURE_REFERRALS`                                                                   | No (off)                     | Plan #47 (a free month, one plan up). **Ask Davi first**; the switch is the only control (§6d).                                                                                                                                                                                                                                                                             | `1` (§6d).                                                                                                                               | Prod, only with Davi's okay              |
+| `FEATURE_OUTLOOK`                                                                     | No (off)                     | Plan #49: Outlook / Microsoft 365 mailboxes next to Gmail. **Ask Davi first** (needs his Azure app and Microsoft publisher verification). Offered only with `MS_CLIENT_ID` and `MS_CLIENT_SECRET` set too (§8b).                                                                                                                                                            | `1` (§6d, §8b).                                                                                                                          | Prod, only with Davi's okay              |
+| `MS_CLIENT_ID`, `MS_CLIENT_SECRET`                                                    | Only for Outlook             | The Azure app registration's client id and secret (§8b). Without both, Outlook stays off whatever `FEATURE_OUTLOOK` says.                                                                                                                                                                                                                                                   | Entra admin center → App registrations (§8b).                                                                                            | Prod (secret sensitive)                  |
 | `RETENTION_BODY_DAYS`                                                                 | No (default 30)              | Days before email text is purged. The privacy policy and homepage promise 30: don't change it without changing them.                                                                                                                                                                                                                                                        | A number.                                                                                                                                | Prod                                     |
 | `VERCEL`, `VERCEL_ENV`, `VERCEL_BRANCH_URL`, `VERCEL_GIT_COMMIT_SHA`                  | Set by Vercel                | Deploy detection (turns e2e mode off), preview URLs, preview-only CSP, Sentry environment and release, `/api/health`'s `commit`, Web Analytics on production only.                                                                                                                                                                                                          | Automatic, while "Automatically expose System Environment Variables" is on.                                                              | Vercel sets them                         |
 | `NODE_ENV`                                                                            | Set by Next                  | Development vs production behaviour.                                                                                                                                                                                                                                                                                                                                        | Automatic.                                                                                                                               | —                                        |
@@ -344,6 +346,10 @@ off (`src/config/features.ts`). The code default stays off: the env var is the s
   went another way?". Only the owner's tap writes the draft (never a job), once per thread ever,
   never on a complaint, and it goes through the normal queue. It is not a nudge and doesn't count
   as one.
+
+- `FEATURE_OUTLOOK` (plan #49, default **off**): Outlook / Microsoft 365 mailboxes next to Gmail.
+  On only when `MS_CLIENT_ID` and `MS_CLIENT_SECRET` are set too. Off, nothing changes anywhere:
+  no Outlook button, no Microsoft host is contacted. **Ask Davi first**; setup in §8b.
 
 - `FEATURE_REFERRALS` (plan #47, default **off**; offer A, decided 2026-10-15): each account gets
   a referral link in Plan & billing (`/?ref=<code>`). The code rides on the waitlist form, onto the
@@ -703,6 +709,39 @@ added beside it, never by editing shared sync, draft or voice code:
    `tests/unit/mime.test.ts` (the replies it sends are the MIME the app builds),
    `tests/unit/security-surface.test.ts`, and a `<provider>-connector` / `<provider>-api` pair
    like `tests/unit/gmail-connector.test.ts` and `tests/unit/gmail-api.test.ts`.
+
+### Outlook / Microsoft 365 (plan #49, built behind `FEATURE_OUTLOOK`)
+
+Built: `src/mailbox/outlook/` (Microsoft Graph over plain `fetch`), the connect and callback flow
+(`/api/outlook/callback`), push (`/api/outlook/notify`) and the shared tests. It stays off until
+Davi does these, in order (**ask Davi**: his Microsoft account, his domain):
+
+1. **Register the app.** entra.microsoft.com → Identity → Applications → App registrations → New
+   registration. Name "Squared Away". Supported account types: **Accounts in any organizational
+   directory and personal Microsoft accounts** (work Microsoft 365 and outlook.com both). Redirect
+   URI: platform **Web**, `https://<production domain>/api/outlook/callback` (add
+   `http://localhost:3000/api/outlook/callback` too for local work). Register.
+2. **Copy the client id.** The app's Overview page → "Application (client) ID" → Vercel →
+   `MS_CLIENT_ID` (Production).
+3. **Make a secret.** Certificates & secrets → Client secrets → New client secret (24 months) →
+   copy the **Value** column (shown once; not the "Secret ID") → Vercel → `MS_CLIENT_SECRET`
+   (Production, sensitive). Put a calendar reminder a month before it expires.
+4. **Permissions.** API permissions → Add a permission → Microsoft Graph → Delegated: `Mail.ReadWrite`,
+   `Mail.Send`, `offline_access`, `User.Read` (exactly these four; the app refuses a connection
+   that lacks any of the first three, and needs a refresh token for the fourth). No admin consent
+   needed for these.
+5. **Publisher verification** (otherwise Microsoft warns owners "unverified" and many work tenants
+   block the app): a verified Microsoft AI Cloud Partner Program account (partner.microsoft.com),
+   a publisher domain that isn't `*.onmicrosoft.com` (Branding & properties → Publisher domain →
+   verify the production domain), then Branding & properties → "Add MPN ID to verify publisher".
+6. **Privacy policy and terms**: add the sentences in `docs/notes/legal-m12-outlook.md` first.
+7. Vercel → `FEATURE_OUTLOOK` = `1` (Production), redeploy. Push needs the public production
+   domain (previews sit behind Vercel login, so Microsoft can't reach them; the 5-minute poll
+   still syncs).
+
+Microsoft has no token revoke for a single app: Disconnect deletes our tokens and the mailbox, and
+the app tells the owner to remove "Squared Away" at account.microsoft.com → Privacy → Apps and
+services (personal) or myapps.microsoft.com (work).
 
 ## 9. Deploys (Vercel)
 
