@@ -562,6 +562,31 @@ describe("#50 the morning summary by text", () => {
   });
 });
 
+describe("#50 no Twilio call from tests", () => {
+  it("GUARDRAIL: with the injected sender, nothing reaches the network even when Twilio is set", async () => {
+    process.env.TWILIO_ACCOUNT_SID = "AC-test";
+    process.env.TWILIO_AUTH_TOKEN = "tok";
+    process.env.TWILIO_MESSAGING_SERVICE_SID = "MG-test";
+    const realFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls++;
+      throw new Error("network");
+    }) as typeof fetch;
+    try {
+      await textsOnFor();
+      await needsYou(DANA);
+      expect((await sendSummaryTexts(MORNING, { send })).sent).toBe(1);
+    } finally {
+      globalThis.fetch = realFetch;
+      delete process.env.TWILIO_ACCOUNT_SID;
+      delete process.env.TWILIO_AUTH_TOKEN;
+      delete process.env.TWILIO_MESSAGING_SERVICE_SID;
+    }
+    expect(calls).toBe(0);
+  });
+});
+
 describe("#50 the switches", () => {
   it("need a confirmed number and text alerts on; each logs one Activity line", async () => {
     await expect(setExtraText(workspaceId, "summary", true)).rejects.toBeInstanceOf(SmsError);

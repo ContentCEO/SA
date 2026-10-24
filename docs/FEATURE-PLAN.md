@@ -239,7 +239,7 @@ _Re-checked 2026-10-10: brief scope complete with tests; nothing else filed here
       refresh token), `User.Read` (the address). - **Publisher verification** needs a verified Microsoft AI Cloud Partner Program account and
       a publisher domain that isn't `*.onmicrosoft.com`
       ([publisher-verification-overview](https://learn.microsoft.com/en-us/entra/identity-platform/publisher-verification-overview)).
-- [ ] **#50 Text me a summary.** _(Partly done 2026-10-09: opt-in, code-verified number, content-free new-lead alerts, quiet hours, caps — off until Twilio env is set. Still to do: digest summary by text, leads-at-risk by text.)_ ASK DAVI: needs a Twilio account, A2P 10DLC registration, and has a
+- [x] **#50 Text me a summary.** _(Partly done 2026-10-09: opt-in, code-verified number, content-free new-lead alerts, quiet hours, caps — off until Twilio env is set. Done 2026-10-24 (branch `m12-sms-summary`): the morning summary by text and leads at risk by text, each its own opt-in on Settings → Text alerts, off by default — still off until Twilio env is set. Notes: `docs/notes/m12-sms-summary.md`.)_ ASK DAVI: needs a Twilio account, A2P 10DLC registration, and has a
       per-message cost. Opt-in per owner, verified phone number, digest summary + leads-at-risk
       alerts by SMS. Content-free like push ("2 quote requests need you — open Squared Away").
       STOP/HELP handled. Owner can't reply to customers by SMS.
