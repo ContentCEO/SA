@@ -1,6 +1,6 @@
 import "server-only";
 import { createHash, randomInt, timingSafeEqual } from "node:crypto";
-import { and, count, desc, eq, gt, gte, isNull, lt, or, sql } from "drizzle-orm";
+import { and, count, desc, eq, gt, gte, isNull, lt, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { activityLog, businessProfiles, mailboxes, threads, workspaces } from "@/db/schema";
 import { appUrl } from "@/lib/app-url";
@@ -10,6 +10,10 @@ import { atLocalHour, localParts, usableTimeZone } from "./snooze-rules";
 import { jobsAllowed } from "./lifecycle";
 import { hitLimit } from "./rate-limit";
 import { recordSmsDelivery } from "./sms-deliveries";
+import { ALL_TEXTS_OFF } from "./sms-delivery-rules";
+import { LAST_TEXT_OF_DAY } from "./sms-summary-rules";
+
+export { LAST_TEXT_OF_DAY } from "./sms-summary-rules";
 
 /**
  * Text alerts to the owner's own phone (feature plan #50). Content-free like
@@ -75,9 +79,6 @@ export function inQuietHours(now: Date, timeZone: string): boolean {
   return hour >= SMS.quietStartHour || hour < SMS.quietEndHour;
 }
 
-/** Check 19 P7: the sentence added to the day's tenth (last) text. */
-export const LAST_TEXT_OF_DAY = " That's today's last text; the rest wait in the app.";
-
 /**
  * The text: counts and a link. Check 19 P7: when the oldest lead counted came in before the
  * owner's local midnight (held overnight, or past yesterday's cap) it says "waiting on you"
@@ -125,7 +126,14 @@ export function secondsUntilQuiet(now: Date, timeZone: string, max = 4 * 60 * 60
 
 /** The refusals the Text alerts screen has a notice for (settings/messages.ts: `sms_<code>`). */
 export type SmsErrorCode =
-  "phone" | "busy" | "not_configured" | "code" | "not_verified" | "send_failed" | "opted_out";
+  | "phone"
+  | "busy"
+  | "not_configured"
+  | "code"
+  | "not_verified"
+  | "alerts_off"
+  | "send_failed"
+  | "opted_out";
 
 export class SmsError extends Error {
   constructor(
@@ -163,7 +171,7 @@ export async function startPhoneVerification(
   await upsertProfile(workspaceId, {
     alertPhone: phone,
     alertPhoneVerifiedAt: null,
-    smsAlertsEnabled: false,
+    ...ALL_TEXTS_OFF,
     smsCodeHash: hash(code),
     smsCodeExpiresAt: new Date(now.getTime() + SMS.codeTtlMs),
     smsCodeTries: 0,
@@ -297,12 +305,150 @@ export async function setSmsAlerts(workspaceId: string, enabled: boolean, now = 
   });
 }
 
+/**
+ * Plan #50: the two extra texts, each its own switch (off by default). They need a confirmed
+ * number and text alerts on (the one switch STOP turns off); switching one on clears a stop
+ * reason only together with text alerts, so it never starts texting a number that said STOP.
+ */
+export async function setExtraText(
+  workspaceId: string,
+  which: "summary" | "at_risk",
+  enabled: boolean,
+) {
+  const [p] = await db()
+    .select({
+      verified: businessProfiles.alertPhoneVerifiedAt,
+      on: businessProfiles.smsAlertsEnabled,
+    })
+    .from(businessProfiles)
+    .where(eq(businessProfiles.workspaceId, workspaceId));
+  if (enabled && !p?.verified) throw new SmsError("not_verified", "Confirm your number first.");
+  if (enabled && !p?.on) throw new SmsError("alerts_off", "Turn on text alerts first.");
+  await upsertProfile(
+    workspaceId,
+    which === "summary" ? { smsSummaryEnabled: enabled } : { smsAtRiskEnabled: enabled },
+  );
+  await db().insert(activityLog).values({
+    workspaceId,
+    actor: "owner",
+    action: "sms_alerts_changed",
+    detail: { enabled, which },
+  });
+}
+
+/**
+ * Plan #50: may this owner be texted at all — a confirmed number, text alerts on and no STOP.
+ * Every text (new leads, the morning summary, waiting quotes) asks this first.
+ */
+export function textsOn(
+  p: {
+    smsAlertsEnabled: boolean;
+    alertPhone: string | null;
+    alertPhoneVerifiedAt: Date | null;
+    smsStoppedReason: string | null;
+  } | null,
+): p is NonNullable<typeof p> & { alertPhone: string } {
+  return (
+    !!p && p.smsAlertsEnabled && !!p.alertPhone && !!p.alertPhoneVerifiedAt && !p.smsStoppedReason
+  );
+}
+
+/**
+ * Plan #50: texts counted toward the ten a local day — new-lead texts, morning summary texts
+ * and waiting-quote alerts that went out by text. (Emergencies keep their own caps.)
+ */
+export async function textsSentToday(workspaceId: string, now: Date, timeZone: string) {
+  const dayStart = atLocalHour(now, usableTimeZone(timeZone), 0, 0);
+  const [today] = await db()
+    .select({ n: count() })
+    .from(activityLog)
+    .where(
+      and(
+        eq(activityLog.workspaceId, workspaceId),
+        gte(activityLog.createdAt, dayStart),
+        or(
+          eq(activityLog.action, "sms_alert_sent"),
+          eq(activityLog.action, "sms_summary_sent"),
+          and(
+            eq(activityLog.action, "lead_at_risk_push_sent"),
+            sql`${activityLog.detail} ->> 'texted' = 'true'`,
+          ),
+        ),
+      ),
+    );
+  return today?.n ?? 0;
+}
+
+/**
+ * Plan #50: claim the shared text slot (10 minutes since any text) before sending, so two runs
+ * — or two kinds of text — can't both go. `also` narrows it (the morning summary: not marked
+ * today). True when this run holds it.
+ */
+export async function claimTextSlot(workspaceId: string, now: Date, also?: SQL): Promise<boolean> {
+  const claimed = await db()
+    .update(businessProfiles)
+    .set({ smsLastSentAt: now })
+    .where(
+      and(
+        eq(businessProfiles.workspaceId, workspaceId),
+        or(
+          isNull(businessProfiles.smsLastSentAt),
+          lt(businessProfiles.smsLastSentAt, new Date(now.getTime() - SMS.minGapMs)),
+        ),
+        also,
+      ),
+    )
+    .returning({ id: businessProfiles.workspaceId });
+  return claimed.length > 0;
+}
+
+/** Give the text slot back (only where this run's claim is still the one stored). */
+export async function releaseTextSlot(workspaceId: string, now: Date, previous: Date | null) {
+  await db()
+    .update(businessProfiles)
+    .set({ smsLastSentAt: previous })
+    .where(
+      and(eq(businessProfiles.workspaceId, workspaceId), eq(businessProfiles.smsLastSentAt, now)),
+    );
+}
+
+/**
+ * Check 27 P6 / plan #50: Twilio says the owner replied STOP. Every text switch goes off with
+ * the reason the screen shows, and one Activity line (only the first time).
+ */
+export async function stopTextsForOptOut(workspaceId: string, now: Date) {
+  const stopped = await db()
+    .update(businessProfiles)
+    .set({ ...ALL_TEXTS_OFF, smsStoppedReason: "opted_out" })
+    .where(
+      and(
+        eq(businessProfiles.workspaceId, workspaceId),
+        or(
+          eq(businessProfiles.smsAlertsEnabled, true),
+          eq(businessProfiles.smsSummaryEnabled, true),
+          eq(businessProfiles.smsAtRiskEnabled, true),
+        ),
+      ),
+    )
+    .returning({ id: businessProfiles.workspaceId });
+  if (stopped.length)
+    await db()
+      .insert(activityLog)
+      .values({
+        workspaceId,
+        actor: "squared_away",
+        action: "sms_alerts_changed",
+        detail: { enabled: false, reason: "opted_out" },
+        createdAt: now,
+      });
+}
+
 /** Forget the number entirely. */
 export async function removeAlertPhone(workspaceId: string) {
   await upsertProfile(workspaceId, {
     alertPhone: null,
     alertPhoneVerifiedAt: null,
-    smsAlertsEnabled: false,
+    ...ALL_TEXTS_OFF,
     smsCodeHash: null,
     smsCodeExpiresAt: null,
   });
@@ -430,18 +576,10 @@ async function alertOne(
   if (p.smsLastSentAt && now.getTime() - p.smsLastSentAt.getTime() < SMS.minGapMs) return "skipped";
 
   // Check 19 P7: ten a local day, counted from the owner's midnight (as the at-risk pushes).
-  const dayStart = atLocalHour(now, usableTimeZone(p.timeZone), 0, 0);
-  const [today] = await db()
-    .select({ n: count() })
-    .from(activityLog)
-    .where(
-      and(
-        eq(activityLog.workspaceId, w.id),
-        eq(activityLog.action, "sms_alert_sent"),
-        gte(activityLog.createdAt, dayStart),
-      ),
-    );
-  if ((today?.n ?? 0) >= SMS.dailyCap) return "skipped";
+  // Plan #50: the morning summary and waiting-quote texts count toward the same ten.
+  if (!textsOn(p)) return "skipped";
+  const sentToday = await textsSentToday(w.id, now, p.timeZone);
+  if (sentToday >= SMS.dailyCap) return "skipped";
 
   const fresh = await freshLeads(w.id, p.smsAlertCursor, now);
   if (!fresh.length) return "skipped";
@@ -474,7 +612,7 @@ async function alertOne(
       now,
       p.timeZone,
     ),
-    lastToday: (today?.n ?? 0) + 1 >= SMS.dailyCap,
+    lastToday: sentToday + 1 >= SMS.dailyCap,
   });
   let r: SmsSendResult;
   try {
@@ -498,23 +636,7 @@ async function alertOne(
     // Check 27 P6: the owner replied STOP. Texts go off with the reason the screen shows,
     // the slot goes back, and the next owner still gets theirs.
     await handBackSlot(p);
-    const stopped = await db()
-      .update(businessProfiles)
-      .set({ smsAlertsEnabled: false, smsStoppedReason: "opted_out" })
-      .where(
-        and(eq(businessProfiles.workspaceId, w.id), eq(businessProfiles.smsAlertsEnabled, true)),
-      )
-      .returning({ id: businessProfiles.workspaceId });
-    if (stopped.length)
-      await db()
-        .insert(activityLog)
-        .values({
-          workspaceId: w.id,
-          actor: "squared_away",
-          action: "sms_alerts_changed",
-          detail: { enabled: false, reason: "opted_out" },
-          createdAt: now,
-        });
+    await stopTextsForOptOut(w.id, now);
     return "opted_out";
   }
   // Check 19 P6: remembered by Twilio's message id; Activity says "Texted you" only once

@@ -10,12 +10,15 @@ import { zoneTimeName } from "@/server/time-zone-rules";
 import { lastSmsDelivery } from "@/server/sms-deliveries";
 import { lastTextLine, textsConsentCopy } from "@/server/sms-delivery-rules";
 import { usableTimeZone } from "@/server/snooze-rules";
+import { extraTextsCopy } from "@/server/sms-summary-rules";
+import { LEAD_AT_RISK_HOURS, LEAD_AT_RISK_PUSHES_PER_DAY } from "@/config/business-hours";
 import { EmergencySwitch } from "../emergency-switch";
 import { SettingsScreen } from "../screen";
 import {
   confirmSmsCodeAction,
   removeSmsPhoneAction,
   sendSmsCodeAction,
+  toggleExtraTextAction,
   toggleSmsAlertsAction,
 } from "../sms-actions";
 
@@ -41,6 +44,19 @@ export default async function TextAlertSettingsPage(props: PageProps<"/settings/
         });
   // Check 27 P6: the carrier-required words, with the numbers from the SMS limits in code.
   const copy = textsConsentCopy(SMS, zoneTimeName(profile?.timeZone));
+  // Plan #50: the two extra texts' words, with the numbers from the limits in code.
+  const extra = extraTextsCopy({
+    ...SMS,
+    atRiskHours: LEAD_AT_RISK_HOURS,
+    atRiskPerDay: LEAD_AT_RISK_PUSHES_PER_DAY,
+    digestHour: profile?.digestHour ?? 7,
+  });
+  const extras = profile
+    ? ([
+        { which: "summary", on: profile.smsSummaryEnabled, words: extra.summary },
+        { which: "at_risk", on: profile.smsAtRiskEnabled, words: extra.atRisk },
+      ] as const)
+    : [];
   return (
     <SettingsScreen path="/settings/texts" heavy="text alerts." params={await props.searchParams}>
       <p className="text-muted-foreground">{copy.intro}</p>
@@ -65,6 +81,31 @@ export default async function TextAlertSettingsPage(props: PageProps<"/settings/
               {profile.smsAlertsEnabled ? "Turn off text alerts" : "Turn on text alerts"}
             </Button>
           </form>
+          {profile.smsAlertsEnabled
+            ? extras.map((x) => (
+                <form
+                  key={x.which}
+                  action={toggleExtraTextAction}
+                  className="flex flex-col gap-2 rounded-xl border-2 border-charcoal p-4"
+                >
+                  <input type="hidden" name="which" value={x.which} />
+                  <input type="hidden" name="enabled" value={x.on ? "off" : "on"} />
+                  <p className="font-semibold">
+                    {x.words.title}: {x.on ? "on" : "off"}
+                  </p>
+                  <p className="text-muted-foreground">{x.words.what}</p>
+                  <p className="text-sm text-muted-foreground">{x.words.cap}</p>
+                  <Button
+                    type="submit"
+                    variant="outline"
+                    className="w-full"
+                    data-refocus={`sms-${x.which}-toggle`}
+                  >
+                    {x.on ? x.words.off : x.words.on}
+                  </Button>
+                </form>
+              ))
+            : null}
           <form action={removeSmsPhoneAction}>
             <Button type="submit" variant="outline" className="w-full">
               Remove my number

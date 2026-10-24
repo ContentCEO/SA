@@ -3,7 +3,7 @@ import { and, desc, eq, inArray, lt } from "drizzle-orm";
 import { db } from "@/db";
 import { activityLog, businessProfiles, smsDeliveries } from "@/db/schema";
 import type { SmsSendResult } from "@/lib/sms";
-import { statusRank, stopReasonFor } from "./sms-delivery-rules";
+import { ALL_TEXTS_OFF, statusRank, stopReasonFor } from "./sms-delivery-rules";
 
 /** Check 19 P6: delivery reports are kept this long, then purged daily. */
 export const SMS_DELIVERY_KEEP_MS = 30 * 24 * 60 * 60 * 1000;
@@ -53,7 +53,8 @@ export async function applyTwilioStatus(
     // Only an owner whose texts were on gets an Activity line, once (Twilio may report twice).
     const stopped = await db()
       .update(businessProfiles)
-      .set({ smsAlertsEnabled: false, smsStoppedReason: reason })
+      // Plan #50: STOP turns every text off — new leads, the morning summary, waiting quotes.
+      .set({ ...ALL_TEXTS_OFF, smsStoppedReason: reason })
       .where(
         and(
           eq(businessProfiles.workspaceId, row.workspaceId),

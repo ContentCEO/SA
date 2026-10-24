@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import {
   confirmPhone,
   removeAlertPhone,
+  setExtraText,
   setSmsAlerts,
   SmsError,
   startPhoneVerification,
@@ -38,6 +39,17 @@ export async function toggleSmsAlertsAction(formData: FormData) {
   const { workspace } = await requireOwner();
   const enabled = formData.get("enabled") === "on";
   await attempt(() => setSmsAlerts(workspace.id, enabled), enabled ? "sms_on" : "sms_off");
+}
+
+/** Plan #50: the morning summary and waiting-quote texts, each its own switch. */
+export async function toggleExtraTextAction(formData: FormData) {
+  const { workspace } = await requireOwner();
+  const which = formData.get("which") === "at_risk" ? "at_risk" : "summary";
+  const enabled = formData.get("enabled") === "on";
+  await attempt(
+    () => setExtraText(workspace.id, which, enabled),
+    `sms_${which}_${enabled ? "on" : "off"}`,
+  );
 }
 
 export async function removeSmsPhoneAction() {

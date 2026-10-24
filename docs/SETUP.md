@@ -300,6 +300,14 @@ per conversation, at most 3 a night and 6 a day (phone notifications follow the 
 voicemail or text message emailed by a phone service (Google Voice) counts, though its sender is
 no-reply.
 
+Plan #50 adds two more texts, each its own switch on Settings → Text alerts (off by default,
+shown only while text alerts are on): the **morning summary by text** (one text a local day at
+the morning email's hour, before noon, only when something is waiting, whether or not the
+morning email is on) and **waiting quote requests by text** (with the plan #34 "a lead is
+waiting" alert: over 4 work hours, at most 3 a day, once per wait). Both are counts plus a link,
+count toward the 10 a day and the 10-minute gap, and follow quiet hours and STOP. No new
+settings: they use the same Twilio variables.
+
 Costs (Twilio's listed US prices, checked 2026-10-19; **check the current price before
 budgeting**):
 
@@ -318,7 +326,9 @@ budgeting**):
 3. Messaging → Regulatory compliance → **A2P 10DLC**: register the brand (your business) and a
    campaign. Use case "Account notifications"; sample message
    `Squared Away: 1 new quote request needs you. Open: https://…/queue` (and a second one,
-   `Squared Away: An emergency email just came in. Open: https://…/queue`); opt-in = "the business
+   `Squared Away: An emergency email just came in. Open: https://…/queue`, and the plan #50 ones,
+   `Squared Away: 3 replies ready, 1 needs you. Open: https://…/queue` and
+   `Squared Away: 2 quote requests have waited over 4 hours. Open: https://…/quotes`); opt-in = "the business
    owner enters their own mobile number in Settings and confirms a texted code". Approval takes
    days; texts may be blocked by carriers until it's approved.
 4. Messaging → Services → Create → add the number to the service. Opt-out (STOP/HELP) handling is

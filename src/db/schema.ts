@@ -801,6 +801,17 @@ export const businessProfiles = pgTable("business_profile", {
    * owner turns texts on again or starts a new number.
    */
   smsStoppedReason: text("sms_stopped_reason"),
+  /**
+   * Plan #50 (remaining parts): two more texts, each its own opt-in, off by default, and only
+   * while `sms_alerts_enabled` is on (that one switch is what STOP and "Remove my number" turn
+   * off). The morning summary by text: counts and a link at the owner's `digest_hour`, once a
+   * local day (`sms_summary_last_sent_on`, 'YYYY-MM-DD', written only after Twilio accepted it),
+   * independent of the morning email's own switch. Leads at risk by text: rides on the plan #34
+   * push's episode marks and caps.
+   */
+  smsSummaryEnabled: boolean("sms_summary_enabled").notNull().default(false),
+  smsSummaryLastSentOn: text("sms_summary_last_sent_on"),
+  smsAtRiskEnabled: boolean("sms_at_risk_enabled").notNull().default(false),
   /** Plan #35: the owner's local month ('YYYY-MM') last summarized (sent, or skipped as empty). */
   monthlySummaryLastSentFor: text("monthly_summary_last_sent_for"),
   /**

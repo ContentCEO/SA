@@ -42,6 +42,7 @@ import { recordLifecycleRun } from "@/server/health-deep";
 import { captureQuoteAmounts, guessNoAnswers, quoteUpkeepForMailbox } from "@/server/quotes";
 import { captureInvoiceAmounts } from "@/server/money";
 import { sendLeadAlerts } from "@/server/sms-alerts";
+import { sendSummaryTexts } from "@/server/sms-summary";
 import { sendEmergencyAlerts } from "@/server/emergency-alerts";
 import { sendPushAlerts } from "@/server/push-alerts";
 import { sendLeadAtRiskPushes } from "@/server/leads-at-risk";
@@ -389,11 +390,14 @@ export const morningDigest = inngest.createFunction(
     // Plan #35: on the owner's 1st, the month just ended (same switch and hour). Both senders
     // catch each owner's failure, so one owner's refused email can't stop this step.
     const monthly = await step.run("monthly", () => sendMonthlySummaries());
+    // Plan #50: the morning summary by text (its own opt-in; off until Twilio is set up). Each
+    // owner's refusal is caught and logged (counts only), like the new-lead texts.
+    const texts = await step.run("texts", () => sendSummaryTexts());
     // ...but a failure must still reach the error alerts: fail the run AFTER both steps.
     // Retries replay the finished steps (nothing is re-sent); the last attempt goes through
     // ReportFinalFailures. The next hourly run tries the failed owners again.
     reportSummaryFailures(digests, monthly);
-    return { digests, monthly };
+    return { digests, monthly, texts };
   },
 );
 

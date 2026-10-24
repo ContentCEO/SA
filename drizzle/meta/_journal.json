@@ -568,6 +568,13 @@
       "when": 1792397235019,
       "tag": "0080_waitlist_mail_host",
       "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "7",
+      "when": 1792873971346,
+      "tag": "0081_sms_summary_texts",
+      "breakpoints": true
     }
   ]
 }
