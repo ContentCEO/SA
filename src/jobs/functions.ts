@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { cron, NonRetriableError, RetryAfterError } from "inngest";
 import { refreshAllSendAs, refreshSendAsFor } from "@/server/from-line";
+import { renewOutlookSubscriptions } from "@/server/outlook-push";
 import { MailboxRateLimitError } from "@/mailbox/connector";
 import { ModelUnavailableError } from "@/ai/client";
 import {
@@ -755,6 +756,8 @@ export const renewGmailWatches = inngest.createFunction(
   { id: "renew-gmail-watches", triggers: [cron("17 6 * * *")] },
   async ({ step }) => ({
     renewed: await step.run("renew", () => renewWatches()),
+    // Plan #49: Outlook's Graph subscriptions (no-op unless FEATURE_OUTLOOK is on).
+    outlook: await step.run("renew-outlook", () => renewOutlookSubscriptions()),
     sendAs: await step.run("send-as", () => refreshAllSendAs()),
   }),
 );

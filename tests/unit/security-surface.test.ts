@@ -267,6 +267,7 @@ describe("C3: every route handler is in the table with the guard it uses", () =>
     | "authjs" // Auth.js's own handlers
     | "signed-link" // a link we emailed: HMAC over the id with AUTH_SECRET, constant-time, first
     | "twilio-signature" // Check 19 P6: X-Twilio-Signature over our callback URL, constant time, first
+    | "graph-client-state" // Plan #49: 404 unless Outlook is offered; then Graph's per-subscription clientState (sha256 stored, constant time)
     | "shared-secret" // Check 1 P4: an env secret compared in constant time, first; else 404
     | "public"; // static, reads nothing private
   const ROUTES: Record<string, Guard> = {
@@ -277,6 +278,7 @@ describe("C3: every route handler is in the table with the guard it uses", () =>
     "src/app/api/drafts/[id]/send/route.ts": "session",
     "src/app/api/gmail/callback/route.ts": "session+state",
     "src/app/api/gmail/push/route.ts": "token",
+    "src/app/api/outlook/notify/route.ts": "graph-client-state",
     "src/app/api/stripe/webhook/route.ts": "stripe-signature",
     "src/app/api/inngest/route.ts": "inngest-signature",
     "src/app/api/test-hooks/run/route.ts": "e2e-hook",
@@ -411,6 +413,24 @@ describe("C3: every route handler is in the table with the guard it uses", () =>
           ]);
           expect(body.indexOf("status: 403")).toBeGreaterThan(check);
           expect(readFileSync("src/lib/twilio-signature.ts", "utf8")).toContain("timingSafeEqual");
+          break;
+        }
+        case "graph-client-state": {
+          const hs = handlers(file);
+          expect(hs.map((h) => h.name)).toEqual(["POST"]);
+          // Off (404) before anything else, then nothing but the handshake echo or a
+          // clientState-checked sync wake.
+          expect(firstStatement(hs[0]!.fn)).toBe(
+            "if (!outlookOffered()) return new NextResponse(null, { status: 404 });",
+          );
+          expect(src).toContain("clientStateMatches(box.clientStateSha256, n.clientState)");
+          expect(src.match(/await [a-zA-Z.]+\(/g)).toEqual([
+            "await request.json(",
+            "await db(",
+            "await db(",
+            "await enqueue(",
+          ]);
+          expect(readFileSync("src/server/outlook-push.ts", "utf8")).toContain("timingSafeEqual");
           break;
         }
         case "shared-secret": {

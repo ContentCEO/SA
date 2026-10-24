@@ -5,9 +5,15 @@ import type { MailboxReader, MailboxWriter } from "./connector";
 import { createGmailReader } from "./gmail/api";
 import type { GmailBudget } from "./gmail/quota";
 import { createOutlookClient } from "./outlook/api";
+import type { PushSubscriptions } from "./outlook/subscriptions";
 
 /** One mailbox's client: read and write in one, whatever the provider. */
-export type MailboxClient = MailboxReader & MailboxWriter & { gmailUnits?(): number };
+export type MailboxClient = MailboxReader &
+  MailboxWriter & {
+    gmailUnits?(): number;
+    /** Plan #49: Outlook's push (Graph change subscriptions); Gmail uses `watch`. */
+    pushSubscriptions?: PushSubscriptions;
+  };
 
 export type MailboxClientOptions = {
   /**
