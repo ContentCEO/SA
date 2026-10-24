@@ -13,6 +13,16 @@ export const SMS_ERROR = {
 
 export type SmsStoppedReason = "opted_out" | "not_mobile";
 
+/**
+ * Plan #50: every text switch at once. A STOP, a number that can't take texts and "Remove my
+ * number" set all three, so the morning summary and waiting-quote texts can't outlive them.
+ */
+export const ALL_TEXTS_OFF = {
+  smsAlertsEnabled: false,
+  smsSummaryEnabled: false,
+  smsAtRiskEnabled: false,
+} as const;
+
 /** Texts switch themselves off on these codes (the owner replied STOP, or not a mobile). */
 export function stopReasonFor(errorCode: number | null | undefined): SmsStoppedReason | null {
   if (errorCode === SMS_ERROR.optedOut) return "opted_out";
@@ -134,4 +144,12 @@ export function smsAlertActivityLine(delivery: string | null | undefined): strin
   if (deliveryFailed(delivery))
     return "Tried to text you about new emails that need you, but it didn't arrive";
   return "Sent a text to your phone about new emails that need you";
+}
+
+/** Plan #50: Activity's line for the morning summary text (counts were in it, never names). */
+export function smsSummaryActivityLine(delivery: string | null | undefined): string {
+  if (delivery === "delivered" || delivery === "read") return "Texted you this morning's summary";
+  if (deliveryFailed(delivery))
+    return "Tried to text you this morning's summary, but it didn't arrive";
+  return "Sent this morning's summary to your phone by text";
 }

@@ -1,5 +1,5 @@
 import "server-only";
-import { smsAlertActivityLine } from "./sms-delivery-rules";
+import { smsAlertActivityLine, smsSummaryActivityLine } from "./sms-delivery-rules";
 import { deliveryStatuses } from "./sms-deliveries";
 import { and, count, desc, eq, gte, inArray, isNotNull, lt, sql } from "drizzle-orm";
 import { pricing } from "@/config/pricing";
@@ -246,6 +246,8 @@ export function describeActivity(
     case "sms_alert_sent":
       // Check 19 P6: "Texted you" only once Twilio reports it delivered.
       return smsAlertActivityLine(typeof detail.delivery === "string" ? detail.delivery : null);
+    case "sms_summary_sent":
+      return smsSummaryActivityLine(typeof detail.delivery === "string" ? detail.delivery : null);
     // Replies package (B5 part 2): counts only, never which email.
     case "emergency_alert_sent":
       return emergencyActivityLine(detail.emergencies);
@@ -258,6 +260,15 @@ export function describeActivity(
       if (detail.reason === "opted_out") return "Turned off text alerts because you replied STOP";
       if (detail.reason === "not_mobile")
         return "Turned off text alerts because that number can't get texts";
+      // Plan #50: the two extra texts have their own words.
+      if (detail.which === "summary")
+        return detail.enabled
+          ? "You turned on the morning summary by text"
+          : "You turned off the morning summary by text";
+      if (detail.which === "at_risk")
+        return detail.enabled
+          ? "You turned on texts about waiting quote requests"
+          : "You turned off texts about waiting quote requests";
       return detail.enabled ? "You turned on text alerts" : "You turned off text alerts";
     case "access_alert_sent":
       return detail.reminder
@@ -471,6 +482,7 @@ export const DESCRIBED_ACTIONS = [
   "push_alert_sent",
   "lead_at_risk_push_sent",
   "sms_alert_sent",
+  "sms_summary_sent",
   "emergency_alert_sent",
   "emergency_alerts_changed",
   "sms_alerts_changed",
@@ -615,7 +627,8 @@ export async function listActivityPage(
   const zone = rows.some((r) => !r.threadId) ? await workspaceTimeZone(workspaceId) : null;
   // Check 19 P6: each new-lead text's delivery report, by our delivery row id.
   const deliveryIds = rows.flatMap((r) =>
-    r.action === "sms_alert_sent" && typeof r.detail.deliveryId === "string"
+    (r.action === "sms_alert_sent" || r.action === "sms_summary_sent") &&
+    typeof r.detail.deliveryId === "string"
       ? [r.detail.deliveryId]
       : [],
   );
