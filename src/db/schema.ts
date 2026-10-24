@@ -52,7 +52,11 @@ export const workspaceStatusEnum = pgEnum("workspace_status", [
 
 export const planEnum = pgEnum("plan", ["solo", "crew", "company"]);
 
-export const mailboxProviderEnum = pgEnum("mailbox_provider", ["gmail"]);
+/**
+ * Plan #49: "outlook" (Microsoft 365 / outlook.com through Microsoft Graph), used only while
+ * FEATURE_OUTLOOK is on with the Azure app's credentials set (src/config/outlook.ts).
+ */
+export const mailboxProviderEnum = pgEnum("mailbox_provider", ["gmail", "outlook"]);
 
 export const mailboxStatusEnum = pgEnum("mailbox_status", ["active", "reconnect_needed", "paused"]);
 
@@ -288,9 +292,18 @@ export const mailboxes = pgTable(
     backfillPageToken: text("backfill_page_token"),
     backfillPagesDone: integer("backfill_pages_done").notNull().default(0),
     backfillSince: timestamp("backfill_since", { withTimezone: true }),
+    /**
+     * Plan #49 (Outlook only): the Microsoft Graph change subscription that wakes a sync, and the
+     * sha256 of its random `clientState` (Microsoft echoes the clientState on every notification;
+     * only its hash is kept). Expiry lives in `watch_expires_at`, like Gmail's watch. The delta
+     * cursor is kept in `history_id` (opaque to shared code). Null for Gmail.
+     */
+    pushSubscriptionId: text("push_subscription_id"),
+    pushClientStateSha256: text("push_client_state_sha256"),
     createdAt: createdAt(),
   },
   (t) => [
+    uniqueIndex("mailboxes_push_subscription_uq").on(t.pushSubscriptionId),
     uniqueIndex("mailboxes_workspace_email_uq").on(t.workspaceId, sql`lower(${t.email})`),
     index("mailboxes_workspace_idx").on(t.workspaceId),
     // Check 25 P7: one Gmail in one account (checked in saveConnectedMailbox). Not unique yet:

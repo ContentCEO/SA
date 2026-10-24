@@ -34,6 +34,10 @@ export function mailboxClientFor(
         mailboxId: m.id,
         budget: opts.budget,
       });
+    case "outlook":
+      // Plan #49: the Outlook client arrives with src/mailbox/outlook/ (next step). No outlook
+      // row can exist before then: nothing saves one.
+      throw new Error("No mailbox client for provider outlook yet.");
     default: {
       const unknown: never = m.provider;
       throw new Error(`No mailbox client for provider ${String(unknown)}.`);

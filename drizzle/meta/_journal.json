@@ -568,6 +568,20 @@
       "when": 1792397235019,
       "tag": "0080_waitlist_mail_host",
       "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "7",
+      "when": 1792874085024,
+      "tag": "0081_outlook_provider",
+      "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1792874105536,
+      "tag": "0082_outlook_push_subscription",
+      "breakpoints": true
     }
   ]
 }
