@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { eq } from "drizzle-orm";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import type { Database } from "@/db";
 import { businessProfiles, drafts, mailboxes, messages, threads, workspaces } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
@@ -127,6 +127,13 @@ describe("/api/push/summary counts like the queue (plan #36, M8 A1)", () => {
   });
 
   it("Check 19 P1: a fresh quote request with no draft yet is named, and the tap opens Quotes", async () => {
+    // Midday Eastern: the request (2 minutes ago) must fall on the owner's today, or the
+    // wording is "waiting on you" (Check 19 P7). Unpinned, it failed just after midnight.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-13T17:01:00Z"));
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
     const t = await thread({
       category: "quote_request",
       classifiedAt: at(-1),
