@@ -235,7 +235,8 @@ test("a paid owner connects Gmail and a customer gets one threaded reply", async
   await test.step("The owner taps Send reply and gets a few seconds to undo it", async () => {
     await card.getByRole("button", { name: "Send reply" }).click();
     await expect(page).toHaveURL(new RegExp(`/queue\\?sent=${draft.id}`));
-    await expect(page.getByText("reply on its way,")).toBeVisible();
+    // Next 16.4's route announcer repeats the heading after a client navigation; look in the strip.
+    await expect(page.getByTestId("sent-strip").getByText("reply on its way,")).toBeVisible();
     await expect(page.getByText(/Sending in \d+ seconds/)).toBeVisible();
     // Check 32 P7: focus is on the result, and the next Tab is Undo.
     await expect(page.getByTestId("sent-strip")).toBeFocused();
@@ -263,8 +264,10 @@ test("a paid owner connects Gmail and a customer gets one threaded reply", async
       status: "not_due",
     });
     // The screen checks back every 3s on its own.
-    await expect(page.getByText("squared away.")).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText("reply sent,")).toBeVisible();
+    await expect(page.getByTestId("sent-strip").getByText("squared away.")).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.getByTestId("sent-strip").getByText("reply sent,")).toBeVisible();
   });
 
   await test.step("Activity says the reply was sent", async () => {

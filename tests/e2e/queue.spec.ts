@@ -138,8 +138,8 @@ test("after sending: the squared-away moment", async ({ page, context }) => {
   await signInAs(context, owner);
 
   await page.goto(`/queue?sent=${draft.id}`);
-  await expect(page.getByText("reply sent,")).toBeVisible();
-  await expect(page.getByText("squared away.")).toBeVisible();
+  await expect(page.getByTestId("sent-strip").getByText("reply sent,")).toBeVisible();
+  await expect(page.getByTestId("sent-strip").getByText("squared away.")).toBeVisible();
   // A quote: we say when we'll nudge if it goes quiet.
   await expect(
     page.getByText(/A nudge for Priya will be ready \w+day morning if there's no reply\./),
@@ -362,7 +362,8 @@ test("undo send: the window shows a countdown, and Undo puts the reply back", as
   await signInAs(context, owner);
 
   await page.goto(`/queue?sent=${draft.id}`);
-  await expect(page.getByText("reply on its way,")).toBeVisible();
+  // Next 16.4's route announcer repeats the heading after a client navigation; look in the strip.
+  await expect(page.getByTestId("sent-strip").getByText("reply on its way,")).toBeVisible();
   await expect(page.getByText(/Sending in \d+ seconds/)).toBeVisible();
   // While it's going, it's not in the queue to tap again.
   await expect(page.getByRole("article", { name: "Priya · draft reply" })).toHaveCount(0);
