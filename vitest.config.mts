@@ -20,5 +20,7 @@ export default defineConfig({
     testTimeout: 60_000,
     // Check 31 P7: model and job metadata lines print only for a failing test.
     setupFiles: ["./tests/support/setup.ts"],
+    // One migrated database per run, copied by createTestDb (tests/support/db-snapshot.ts).
+    globalSetup: ["./tests/support/db-snapshot.ts"],
   },
 });
