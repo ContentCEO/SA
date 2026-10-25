@@ -1439,3 +1439,16 @@ acknowledgedOn })`; invoice reminders ask when they expect to pay, never an easy
       on it.
     - **Check 26 P8:** `LIMITS.formEmail` (5 a day per address, keyed by an HMAC `addressKey`)
       on both public forms. Not built: keeping the first request as well as the newest.
+- **M12 merge (2026-10-24, branch `m12-integrate` on 305906e):** `m12-sms-summary` (#50 text
+  summaries and waiting-quote texts) then `m12-outlook` (#49 Outlook behind `FEATURE_OUTLOOK`),
+  both `--no-ff`. Only `drizzle/meta` conflicted (both builders took 0081); every other shared
+  file (`settings/messages.ts`, `jobs/functions.ts` — the `texts` digest step and the
+  `renew-outlook` step —, `schema.ts`, SETUP.md, FEATURE-PLAN.md) merged cleanly with both
+  sides kept. Migrations regenerated one at a time with drizzle-kit on the 0081 snapshot (schema
+  first without the two push columns and their index, then whole), SQL byte-identical to the
+  branch's: `0081_sms_summary_texts` (when 1792873971346), `0082_outlook_provider`
+  (1792884364392; the enum ADD VALUE, alone), `0083_outlook_push_subscription` (1792884366116).
+  Proved on scratch databases: fresh from 0000 (84 rows), and 305906e's folder first (81 rows),
+  then this one (84; `pg_dump -s` of both identical); `pnpm db:generate` afterwards finds
+  nothing. Notes folded into queue-and-sending.md, gmail-and-sync.md and LAUNCH.md step 13 ("M12
+  merge"); `legal-m12-*` kept for the legal release.
