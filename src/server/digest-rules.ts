@@ -7,6 +7,8 @@
  */
 import type { Category } from "@/ai/prompts/classify.v4";
 import { isCategory } from "@/config/categories";
+import { pricing } from "@/config/pricing";
+import { daysPhrase } from "@/lib/trial-words";
 import { localParts } from "./snooze-rules";
 
 /** How many needs-you items the header lists by name of category; the rest are a count. */
@@ -123,3 +125,36 @@ export function needsYouHeader(
 
 export const NOTHING_NEEDS_YOU = "No emails need a decision from you today.";
 export const moreInQueue = (n: number) => `+ ${n} more in your queue`;
+
+/**
+ * Check 18 P6 / Check 20 P12: the closing line must stay true. With no category on autopilot
+ * nothing goes without a tap; with one, the kinds the owner put on autopilot do.
+ */
+export const FOOTER_PLAIN = "Nothing is sent without your okay.";
+export const FOOTER_AUTOPILOT =
+  "Nothing is sent without your okay, except the kinds of email you put on autopilot.";
+export function footerLine(autopilotOn: boolean): string {
+  return autopilotOn ? FOOTER_AUTOPILOT : FOOTER_PLAIN;
+}
+
+/** Check 18 P6: a trial account can't send to customers yet; the morning email says so. */
+export const TRIAL_LINE = `You're in your ${daysPhrase(pricing.evaluationDays)}: replies can't go to customers yet. Check the drafts and choose a plan to switch sending on.`;
+
+/** "(1 by autopilot)" after the sent count, only when the number is above zero. */
+export function byAutopilot(n: number | undefined): string {
+  return n && n > 0 ? ` (${n} by autopilot)` : "";
+}
+
+/**
+ * Check 18 P8: the summary is due at the owner's hour "or any hour after it", so a missed run
+ * catches up in the afternoon. The greeting and the quiet subject follow the local hour.
+ */
+export function greetingFor(localHour: number): { text: string; serif: string } {
+  if (localHour < 12) return { text: "Good morning.", serif: "good morning," };
+  if (localHour < 18) return { text: "Good afternoon.", serif: "good afternoon," };
+  return { text: "Good evening.", serif: "good evening," };
+}
+
+export function nothingWaitingSubject(localHour: number): string {
+  return localHour < 12 ? "Nothing waiting on you this morning" : "Nothing waiting on you today";
+}

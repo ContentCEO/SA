@@ -75,7 +75,7 @@ async function tapOffline(page: Page, tap: () => Promise<void>) {
   await expect(page.getByText(BLOCKED)).toHaveCount(0);
 }
 
-test("no signal: Send reply, Mark paid, Sunlight and Save business profile say nothing was sent", async ({
+test("no signal: Send reply, Mark paid and Save business profile say nothing was sent", async ({
   page,
   context,
 }) => {
@@ -86,9 +86,9 @@ test("no signal: Send reply, Mark paid, Sunlight and Save business profile say n
 
   await page.goto("/queue");
   await page.waitForLoadState("networkidle");
-  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  const card = page.getByRole("article", { name: "Priya · draft reply" });
   await tapOffline(page, () => card.getByRole("button", { name: "Send reply" }).click());
-  await tapOffline(page, () => page.getByRole("button", { name: "Sunlight" }).click());
+  // Sunlight needs no signal at all now (Check 8 P4, sunlight.spec.ts).
   const [after] = await testDb.select().from(schema.drafts).where(eq(schema.drafts.id, draft.id));
   expect(after!.sendAfter).toBeNull();
 
@@ -117,7 +117,7 @@ test("no signal with offline okays on: Send reply is kept on the phone, not bloc
   await context.addCookies([{ name: "sa_offline", value: "on", url: baseURL! }]);
   await page.goto("/queue");
   await page.waitForLoadState("networkidle");
-  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  const card = page.getByRole("article", { name: "Priya · draft reply" });
   await context.setOffline(true);
   await card.getByRole("button", { name: "Send reply" }).click();
   await expect(card.getByText("Will send when you're back online.")).toBeVisible();
@@ -134,7 +134,7 @@ test("text typed in Edit survives no signal and a reload; the business profile's
   await signInAs(context, owner);
   await page.goto("/queue");
   await page.waitForLoadState("networkidle");
-  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  const card = page.getByRole("article", { name: "Priya · draft reply" });
   await card.getByRole("button", { name: "Edit" }).click();
   const box = card.getByLabel("Your reply");
   await box.fill("Hey Priya, P.S. we can start Monday.");
@@ -144,7 +144,7 @@ test("text typed in Edit survives no signal and a reload; the business profile's
   await context.setOffline(false);
   await page.reload();
   await expect(
-    page.getByRole("article", { name: "Draft reply to Priya" }).getByLabel("Your reply"),
+    page.getByRole("article", { name: "Priya · draft reply" }).getByLabel("Your reply"),
   ).toHaveValue("Hey Priya, P.S. we can start Monday.");
 
   await page.goto("/settings/profile");
@@ -175,7 +175,7 @@ test("a request that fails on the way: the app's own error page, tab bar kept, c
     route.request().method() === "POST" ? route.abort("internetdisconnected") : route.fallback(),
   );
   await page
-    .getByRole("article", { name: "Draft reply to Priya" })
+    .getByRole("article", { name: "Priya · draft reply" })
     .getByRole("button", { name: "Send reply" })
     .click();
   await expect(page.getByText("if the card is still there, it wasn't sent")).toBeVisible();
@@ -197,7 +197,7 @@ test("Edit box: gaps read as words, and a refused Send reply keeps the editor an
   await signInAs(context, owner);
   await page.goto("/queue");
   await page.waitForLoadState("networkidle");
-  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  const card = page.getByRole("article", { name: "Priya · draft reply" });
   await card.getByRole("button", { name: "Edit" }).click();
   const box = card.getByLabel("Your reply");
   await expect(box).toHaveValue("Hey Priya,\n\nI can come by at [time].\n\nThanks, Davi");

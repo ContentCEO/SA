@@ -30,7 +30,7 @@ for (const hand of ["right", "left"] as const) {
     const open = hand === "right" ? 140 : -140;
 
     await page.goto("/queue");
-    const card = page.getByRole("article", { name: "Draft reply to Priya" });
+    const card = page.getByRole("article", { name: "Priya · draft reply" });
     await expect(card.getByRole("button", { name: "Show full draft" })).toBeVisible();
 
     await swipe(card, open);
@@ -39,7 +39,7 @@ for (const hand of ["right", "left"] as const) {
     await expect(card.getByText("Discarding in")).toHaveCount(0);
 
     await swipe(card, -open);
-    await expect(card.getByText(/Discarding in \d/)).toBeVisible();
+    await expect(card.getByText(/Discarding in \d…/)).toBeVisible();
     await card.getByRole("button", { name: "Undo" }).click();
     await expect(card.getByText(/Discarding in/)).toHaveCount(0);
     await expect(card.getByRole("button", { name: "Edit" })).toBeVisible();
@@ -112,7 +112,7 @@ test("offline okay (opt-in): held until back online, then refused if the draft c
   await context.addCookies([{ name: "sa_offline", value: "on", url: baseURL! }]);
 
   await page.goto("/queue");
-  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  const card = page.getByRole("article", { name: "Priya · draft reply" });
   await expect(card.getByRole("button", { name: "Send reply" })).toBeVisible();
 
   await context.setOffline(true);
@@ -143,4 +143,42 @@ test("keeping the queue on this phone is off until switched on", async ({ page, 
   await box.check();
   await expect(page).toHaveURL(/\/settings\/phone\?done=saved$/);
   await expect(page.getByLabel(/Keep my queue on this phone/)).toBeChecked();
+});
+
+test("dragging shows what letting go does; the swipe tip shows once (Check 9 P14)", async ({
+  page,
+  context,
+  isMobile,
+}) => {
+  test.skip(!isMobile, "Touch phones only.");
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await seedQueue(owner.mailboxId!);
+  await signInAs(context, owner);
+  await page.goto("/queue");
+  const card = page.getByRole("article", { name: "Priya · draft reply" });
+  const tip = page.getByTestId("swipe-tip");
+  await expect(tip).toContainText("Swipe right to open, left to discard. A swipe never sends.");
+
+  const box = (await card.boundingBox())!;
+  const at = (clientX: number) => ({
+    pointerType: "touch",
+    clientX,
+    clientY: box.y + 40,
+    bubbles: true,
+  });
+  const x = box.x + box.width / 2;
+  await card.dispatchEvent("pointerdown", at(x));
+  await card.dispatchEvent("pointermove", at(x - 60));
+  await expect(page.getByTestId("swipe-label")).toHaveText("Discard");
+  await card.dispatchEvent("pointermove", at(x + 60));
+  await expect(page.getByTestId("swipe-label")).toHaveText("Open");
+  await card.dispatchEvent("pointerup", at(x + 60));
+  await expect(page.getByTestId("swipe-label")).toHaveCount(0);
+
+  await tip.getByRole("button", { name: "Got it" }).click();
+  await expect(tip).toHaveCount(0);
+  await page.reload();
+  await expect(card).toBeVisible();
+  await page.waitForLoadState("networkidle");
+  await expect(page.getByTestId("swipe-tip")).toHaveCount(0);
 });

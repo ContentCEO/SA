@@ -163,3 +163,89 @@ describe("withBlockTradeGiven", () => {
     expect(withBlockTradeGiven("", "Roofing")).toBe("");
   });
 });
+
+describe("Check 2 P3: the hidden-field flag", () => {
+  it("round-trips in a Growth block and is absent from old blocks", async () => {
+    const { formatGrowthBlock, splitWaitlistNote, TRAP_FLAG } =
+      await import("@/server/growth-note");
+    const block = formatGrowthBlock({
+      at: "2026-10-12 14:05",
+      services: ["Reviews"],
+      phone: "617-555-0142",
+      note: "Flag: hidden field filled",
+      trapFilled: true,
+    });
+    expect(block.split("\n").at(-1)).toBe(TRAP_FLAG);
+    const [r] = splitWaitlistNote(block).growth;
+    expect(r).toMatchObject({ trapFilled: true, note: "Flag: hidden field filled" });
+    const old = formatGrowthBlock({ at: "2026-10-12 14:05", services: [], phone: null });
+    expect(splitWaitlistNote(old).growth[0]!.trapFilled).toBeUndefined();
+    // A typed note that reads like the flag is a "Note:" line, never the flag itself.
+    const typed = formatGrowthBlock({
+      at: "2026-10-12 14:05",
+      services: [],
+      phone: null,
+      note: TRAP_FLAG,
+    });
+    expect(splitWaitlistNote(typed).growth[0]!.trapFilled).toBeUndefined();
+  });
+});
+
+describe("Check 5 P2 + Check 45 P5: heard from, sent by, state and time zone", () => {
+  it("round-trip, and an old block without them still parses the same", async () => {
+    const { formatGrowthBlock, splitWaitlistNote } = await import("@/server/growth-note");
+    const block = formatGrowthBlock({
+      at: "2026-10-12 14:05",
+      services: ["Reviews", "Not sure yet — tell me what to do first"],
+      phone: "617-555-0142",
+      heardFrom: "contractor",
+      sentBy: "Mike (growth call)",
+      state: "AZ",
+      timeZone: "America/Phoenix",
+      note: "Kitchens",
+    });
+    expect(splitWaitlistNote(block).growth[0]).toEqual({
+      at: "2026-10-12 14:05",
+      services: ["Reviews", "Not sure yet — tell me what to do first"],
+      phone: "617-555-0142",
+      nameGiven: null,
+      tradeGiven: null,
+      heardFrom: "contractor",
+      sentBy: "Mike (growth call)",
+      state: "AZ",
+      timeZone: "America/Phoenix",
+      note: "Kitchens",
+    });
+    const old = "[Growth call] 2026-10-12 14:05\nHelp with: Reviews\nPhone: 617-555-0142";
+    const [r] = splitWaitlistNote(old).growth;
+    expect(Object.keys(r!).sort()).toEqual(
+      ["at", "nameGiven", "note", "phone", "services", "tradeGiven"].sort(),
+    );
+  });
+
+  it("a different heard-from is a new request, an identical one leaves the note alone", async () => {
+    const { withGrowthBlock } = await import("@/server/growth-note");
+    const base = { at: "2026-10-12 14:05", services: ["Reviews"], phone: "617-555-0142" };
+    const note = withGrowthBlock(null, { ...base, heardFrom: "google" });
+    expect(withGrowthBlock(note, { ...base, at: "2026-10-13 09:00", heardFrom: "google" })).toBe(
+      note,
+    );
+    expect(
+      withGrowthBlock(note, { ...base, at: "2026-10-13 09:00", heardFrom: "group" }),
+    ).toContain("Heard from: group");
+  });
+});
+
+describe("Check 2 P3: both forms' trap input is the server's TRAP_FIELD", () => {
+  it("names it sa_hp in the waitlist and Growth forms", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { TRAP_FIELD } = await import("@/server/trap-rules");
+    expect(TRAP_FIELD).toBe("sa_hp");
+    for (const f of [
+      "src/components/marketing/waitlist-form.tsx",
+      "src/components/marketing/growth/growth-call-form.tsx",
+    ]) {
+      expect(readFileSync(f, "utf8"), f).toContain(`<input name="${TRAP_FIELD}" tabIndex={-1}`);
+    }
+  });
+});

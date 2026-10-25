@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { noticeText } from "@/lib/notice-text";
 import { MenuList, type MenuItem } from "@/components/app/menu-list";
 import { Notice } from "@/components/app/notice";
 import { Headline } from "@/components/brand/headline";
@@ -10,7 +11,10 @@ import { autopilotState } from "@/server/autopilot";
 import { listMailboxes } from "@/server/mailboxes";
 import { getBusinessProfile, getVoiceProfile } from "@/server/profile";
 import { requireOwner } from "@/server/session";
+import { voiceListLine } from "@/server/voice-rules";
 import { formatUsPhone } from "@/server/sms-alerts";
+import { zoneShortName } from "@/server/time-zone-rules";
+import { priceListSummary } from "@/server/profile-facts";
 import { LegacySettingsAnchors } from "./legacy-anchors";
 import { LIST_MESSAGES } from "./messages";
 import { awayState } from "@/server/away";
@@ -36,8 +40,8 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
     awayState(workspace.id),
     listRules(workspace.id),
   ]);
-  const doneMsg = typeof params.done === "string" ? LIST_MESSAGES.done[params.done] : undefined;
-  const errorMsg = typeof params.error === "string" ? LIST_MESSAGES.error[params.error] : undefined;
+  const doneMsg = noticeText(LIST_MESSAGES.done, params.done);
+  const errorMsg = noticeText(LIST_MESSAGES.error, params.error);
   const lost = mailboxes.some((m) => m.status === "reconnect_needed" && !m.planPausedAt);
   const pausedOnPlan = mailboxes.filter((m) => m.planPausedAt).length;
   const autopilotOn = autopilot.categories.filter((c) => c.on).length;
@@ -59,19 +63,15 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
     {
       href: "/settings/business",
       label: "Your business",
-      line: profile?.completedAt ? workspace.businessName : "Not filled in yet",
+      // Check 15 P4: the price list is the fact owners look for first.
+      line: profile?.completedAt
+        ? `${workspace.businessName} · ${priceListSummary(profile.pricingNotes)}`
+        : "Not filled in yet",
     },
     {
       href: "/settings/writing",
       label: "Your voice",
-      line:
-        voice?.status === "ready"
-          ? voice.source === "edited"
-            ? "Learned, with your changes"
-            : "Learned from your sent mail"
-          : voice?.status === "learning"
-            ? "Learning from your sent mail…"
-            : "Not learned yet",
+      line: voiceListLine(voice),
     },
     {
       href: "/settings/follow-ups",
@@ -105,7 +105,10 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
     {
       href: "/settings/morning-email",
       label: "Morning email",
-      line: (profile?.digestEnabled ?? true) ? `On · ${profile?.digestHour ?? 7}:00 am` : "Off",
+      line:
+        (profile?.digestEnabled ?? true)
+          ? `On · ${profile?.digestHour ?? 7}:00 am ${zoneShortName(profile?.timeZone)}`
+          : "Off",
     },
   ];
   if (vapidPublicKey()) {

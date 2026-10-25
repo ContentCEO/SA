@@ -1,4 +1,12 @@
-import { formatDollars, pricing, type PlanId } from "@/config/pricing";
+import type Stripe from "stripe";
+import {
+  formatDollars,
+  mailboxLimitFor,
+  PLAN_ORDER,
+  planRank,
+  pricing,
+  type PlanId,
+} from "@/config/pricing";
 import type { Workspace } from "@/db/schema";
 import { effectiveStatus, SENDING_ALLOWED, setupReallyPaid } from "./lifecycle";
 
@@ -141,22 +149,97 @@ const BILLING_STATUS_LINES: Partial<Record<Status, string>> = {
   canceled: "Your plan has ended. Pick a plan below to start again — nothing was deleted.",
 };
 
+/**
+ * Check 17 P2: the paused banner's extra sentence while a Stripe plan is still on file. Pausing
+ * only changes our status; Stripe keeps billing until Davi pauses or cancels it there.
+ */
+export const PAUSED_STILL_BILLED_LINE = "Your plan's billing hasn't changed.";
+
 /** Shown instead when the status would allow sending but the setup was never really paid. */
 export const SETUP_NOT_PAID_LINE = "Sending turns on once your setup payment goes through.";
+
+/** "Nov 16" in the owner's time zone (Eastern when the zone is unknown or invalid). */
+export function shortDate(d: Date, timeZone = "America/New_York"): string {
+  const fmt = (tz: string) =>
+    new Intl.DateTimeFormat("en-US", { timeZone: tz, month: "short", day: "numeric" }).format(d);
+  try {
+    return fmt(timeZone);
+  } catch {
+    return fmt("America/New_York");
+  }
+}
+
+/** The owner's local calendar date ("2026-11-16"), for content-free activity rows. */
+export function localDateKey(d: Date, timeZone = "America/New_York"): string {
+  const fmt = (tz: string) =>
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: tz,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(d);
+  try {
+    return fmt(timeZone);
+  } catch {
+    return fmt("America/New_York");
+  }
+}
+
+/** Check 17 P11: Davi's own house account — nothing is billed. */
+export const HOUSE_ACCOUNT_LINE = "Your own test account. Nothing is billed.";
+/** Check 17 P11: a Stripe-paid setup with no subscription on file (cleared or never attached). */
+export const NO_STRIPE_PLAN_LINE =
+  "There's no Stripe plan attached to this account. Call Davi to sort it out.";
+
+/**
+ * Check 17 P11: set up for real but nothing in Stripe to renew or change (Davi's house account, or
+ * a Stripe-paid setup whose subscription id was cleared). /billing hides the offer to buy and the
+ * "What happens next" box for these; checkoutTerms and the commercial flow are unchanged.
+ */
+export function setUpWithoutStripePlan(
+  w: Pick<W, "status" | "evaluationEndsAt" | "setupPaidVia" | "stripeSubscriptionId">,
+  now: Date = new Date(),
+): boolean {
+  const status = effectiveStatus(w, now);
+  if (!SENDING_ALLOWED.includes(status) || !setupReallyPaid(w)) return false;
+  return w.setupPaidVia === "house" || !w.stripeSubscriptionId;
+}
+
+/** Check 17 P3: what /billing says once the owner canceled and the plan runs out on a date. */
+export const planEndsLine = (date: string) =>
+  `Your plan ends on ${date}. Nothing is deleted. Changed your mind? Manage billing keeps it going.`;
 
 /**
  * What /billing says about the account. An account at setup_paid / active whose setup wasn't
  * really paid (marked by hand before 2026-10-10, or reset after a test card) gets the same words
  * as the banner and the queue, never "Setup's paid" or "renews monthly": it can't send, and has
- * no subscription to renew.
+ * no subscription to renew. Check 17 P3: a canceled plan still running says when it ends.
  */
 export function billingStatusLine(
-  w: Pick<W, "status" | "evaluationEndsAt" | "setupPaidVia">,
+  w: Pick<W, "status" | "evaluationEndsAt" | "setupPaidVia"> & {
+    stripeCancelAt?: Date | null;
+    stripeSubscriptionId?: string | null;
+  },
   now: Date = new Date(),
+  timeZone = "America/New_York",
 ): string | null {
   const status = effectiveStatus(w, now);
   if (SENDING_ALLOWED.includes(status) && !setupReallyPaid(w)) return SETUP_NOT_PAID_LINE;
+  // Check 17 P11: never "renews monthly" when there's nothing to renew.
+  if (SENDING_ALLOWED.includes(status) && w.setupPaidVia === "house") return HOUSE_ACCOUNT_LINE;
+  if (SENDING_ALLOWED.includes(status) && !w.stripeSubscriptionId) return NO_STRIPE_PLAN_LINE;
+  if (SENDING_ALLOWED.includes(status) && w.stripeCancelAt) {
+    return planEndsLine(shortDate(w.stripeCancelAt, timeZone));
+  }
   return BILLING_STATUS_LINES[status] ?? null;
+}
+
+/** Check 17 P3: the banner's quiet reminder shows in the last 7 days before the plan ends. */
+export const PLAN_ENDING_SOON_MS = 7 * 86_400_000;
+export function planEndingSoon(stripeCancelAt: Date | null | undefined, now: Date): boolean {
+  if (!stripeCancelAt) return false;
+  const left = stripeCancelAt.getTime() - now.getTime();
+  return left > 0 && left <= PLAN_ENDING_SOON_MS;
 }
 
 /** Who may start a checkout, and whether the one-time setup fee is included. */
@@ -195,4 +278,42 @@ export function statusAfterSubscription(
     default:
       return status;
   }
+}
+
+/**
+ * When the plan is set to end (plan #47 status lines): Stripe's `cancel_at`, or with "cancel at
+ * period end" the item's period end. Null when it renews, and once it has ended (the plan is
+ * over, not "set to end").
+ */
+export function cancelAtOf(
+  sub: Pick<Stripe.Subscription, "status" | "cancel_at" | "cancel_at_period_end"> & {
+    items?: { data?: Array<Pick<Stripe.SubscriptionItem, "current_period_end">> } | null;
+  },
+): Date | null {
+  if (sub.status === "canceled" || sub.status === "incomplete_expired") return null;
+  if (sub.cancel_at != null) return new Date(sub.cancel_at * 1000);
+  const end = sub.items?.data?.[0]?.current_period_end;
+  if (sub.cancel_at_period_end && typeof end === "number") return new Date(end * 1000);
+  return null;
+}
+
+/**
+ * Plan & billing, under Manage billing (Q2, Davi 2026-10-16): Stripe's page can't explain that
+ * moving down a plan pauses the newest extra inboxes, so the owner reads it here before the tap.
+ * Null when no lower plan would pause any (counts only, never which inbox).
+ */
+export function downgradePausesLine(plan: PlanId | null, countedInboxes: number): string | null {
+  if (!plan) return null;
+  const lower = PLAN_ORDER.filter(
+    (p) => planRank(p) < planRank(plan) && mailboxLimitFor(p) < countedInboxes,
+  ).reverse();
+  if (!lower.length) return null;
+  const inboxes = `${countedInboxes} inboxes`;
+  const parts = lower.map((p, i) => {
+    const pauses = countedInboxes - mailboxLimitFor(p);
+    return i === 0
+      ? `Moving to ${pricing.plans[p].name} pauses ${pauses} of your ${inboxes}`
+      : `to ${pricing.plans[p].name}, ${pauses}`;
+  });
+  return `${parts.join("; ")}. Nothing is deleted, and you choose which stay on in Settings.`;
 }

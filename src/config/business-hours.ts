@@ -1,7 +1,9 @@
 /**
- * Business hours for "a lead is waiting" (plan #34). One default for everyone, in the
- * owner's own time zone. The free-text hours in the business profile are for drafting
- * only and are never parsed. Change here, not in the rules.
+ * Business hours for "a lead is waiting" (plan #34), in the owner's own time zone. Each owner
+ * can set their own days and hours on Settings → Your business (Check 15 P8:
+ * `business_profile.work_days` / `work_start_hour` / `work_end_hour`); BUSINESS_HOURS is the
+ * default they start with. The free-text hours in the business profile are for drafting only
+ * and are never parsed.
  */
 export type BusinessHours = {
   /** ISO weekdays: 1 = Monday … 7 = Sunday. */

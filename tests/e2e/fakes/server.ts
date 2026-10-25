@@ -43,6 +43,7 @@ import {
   type FakeLead,
   type FakeMail,
 } from "./outputs";
+import { createMicrosoftFakes } from "./microsoft";
 
 const AUTH = "https://www.googleapis.com/auth/";
 /** What the app must ask for: nothing more, nothing less (src/mailbox/gmail/scopes.ts). */
@@ -76,6 +77,8 @@ export const GMAIL_METHOD_SCOPES: Readonly<Record<string, readonly string[]>> = 
     "gmail.drafts.send": s(addonsCompose, "gmail.compose", "gmail.modify"),
     "gmail.messages.send": s(addonsCompose, "gmail.compose", "gmail.modify", "gmail.send"),
     "gmail.watch": s("gmail.metadata", "gmail.modify", "gmail.readonly"),
+    // Check 42 P4: users.settings.sendAs.list (gmail.readonly is enough: no new consent).
+    "gmail.settings.sendAs.list": s("gmail.modify", "gmail.readonly", "gmail.settings.basic"),
   };
 })();
 const GMAIL_PREFIX = "/google/gmail/v1/users/me";
@@ -138,6 +141,13 @@ type Scenario = {
   ref: string;
   ownerEmail: string;
   grant: FakeGrant;
+  /** Check 47 P1: a Google account with no Gmail (Gmail answers "Mail service not enabled"). */
+  noGmail: boolean;
+  /**
+   * Check 42 P3: the account the owner picks on Google's account chooser (a connect with no
+   * login_hint and prompt "consent select_account").
+   */
+  chooser: boolean;
   /** What the owner allowed on the consent page; the authorization code carries it. */
   consented: string[] | null;
   /** What the issued tokens carry: null before the code exchange and after a revoke. */
@@ -195,9 +205,12 @@ function parseJson(text: string): Record<string, unknown> {
 
 /** RFC 2047 =?UTF-8?B?…?= words, as src/mailbox/mime.ts writes them. */
 function decodeWords(value: string): string {
-  return value.replace(/=\?UTF-8\?B\?([^?]*)\?=/gi, (_, b64: string) =>
-    Buffer.from(b64, "base64").toString("utf8"),
-  );
+  // Whitespace (and folding) between two encoded words is not part of the text (RFC 2047 §6.2).
+  return value
+    .replace(/\?=\s+=\?/g, "?==?")
+    .replace(/=\?UTF-8\?B\?([^?]*)\?=/gi, (_, b64: string) =>
+      Buffer.from(b64, "base64").toString("utf8"),
+    );
 }
 
 /** A raw message (base64url RFC 2822, as the app builds it) → headers and plain-text body. */
@@ -215,9 +228,25 @@ export function parseRaw(raw: string): {
     if (i <= 0) continue;
     headers.push({ name: line.slice(0, i).trim(), value: decodeWords(line.slice(i + 1).trim()) });
   }
-  const encoding = header(headers, "Content-Transfer-Encoding")?.toLowerCase();
-  const body =
-    encoding === "base64" ? Buffer.from(rest.replace(/\s+/g, ""), "base64").toString("utf8") : rest;
+  const decode = (encoding: string | undefined, text: string) =>
+    encoding?.toLowerCase() === "base64"
+      ? Buffer.from(text.replace(/\s+/g, ""), "base64").toString("utf8")
+      : text;
+  // Check 43 P6: replies are multipart/alternative; Gmail reads the text/plain part.
+  const boundary = header(headers, "Content-Type")?.match(/boundary="?([^";]+)"?/i)?.[1];
+  let body = decode(header(headers, "Content-Transfer-Encoding"), rest);
+  if (boundary) {
+    body = "";
+    for (const chunk of rest.split(`--${boundary}`)) {
+      const at = chunk.indexOf("\r\n\r\n");
+      if (at === -1) continue;
+      const partHead = chunk.slice(0, at);
+      if (!/content-type:\s*text\/plain/i.test(partHead)) continue;
+      const enc = partHead.match(/content-transfer-encoding:\s*(\S+)/i)?.[1];
+      body = decode(enc, chunk.slice(at + 4));
+      break;
+    }
+  }
   return { headers, body: body.replace(/\r\n/g, "\n") };
 }
 
@@ -317,6 +346,8 @@ export function createFakes() {
       ref: r,
       ownerEmail,
       grant,
+      noGmail: input.noGmail === true,
+      chooser: input.chooser === true,
       consented: null,
       granted: null,
       messages: new Map(buildInbox(r, ownerEmail, Date.now(), { lead }).map((m) => [m.id, m])),
@@ -334,16 +365,27 @@ export function createFakes() {
   function consent(url: URL, res: ServerResponse) {
     const q = url.searchParams;
     const hint = q.get("login_hint")?.toLowerCase();
+    // Google's account chooser (adding another inbox, Check 42 P3): no hint, and the owner picks
+    // the account a scenario was registered to pick.
+    const choosing = !hint && q.get("prompt") === "consent select_account";
     const s = hint
       ? [...scenarios.values()].reverse().find((x) => x.ownerEmail === hint)
-      : undefined;
+      : choosing
+        ? [...scenarios.values()].reverse().find((x) => x.chooser)
+        : undefined;
     const problems: string[] = [];
-    if (!s) problems.push("login_hint is missing or no scenario is registered for it");
+    if (!s)
+      problems.push(
+        choosing
+          ? "no scenario is registered to be picked on the account chooser"
+          : "login_hint is missing or no scenario is registered for it",
+      );
     const wrongClient = q.get("client_id") !== E2E_CLIENT_ID;
     if (wrongClient) problems.push("client_id is not the e2e client");
     if (q.get("response_type") !== "code") problems.push("response_type must be code");
     if (q.get("access_type") !== "offline") problems.push("access_type must be offline");
-    if (q.get("prompt") !== "consent") problems.push("prompt must be consent");
+    if (q.get("prompt") !== "consent" && q.get("prompt") !== "consent select_account")
+      problems.push("prompt must be consent (or consent select_account)");
     const scopes = (q.get("scope") ?? "").split(" ").filter(Boolean);
     if (scopes.length !== CONNECT_SCOPES.length || !CONNECT_SCOPES.every((x) => scopes.includes(x)))
       problems.push(
@@ -511,6 +553,8 @@ export function createFakes() {
 
     if (routeName === "gmail.profile") {
       at();
+      // What Gmail answers for a Google account that has no Gmail (Check 47 P1).
+      if (s.noGmail) throw gmailError(400, "Mail service not enabled", "failedPrecondition");
       return sendJson(res, 200, {
         emailAddress: s.ownerEmail,
         messagesTotal: s.messages.size,
@@ -522,10 +566,21 @@ export function createFakes() {
       at();
       const query = q.get("q") ?? "";
       const days = Number(query.match(/newer_than:(\d+)d/)?.[1] ?? 3650);
+      const after = query.match(/(?:^|\s)after:(\d+)/)?.[1];
+      const cutoff = after ? Number(after) * 1000 : now - days * 86_400_000;
       const sentOnly = /\bin:sent\b/.test(query);
+      // Like Gmail: `in:inbox` / `-in:inbox` (the app lists a window inbox first, Check 25 P1),
+      // and Spam / Trash are never listed.
+      const inbox = /(^|\s)-in:inbox\b/.test(query)
+        ? false
+        : /(^|\s)in:inbox\b/.test(query)
+          ? true
+          : undefined;
       const all = [...s.messages.values()]
-        .filter((m) => m.internalDate >= now - days * 86_400_000)
+        .filter((m) => m.internalDate >= cutoff)
+        .filter((m) => !m.labelIds.includes("SPAM") && !m.labelIds.includes("TRASH"))
         .filter((m) => !sentOnly || m.labelIds.includes("SENT"))
+        .filter((m) => inbox === undefined || m.labelIds.includes("INBOX") === inbox)
         .sort((a, b) => b.internalDate - a.internalDate);
       const max = Math.min(500, Math.max(1, Number(q.get("maxResults") ?? 100)));
       const start = Number(q.get("pageToken") ?? 0) || 0;
@@ -651,6 +706,12 @@ export function createFakes() {
       addMessage(s, sent);
       return sendJson(res, 200, { ...ref(sent), labelIds: sent.labelIds });
     }
+    if (routeName === "gmail.settings.sendAs.list") {
+      at();
+      return sendJson(res, 200, {
+        sendAs: [{ sendAsEmail: s.ownerEmail, isPrimary: true, verificationStatus: "accepted" }],
+      });
+    }
     if (routeName === "gmail.watch") {
       at();
       return sendJson(res, 200, {
@@ -733,6 +794,8 @@ export function createFakes() {
     );
   }
 
+  const microsoft = createMicrosoftFakes();
+
   async function handle(req: IncomingMessage, res: ServerResponse) {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     const path = url.pathname;
@@ -752,6 +815,8 @@ export function createFakes() {
           path,
           res,
         );
+      // Plan #49: fake Microsoft (Outlook), its own scenarios.
+      if (await microsoft.handle(req, url, res, () => readBody(req))) return;
       if (path.startsWith("/google/") && (await google(req, url, res))) return;
       record(bearer(req), { method: req.method ?? "GET", path, route: "unknown" });
       sendJson(res, 404, { error: "not_found" });
@@ -779,6 +844,8 @@ function gmailRouteName(method: string, seg: string[]): string {
   if (method === "PUT" && a === "drafts" && b && !c) return "gmail.drafts.update";
   if (method === "DELETE" && a === "drafts" && b && !c) return "gmail.drafts.delete";
   if (method === "POST" && a === "watch" && !b) return "gmail.watch";
+  if (method === "GET" && a === "settings" && b === "sendAs" && !c)
+    return "gmail.settings.sendAs.list";
   return "unknown";
 }
 

@@ -1,13 +1,22 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { Notice } from "@/components/app/notice";
 import { Headline } from "@/components/brand/headline";
 import { categoryLabels } from "@/config/categories";
-import { BATCH_CATEGORIES, isBatchCategory, type BatchCategory } from "@/server/batch-rules";
-import { batchCandidates } from "@/server/drafts";
+import {
+  BATCH_CATEGORIES,
+  isBatchCategory,
+  VISIT_TIME_HELD_LINE,
+  type BatchCategory,
+} from "@/server/batch-rules";
+import { batchReview } from "@/server/drafts";
 import { canSend, isReadOnly, sendingBlockedReason } from "@/server/lifecycle";
 import { requireOwner } from "@/server/session";
 import { cn } from "@/lib/utils";
 import { BatchForm } from "./batch-form";
+
+// Check 32 P6: every screen has its own title ("… · Squared Away" from the root template).
+export const metadata: Metadata = { title: "Send together" };
 
 /**
  * Plan #5 "Review all ready": every draft labelled Ready in the categories the
@@ -19,7 +28,7 @@ export default async function ReviewReadyPage(props: PageProps<"/queue/review">)
   const params = await props.searchParams;
   const raw = params.cat === undefined ? [...BATCH_CATEGORIES] : [params.cat].flat();
   const picked = raw.filter(isBatchCategory);
-  const rows = await batchCandidates(workspace.id, picked);
+  const { rows, heldForVisitTime } = await batchReview(workspace.id, picked);
   const sending = canSend(workspace) && !isReadOnly(workspace);
 
   const toggle = (c: BatchCategory) => {
@@ -44,13 +53,16 @@ export default async function ReviewReadyPage(props: PageProps<"/queue/review">)
           <Link
             key={c}
             href={toggle(c)}
-            aria-pressed={picked.includes(c)}
+            // Check 32 P8: links can't be pressed toggles (aria-pressed); the chosen ones are
+            // marked current, and say so in words for every screen reader.
+            aria-current={picked.includes(c) ? "true" : undefined}
             className={cn(
               "inline-flex min-h-tap items-center rounded-lg border-2 border-charcoal px-3",
               picked.includes(c) ? "sa-inverted font-black" : "font-semibold",
             )}
           >
             {categoryLabels[c]}
+            {picked.includes(c) ? <span className="sr-only"> (chosen)</span> : null}
           </Link>
         ))}
       </nav>
@@ -68,6 +80,8 @@ export default async function ReviewReadyPage(props: PageProps<"/queue/review">)
           ))}
         </ul>
       )}
+      {/* Check 41 P2: why some scheduling replies aren't here (a count reason, no names). */}
+      {heldForVisitTime ? <p className="font-semibold">{VISIT_TIME_HELD_LINE}</p> : null}
 
       {rows.length ? (
         sending ? (

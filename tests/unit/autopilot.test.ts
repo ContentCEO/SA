@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { and, eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import { setModelTransportForTests } from "@/ai/client";
@@ -27,6 +28,8 @@ import {
   overdueAutopilotDrafts,
   runAutopilotSend,
   setAutopilot,
+  newPersonCopied,
+  unsyncedMessageIds,
   type GuardrailInput,
 } from "@/server/autopilot";
 import {
@@ -37,7 +40,12 @@ import {
   threadsToAutoDraft,
 } from "@/server/drafts";
 import { saveConnectedMailbox } from "@/server/mailboxes";
-import { setWorkspacePlan } from "@/server/workspace-lifecycle";
+import { isAutopilotReasonCode } from "@/server/autopilot-reasons";
+import {
+  autopilotPlanEffects,
+  enforcePlanAutopilot,
+  setWorkspacePlan,
+} from "@/server/workspace-lifecycle";
 import { createTestDb } from "../support/db";
 import { fakeTransport } from "../support/fake-model";
 import { FakeWriter } from "../support/fake-writer";
@@ -53,6 +61,34 @@ const cleanDraft = (over: Partial<ModelDraft> = {}): ModelDraft => ({
   ...over,
 });
 
+describe("unsyncedMessageIds (Check 20 P2)", () => {
+  const m = (id: string, ...labelIds: string[]) => ({ id, labelIds });
+  it("counts ids after the newest stored one, never drafts", () => {
+    const known = new Set(["a", "b"]);
+    expect(unsyncedMessageIds([m("a"), m("b"), m("c", "INBOX")], known)).toEqual(["c"]);
+    expect(unsyncedMessageIds([m("a"), m("b"), m("d", "DRAFT")], known)).toEqual([]);
+    expect(unsyncedMessageIds([m("a"), m("b"), m("s", "DRAFT", "SENT")], known)).toEqual(["s"]);
+    expect(unsyncedMessageIds([m("old"), m("a"), m("b")], known)).toEqual([]);
+    expect(unsyncedMessageIds([m("x"), m("y")], known)).toEqual(["x", "y"]);
+    expect(unsyncedMessageIds([], known)).toEqual([]);
+  });
+});
+
+describe("newPersonCopied (Check 20 P8)", () => {
+  const earlier = [{ from: "dana@customer.com", to: ["owner@shop.com"], cc: ["rob@customer.com"] }];
+  it("only someone never seen on the thread counts", () => {
+    const own = ["owner@shop.com"];
+    expect(newPersonCopied({ to: ["owner@shop.com"], cc: ["new@x.com"] }, earlier, own)).toBe(true);
+    expect(
+      newPersonCopied({ to: ["owner@shop.com"], cc: ["ROB@customer.com"] }, earlier, own),
+    ).toBe(false);
+    expect(newPersonCopied({ to: ["owner@shop.com"], cc: [] }, earlier, own)).toBe(false);
+    expect(
+      newPersonCopied({ to: ["crew@shop.com"], cc: [] }, [], ["owner@shop.com", "crew@shop.com"]),
+    ).toBe(false);
+  });
+});
+
 describe("account lock (layer 1)", () => {
   const w = (
     plan: Workspace["plan"],
@@ -60,6 +96,8 @@ describe("account lock (layer 1)", () => {
     setupPaidVia: Workspace["setupPaidVia"] = "stripe",
   ) => ({
     plan,
+    freePlan: null,
+    freePlanUntil: null,
     status,
     evaluationEndsAt: null,
     setupPaidVia,
@@ -123,6 +161,15 @@ describe("per-email guardrails (layer 3)", () => {
         "Deposit, review and closing notes always wait for you.",
       );
     }
+  });
+  it("Check 20 P3: a Spanish or Portuguese email or draft waits, English is unchanged", () => {
+    const line = "Not in English, so it waits for you.";
+    expect(guardrailReasons({ ...ok, otherLanguage: true })).toEqual([line]);
+    expect(guardrailReasons({ ...ok, draftBody: "Perfecto, nos vemos mañana a las 8." })).toContain(
+      line,
+    );
+    expect(guardrailReasons({ ...ok, draftBody: "Obrigado! Até amanhã." })).toContain(line);
+    expect(guardrailReasons({ ...ok, draftBody: "Thanks José, got it." })).toEqual([]);
   });
   it("an invoice question with no amount is allowed", () => {
     expect(guardrailReasons({ ...ok, category: "invoice_payment" })).toEqual([]);
@@ -438,6 +485,23 @@ describe("in the database", () => {
       expect(writer.sent).toHaveLength(0);
     });
 
+    it("GUARDRAIL: a conversation that left the inbox in Gmail stands it down (Check 25 P2)", async () => {
+      const t = await conversation();
+      const draftId = await drafted(t);
+      await considerAutopilot(draftId, NOW);
+      // Archived or trashed in Gmail during the hold, after the countdown was set.
+      await database.update(threads).set({ inInbox: false }).where(eq(threads.id, t));
+      await database
+        .update(drafts)
+        .set({ autoSendAt: later(10) })
+        .where(eq(drafts.id, draftId));
+      expect(await runAutopilotSend(draftId, deps(later(30)))).toMatchObject({
+        status: "stood_down",
+        reasons: expect.arrayContaining(["This conversation left your inbox in Gmail."]),
+      });
+      expect(writer.sent).toHaveLength(0);
+    });
+
     it("GUARDRAIL: the owner writing their own reply in Gmail stands it down", async () => {
       const t = await conversation();
       const draftId = await drafted(t);
@@ -456,6 +520,50 @@ describe("in the database", () => {
       await considerAutopilot(second, NOW);
       await writer.createDraft({ threadId: "some-other-thread", raw: "" });
       expect(await runAutopilotSend(second, deps(later(GRACE_MINUTES)))).toEqual({
+        status: "sent",
+      });
+    });
+
+    it("Check 20 P2: mail Gmail has but sync hasn't stored yet stands it down, in the same one call", async () => {
+      const t = await conversation();
+      const draftId = await drafted(t);
+      await considerAutopilot(draftId, NOW);
+      const [thread] = await database.select().from(threads).where(eq(threads.id, t));
+      // Gmail lists what we stored, then the customer's "Actually, hold off" we haven't synced.
+      writer.threadMail.set(thread!.gmailThreadId, [
+        { id: `${thread!.gmailThreadId}-earlier`, labelIds: ["SENT"] },
+        { id: `${thread!.gmailThreadId}-in`, labelIds: ["INBOX"] },
+        { id: "not-synced-yet", labelIds: ["INBOX", "UNREAD"] },
+      ]);
+      writer.calls = [];
+      const r = await runAutopilotSend(draftId, deps(later(GRACE_MINUTES)));
+      expect(r).toEqual({
+        status: "stood_down",
+        reasons: ["There's newer mail in this conversation."],
+        syncMailboxId: mailboxId,
+      });
+      expect(writer.sent).toHaveLength(0);
+      expect(writer.calls).toEqual(["getDraft", "threadMessageLabels"]);
+      const [d] = await database.select().from(drafts).where(eq(drafts.id, draftId));
+      expect(d).toMatchObject({ status: "pending", autoSendAt: null, autoSendClaimedAt: null });
+      const [log] = await database
+        .select()
+        .from(activityLog)
+        .where(eq(activityLog.action, "autopilot_stood_down"));
+      expect(JSON.stringify(log!.detail)).not.toMatch(/not-synced-yet|hold off/);
+    });
+
+    it("Check 20 P2: only ids we already have (and older mail the backfill never read) still send", async () => {
+      const t = await conversation();
+      const draftId = await drafted(t);
+      await considerAutopilot(draftId, NOW);
+      const [thread] = await database.select().from(threads).where(eq(threads.id, t));
+      writer.threadMail.set(thread!.gmailThreadId, [
+        { id: "older-than-the-backfill", labelIds: ["INBOX"] },
+        { id: `${thread!.gmailThreadId}-earlier`, labelIds: ["SENT"] },
+        { id: `${thread!.gmailThreadId}-in`, labelIds: ["INBOX"] },
+      ]);
+      expect(await runAutopilotSend(draftId, deps(later(GRACE_MINUTES)))).toEqual({
         status: "sent",
       });
     });
@@ -730,6 +838,141 @@ describe("in the database", () => {
       expect(await considerAutopilot(draftId, NOW)).toBeNull();
     });
 
+    it("Check 20 P13: two inboxes drafting at once at 19 end with exactly 20 countdowns", async () => {
+      for (let i = 0; i < DAILY_AUTOPILOT_CAP - 1; i++) {
+        await database.insert(activityLog).values({
+          workspaceId,
+          actor: "squared_away",
+          action: "autopilot_scheduled",
+          createdAt: later(-60),
+        });
+      }
+      const first = await drafted(await conversation());
+      const main = mailboxId;
+      const [ws0] = await database.select().from(workspaces).where(eq(workspaces.id, workspaceId));
+      mailboxId = (
+        await saveConnectedMailbox(ws0!, {
+          email: "crew@shop.com",
+          refreshToken: "rt",
+          grantedScopes: [],
+        })
+      ).id;
+      const second = await drafted(await conversation());
+      mailboxId = main;
+      const results = await Promise.all([
+        considerAutopilot(first, NOW),
+        considerAutopilot(second, NOW),
+      ]);
+      expect(results.filter(Boolean)).toHaveLength(1);
+      const started = await database
+        .select()
+        .from(activityLog)
+        .where(eq(activityLog.action, "autopilot_scheduled"));
+      expect(started).toHaveLength(DAILY_AUTOPILOT_CAP);
+      const counting = (await database.select().from(drafts)).filter((d) => d.autoSendAt);
+      expect(counting).toHaveLength(1);
+    });
+
+    it("Check 20 P3: a Spanish email never gets a countdown, even with an English draft", async () => {
+      const t = await conversation();
+      await database
+        .update(messages)
+        .set({ bodyText: "Hola, ¿puede venir el jueves por la mañana? Gracias." })
+        .where(and(eq(messages.threadId, t), eq(messages.direction, "in")));
+      expect(await considerAutopilot(await drafted(t), NOW)).toBeNull();
+      // The same conversation in English starts one.
+      expect(await considerAutopilot(await drafted(await conversation()), NOW)).toEqual(
+        later(GRACE_MINUTES),
+      );
+    });
+
+    describe("Check 20 P8: someone new on the conversation", () => {
+      const copy = (t: string, cc: string[], to: string[] = ["owner@shop.com"]) =>
+        database
+          .update(messages)
+          .set({ ccAddresses: cc, toAddresses: to })
+          .where(and(eq(messages.threadId, t), eq(messages.direction, "in")));
+
+      it("a new address on Cc stops the countdown, and a later run re-checks it", async () => {
+        const t = await conversation();
+        await copy(t, ["rob@customer.com"]);
+        expect(await considerAutopilot(await drafted(t), NOW)).toBeNull();
+
+        const t2 = await conversation();
+        const draftId = await drafted(t2);
+        expect(await considerAutopilot(draftId, NOW)).toEqual(later(GRACE_MINUTES));
+        await copy(t2, ["adjuster@insurer.com"]);
+        const r = await runAutopilotSend(draftId, deps(later(GRACE_MINUTES)));
+        expect(r.status === "stood_down" && r.reasons).toContain(
+          "Someone new is on this conversation, so it waits for you.",
+        );
+        expect(writer.sent).toHaveLength(0);
+      });
+
+      it("a Cc already on the thread, or the owner's own address, doesn't", async () => {
+        const t = await conversation();
+        // Rob was copied on the owner's earlier email.
+        await database
+          .update(messages)
+          .set({ ccAddresses: ["Rob@Customer.com"] })
+          .where(and(eq(messages.threadId, t), eq(messages.direction, "out")));
+        await copy(t, ["rob@customer.com", "OWNER@shop.com"]);
+        expect(await considerAutopilot(await drafted(t), NOW)).toEqual(later(GRACE_MINUTES));
+      });
+    });
+
+    it("Check 20 P7: a refused draft in a switched-on kind keeps why, as codes only", async () => {
+      const t = await conversation({ known: false, from: "sam@newcustomer.com" });
+      const draftId = await drafted(t);
+      expect(await considerAutopilot(draftId, NOW)).toBeNull();
+      const [d] = await database.select().from(drafts).where(eq(drafts.id, draftId));
+      expect(d!.autopilotSkip).toContain("not_known");
+      const [log] = await database
+        .select()
+        .from(activityLog)
+        .where(eq(activityLog.action, "autopilot_skipped"));
+      expect(log!.detail).toEqual({ draftId, codes: d!.autopilotSkip });
+      for (const c of d!.autopilotSkip!) expect(isAutopilotReasonCode(c)).toBe(true);
+      expect(JSON.stringify(log!.detail)).not.toMatch(/sam|Thursday|@/i);
+
+      // A kind that's switched off records nothing.
+      const off = await drafted(
+        await conversation({ category: "customer_question", known: false }),
+      );
+      expect(await considerAutopilot(off, NOW)).toBeNull();
+      const [o] = await database.select().from(drafts).where(eq(drafts.id, off));
+      expect(o!.autopilotSkip).toBeNull();
+    });
+
+    it("Check 20 P7: a stood-down run stores and logs its codes", async () => {
+      const t = await conversation();
+      const draftId = await drafted(t);
+      await considerAutopilot(draftId, NOW);
+      const [thread] = await database.select().from(threads).where(eq(threads.id, t));
+      await writer.createDraft({ threadId: thread!.gmailThreadId, raw: "" });
+      await runAutopilotSend(draftId, deps(later(GRACE_MINUTES)));
+      const [d] = await database.select().from(drafts).where(eq(drafts.id, draftId));
+      expect(d!.autopilotSkip).toEqual(["writing_in_gmail"]);
+      const [log] = await database
+        .select()
+        .from(activityLog)
+        .where(eq(activityLog.action, "autopilot_stood_down"));
+      expect(log!.detail).toEqual({ draftId, reasonCount: 1, codes: ["writing_in_gmail"] });
+    });
+
+    it("Check 20 P13: a draft already counting down takes no second slot", async () => {
+      const draftId = await drafted(await conversation());
+      expect(await considerAutopilot(draftId, NOW)).toEqual(later(GRACE_MINUTES));
+      await database.update(drafts).set({ autoSendAt: null }).where(eq(drafts.id, draftId));
+      await database.update(drafts).set({ status: "discarded" }).where(eq(drafts.id, draftId));
+      expect(await considerAutopilot(draftId, NOW)).toBeNull();
+      const started = await database
+        .select()
+        .from(activityLog)
+        .where(eq(activityLog.action, "autopilot_scheduled"));
+      expect(started).toHaveLength(1);
+    });
+
     it("lost send events are picked up by the backstop", async () => {
       const draftId = await drafted(await conversation());
       await considerAutopilot(draftId, NOW);
@@ -816,5 +1059,153 @@ describe("in the database", () => {
         );
       });
     });
+  });
+});
+
+// --- Plan #47 offer A: autopilot follows the plan that counts (§3.6) -----------------------
+
+describe("autopilot follows the plan that counts (free referral months, any plan drop)", () => {
+  const DAY = 86_400_000;
+  let database: Database;
+  let workspaceId: string;
+  let mailboxId: string;
+
+  const lock = (over: Partial<Workspace>) =>
+    accountLockReason(
+      {
+        status: "active",
+        evaluationEndsAt: null,
+        setupPaidVia: "stripe",
+        plan: "solo",
+        freePlan: null,
+        freePlanUntil: null,
+        ...over,
+      },
+      NOW,
+    );
+
+  it("layer 1 reads the free plan while it runs, and only while it runs", () => {
+    expect(lock({})).toMatch(/Crew and Company/);
+    expect(lock({ freePlan: "crew", freePlanUntil: new Date(NOW.getTime() + DAY) })).toBeNull();
+    expect(lock({ freePlan: "crew", freePlanUntil: NOW })).toMatch(/Crew and Company/);
+    expect(lock({ freePlan: "crew", freePlanUntil: null })).toMatch(/Crew and Company/);
+    // A free month never unlocks what the account's status or payment locks.
+    expect(
+      lock({
+        status: "setup_paid",
+        freePlan: "crew",
+        freePlanUntil: new Date(NOW.getTime() + DAY),
+      }),
+    ).toMatch(/setup call/);
+  });
+
+  async function setWs(values: Partial<typeof workspaces.$inferInsert>) {
+    await database.update(workspaces).set(values).where(eq(workspaces.id, workspaceId));
+  }
+  /** One category on autopilot and one reply counting down. */
+  async function autopilotOn() {
+    await database
+      .insert(rules)
+      .values({ workspaceId, category: "scheduling", mode: "autopilot", updatedAt: NOW });
+    const [t] = await database
+      .insert(threads)
+      .values({ mailboxId, gmailThreadId: `t-${Math.random()}` })
+      .returning();
+    await database.insert(drafts).values({
+      threadId: t!.id,
+      mailboxId,
+      gmailDraftId: `g-${t!.id}`,
+      toAddress: "dana@customer.com",
+      subject: "Re",
+      body: "b",
+      originalBody: "b",
+      reason: "r",
+      promptVersion: "draft.v1",
+      autoSendAt: later(10),
+    });
+  }
+  const state = async () => ({
+    modes: (await database.select().from(rules)).map((r) => r.mode),
+    countdowns: (await database.select().from(drafts)).filter((d) => d.autoSendAt).length,
+    logged: (
+      await database
+        .select()
+        .from(activityLog)
+        .where(eq(activityLog.action, "autopilot_turned_off_plan"))
+    ).map((l) => l.detail),
+  });
+
+  beforeEach(async () => {
+    process.env.TOKEN_ENCRYPTION_KEY = randomBytes(32).toString("base64");
+    database = await createTestDb();
+    const { workspace } = await ensureUserAndWorkspace({ email: "owner@shop.com" });
+    workspaceId = workspace.id;
+    mailboxId = (
+      await saveConnectedMailbox(workspace, {
+        email: "owner@shop.com",
+        refreshToken: "rt",
+        grantedScopes: [],
+      })
+    ).id;
+    await setWs({ status: "active", plan: "crew", setupPaidVia: "stripe" });
+  });
+
+  it("a plan without autopilot switches every category back and stops countdowns, once", async () => {
+    await autopilotOn();
+    expect(await autopilotPlanEffects(workspaceId, NOW)).toBe(0); // Crew keeps it
+    // A move down on Stripe's page writes the plan; the effects run after it.
+    await setWs({ plan: "solo" });
+    expect(await autopilotPlanEffects(workspaceId, NOW)).toBe(1);
+    expect(await state()).toEqual({ modes: ["draft"], countdowns: 0, logged: [{ count: 1 }] });
+    expect(await autopilotPlanEffects(workspaceId, NOW)).toBe(0);
+    expect((await state()).logged).toHaveLength(1);
+  });
+
+  it("a running free Crew month keeps autopilot on; it goes off once the month is over", async () => {
+    await setWs({ plan: "solo", freePlan: "crew", freePlanUntil: new Date(NOW.getTime() + DAY) });
+    await autopilotOn();
+    expect(await autopilotPlanEffects(workspaceId, NOW)).toBe(0);
+    expect((await state()).modes).toEqual(["autopilot"]);
+    expect(await autopilotPlanEffects(workspaceId, new Date(NOW.getTime() + DAY))).toBe(1);
+    expect(await state()).toEqual({ modes: ["draft"], countdowns: 0, logged: [{ count: 1 }] });
+  });
+
+  it("the 15-minute invariant resets rules left on under a plan without autopilot", async () => {
+    await autopilotOn();
+    // Left behind by an older Stripe-page downgrade that never ran the effects.
+    await setWs({ plan: "solo" });
+    const { workspace: other } = await ensureUserAndWorkspace({ email: "crew@other.com" });
+    await database
+      .update(workspaces)
+      .set({ status: "active", plan: "company", setupPaidVia: "stripe" })
+      .where(eq(workspaces.id, other.id));
+    await database
+      .insert(rules)
+      .values({ workspaceId: other.id, category: "scheduling", mode: "autopilot" });
+
+    expect(await enforcePlanAutopilot(NOW)).toBe(1);
+    const modes = await database.select().from(rules);
+    expect(modes.map((r) => [r.workspaceId === workspaceId, r.mode]).sort()).toEqual([
+      [false, "autopilot"],
+      [true, "draft"],
+    ]);
+    expect(await enforcePlanAutopilot(NOW)).toBe(0);
+  });
+
+  it("the admin's plan change runs the same effects, and logs what it switched off", async () => {
+    await autopilotOn();
+    await setWorkspacePlan(workspaceId, "solo", NOW);
+    expect(await state()).toEqual({ modes: ["draft"], countdowns: 0, logged: [{ count: 1 }] });
+    const changed = await database
+      .select()
+      .from(activityLog)
+      .where(eq(activityLog.action, "plan_changed"));
+    expect(changed.map((l) => l.detail)).toEqual([{ by: "admin", from: "crew", to: "solo" }]);
+  });
+
+  it("the queue shows a countdown only while autopilot is open to the account", () => {
+    const page = readFileSync("src/app/(app)/queue/page.tsx", "utf8");
+    expect(page).toContain("const autopilotOpen = accountLockReason(workspace) === null;");
+    expect(page).toContain("autoSendAt={i.autoSendAt && autopilotOpen ?");
   });
 });

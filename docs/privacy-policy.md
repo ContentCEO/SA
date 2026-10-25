@@ -47,7 +47,9 @@ note, and where you came from, kept the same way as for the waitlist. We use it 
 you about Squared Away Growth. If you're already on the app
 waitlist, we add your request to that entry and keep everything you gave us before. Asking for a
 call doesn't sign you up for the app or let you sign in. The same scrambled IP address limit applies to
-this form.
+this form. If you followed another Squared Away owner's referral link while we offer referrals,
+we keep that link's code with your request, so that owner can be thanked once if you become a
+Growth client.
 
 **When you sign in with Google:** your name and email address. Sign-in asks Google only for "who you are" (`openid`, `email`, `profile`). It does not give us
 access to your email.
@@ -88,12 +90,16 @@ Settings removes all of our access, that one included.
 - **How you write:** a description of your writing (your usual greeting, sign-off, length and
   common phrases) and up to five short example replies in your style. These examples are written
   by the AI, which is told to use placeholders instead of customers' names and details; before we
-  save them, our own code also replaces any email addresses, phone numbers, prices and street
-  addresses it finds with placeholders. To
+  save the description and the examples, our own code also replaces the email addresses, phone
+  numbers, prices and street addresses it recognizes with placeholders. To
   learn it we read up to 200 of your sent emails from the last year: when you first connect,
   again about once a week (skipped if you have edited your style yourself), when you tap
   **Re-learn from my sent mail**, and again automatically if a read stops part-way. Those sent
   emails are used only for that and are never stored.
+- How many photos or files an email had (never the files or their names).
+- Your Gmail "send mail as" addresses (like office@ or info@ on your account), so a reply goes
+  out from the address your customer wrote to. Read with the Gmail access you already gave; we
+  don't read their settings or signatures.
 - Prices you quoted (the amount, the kind of job and the date), kept as your price memory. Only
   you see them, and they are never sent to the AI.
 - Which invoices are marked paid (or "not owed to me"), a marker on conversations that were ever
@@ -115,15 +121,24 @@ Settings removes all of our access, that one included.
 
 **What you tell us:** your business details (business name, trade, services, service area, hours,
 price list, payment terms, policies, things you never promise, words you never use, short
-seasonal notes, your review link, the towns you work in), your settings, and, if you turn on text
+seasonal notes, your review link, the towns you work in, and the license and registration
+numbers you enter), your settings, and, if you turn on text
 alerts, your own mobile number. Also the sender rules you set (an email address or a company's web
 address, and what to do with its email), the people you mark as VIPs, short private notes you write
-about a customer, and, if you turn on away mode, the day you're back.
+about a customer, and, if you turn on away mode, the day you're back. Your crew's email addresses,
+if you list them, so their emails aren't treated as customers. They stay with your account until
+you remove them or delete your account.
 
 **Phone notifications:** if you turn them on, we store the address your browser's push service
 gives us for that phone (the push service is run by Google, Apple, Mozilla or Microsoft, depending
 on your browser). The notification we send through it is empty; your phone then asks us for the
-counts to show, so no counts, names or email content pass through the push service.
+counts to show, so no counts, names or email content pass through the push service. If your
+phone's notification service keeps refusing our notifications for 7 days, we forget that phone's
+notification address.
+
+**Text alerts:** for each text alert we send you, whether your carrier delivered it (the message's
+id from our texting provider, its status and error code — never the text or your number), kept 30
+days. If texts stop because you replied STOP or the number can't take texts, we note which.
 
 **Payments:** card details are handled by Stripe and never reach us. We keep your Stripe customer
 and subscription IDs and your plan, and, when your plan covers fewer Gmail addresses than you've
@@ -163,7 +178,7 @@ that copy.
   is going wrong right now. It's a draft like any other and waits for your **Send reply**.
 - To reword a draft when you ask, by tapping a quick change or telling it what to change. If you
   speak the change, your browser turns your words into text using its own speech service (run by
-  Google or Apple, depending on your phone); we receive only the text.
+  Google, Apple or Microsoft, depending on your browser); we receive only the text.
 - To keep your quotes, money owed and customers in order, and to remember the prices you quoted.
 - To show **Call** and **Text** buttons, we look for a phone number in the customer's email when
   you open your queue. We don't store the number. Calls and texts go from your own phone:
@@ -315,9 +330,10 @@ In plain words:
   delete your account.
 - **When you agreed to the terms, and which version,** is kept until you delete your account.
 - **Your mobile number for text alerts** is kept until you remove it in Settings or delete your
-  account.
+  account. **Whether each text was delivered** (the message's id, status and error code) is kept
+  30 days.
 - **Phone notification addresses** are deleted when you turn notifications off, when that phone
-  stops accepting them, or when you delete your account.
+  stops accepting them (7 days of refusals), or when you delete your account.
 - **Waitlist entries** are kept until you ask us to remove them. When we invite you, we note the
   date on your entry.
 - **Growth client records** (your services, start date, status, the updates posted for you and
@@ -326,6 +342,8 @@ In plain words:
 - **Growth call requests** are kept until you ask us to remove them (call, text or email us). If
   you send another request from the same email address, the newest one replaces the one before;
   the name and trade from your first entry stay on it.
+- If you get a refund or open a card dispute, we keep its amount and dates (no card details)
+  after you delete your account, like Stripe's own payment records.
 - If your trial ends or a payment fails, we stop reading your mailbox and stop using the AI, but
   we don't delete your data for that reason alone.
 
@@ -337,8 +355,10 @@ In plain words:
   any style suggestions waiting for you, your business details, your activity history and your AI
   usage counts stay until you delete your account.
 - **Delete my account** (Settings): deletes your account and everything in it from Squared Away,
-  after one confirmation. Stripe keeps its own payment records. First it cancels your subscription
-  straight away (not at the end of the paid period) and removes our access at Google. It also
+  after one confirmation. Stripe keeps its own payment records. We keep only the amount and dates
+  of any refund or card dispute (no card details, no link to you). First it cancels your
+  subscription straight away (not at the end of the paid period), and any other plan Stripe still
+  has for you, and removes our access at Google. It also
   removes your invite, so coming back needs a new one. Stripe also keeps its customer record of
   you (your email address and your business name, or your name if no business name is set; if you
   paid while sales tax was on, also the billing address you entered on Stripe's checkout page, and

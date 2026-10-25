@@ -120,6 +120,10 @@ async function readSortAndDraft(
     await page.reload();
     await expect(page.getByText("all set,")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText("Learned how you write from 5 sent emails.")).toBeVisible();
+    // Check 14 P2: one read count on the screen, never "1 emails".
+    await expect(page.getByText("Read your last 30 days of email.")).toBeVisible();
+    await expect(page.getByText(/emails? from the last 30 days/)).toHaveCount(1);
+    await expect(page.getByText(/\b1 emails\b/)).toHaveCount(0);
   });
 
   await test.step("It sorts the new email and writes a reply as a real Gmail draft", async () => {
@@ -147,7 +151,7 @@ async function readSortAndDraft(
 
 async function draftCardOnQueue(page: Page) {
   await page.goto("/queue");
-  const card = page.getByRole("article", { name: /^Draft reply to Dana/ });
+  const card = page.getByRole("article", { name: /^Dana.* · draft reply$/ });
   await expect(card).toBeVisible();
   await expect(card).toContainText(FAKE_CLASSIFICATION.summary);
   await noHorizontalScroll(page);
@@ -231,8 +235,13 @@ test("a paid owner connects Gmail and a customer gets one threaded reply", async
   await test.step("The owner taps Send reply and gets a few seconds to undo it", async () => {
     await card.getByRole("button", { name: "Send reply" }).click();
     await expect(page).toHaveURL(new RegExp(`/queue\\?sent=${draft.id}`));
-    await expect(page.getByText("reply on its way,")).toBeVisible();
+    // Next 16.4's route announcer repeats the heading after a client navigation; look in the strip.
+    await expect(page.getByTestId("sent-strip").getByText("reply on its way,")).toBeVisible();
     await expect(page.getByText(/Sending in \d+ seconds/)).toBeVisible();
+    // Check 32 P7: focus is on the result, and the next Tab is Undo.
+    await expect(page.getByTestId("sent-strip")).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(page.getByRole("button", { name: "Undo" })).toBeFocused();
     await noHorizontalScroll(page);
     // Nothing goes early: the undo window is real.
     expect(await runHook(request, { step: "deliver", draftId: draft.id })).toMatchObject({
@@ -255,8 +264,10 @@ test("a paid owner connects Gmail and a customer gets one threaded reply", async
       status: "not_due",
     });
     // The screen checks back every 3s on its own.
-    await expect(page.getByText("squared away.")).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText("reply sent,")).toBeVisible();
+    await expect(page.getByTestId("sent-strip").getByText("squared away.")).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.getByTestId("sent-strip").getByText("reply sent,")).toBeVisible();
   });
 
   await test.step("Activity says the reply was sent", async () => {
@@ -363,6 +374,7 @@ test("a paid owner connects Gmail and a customer gets one threaded reply", async
   await test.step("Delete my account: Google access is revoked and nothing of theirs is left", async () => {
     await page.goto("/settings/account");
     await page.getByRole("button", { name: "Delete my account" }).click();
+    await page.getByLabel("Type DELETE to confirm").fill("delete");
     await page.getByRole("button", { name: "Yes, delete everything" }).click();
     await expect(page).toHaveURL(/\/goodbye$/);
     expect(only(await calls(request, scenario.id), "revoke")).toHaveLength(1);

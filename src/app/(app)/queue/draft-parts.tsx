@@ -1,10 +1,13 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { findGaps, fillGap } from "@/ai/gaps";
 import { Button } from "@/components/ui/button";
 import { confidenceWords, type ConfidenceLabel } from "@/config/drafting";
+import { foldGuess } from "@/lib/draft-fold";
 import { cn } from "@/lib/utils";
+import { withoutCategoryPrefix } from "@/lib/card-words";
+import { closeOnEscape } from "./focus";
 
 /** Plan #8: three labels by weight and inversion — never colour. */
 export function ConfidenceTag({ label }: { label: ConfidenceLabel }) {
@@ -26,16 +29,33 @@ export function ConfidenceTag({ label }: { label: ConfidenceLabel }) {
  * Plan #2: the draft with each {{gap}} shown as a chip. Tapping a chip opens
  * a big input; the filled text replaces it. The parent owns the body.
  */
+/** Which gap's fill box is open, and on which text (the card owns it: Check 9 P11). */
+export type GapOpen = { index: number; body: string } | null;
+
 export function BodyWithGaps({
   body,
   onChange,
+  openGap,
+  onOpenGap,
   expanded,
+  onToggle,
+  clamp = false,
   readOnly,
   priceSuggestions,
 }: {
   body: string;
   onChange: (next: string) => void;
+  /** Check 9 P11: the open fill box, held by the card so "Fill in 1 gap to send" can open it. */
+  openGap: GapOpen;
+  onOpenGap: (next: GapOpen) => void;
   expanded: boolean;
+  /** "Show full draft" / "Show less" (shown only when the text really is cut short). */
+  onToggle?: () => void;
+  /**
+   * Check 9 P7: may the text fold to four lines? Never above a Send reply button — the owner
+   * reads the whole reply before okaying it — and never with a gap in it.
+   */
+  clamp?: boolean;
   readOnly?: boolean;
   /** Plan #15: the owner's past prices for similar jobs, offered in an open price gap. */
   priceSuggestions?: PastPrice[];
@@ -43,11 +63,42 @@ export function BodyWithGaps({
   // The form belongs to the text it was opened on. If that text changes from outside (a past
   // price tapped below the draft fills an earlier gap), the gaps shift under it, so the form
   // closes instead of putting the owner's answer into a different gap.
-  const [openOn, setOpenOn] = useState<{ index: number; body: string } | null>(null);
-  const open = openOn && openOn.body === body ? openOn.index : null;
-  const setOpen = (index: number | null) => setOpenOn(index === null ? null : { index, body });
+  const open = openGap && openGap.body === body ? openGap.index : null;
+  const setOpen = (index: number | null) => onOpenGap(index === null ? null : { index, body });
   const [value, setValue] = useState("");
   const gaps = findGaps(body);
+  const folds = clamp && !gaps.length;
+  // Check 9 P7: the toggle only when folding hides something (measured while folded).
+  const text = useRef<HTMLParagraphElement>(null);
+  const [measured, setMeasured] = useState(false);
+  // Only measured, the toggle appeared at hydration and pushed everything under the card (Edit,
+  // Discard, They said no) down under a thumb (or a click) already on its way. So the server
+  // guesses from the text (src/lib/draft-fold.ts): surely cut → the toggle is in its HTML;
+  // maybe → the toggle's place is kept, hidden until measured; surely fits → none.
+  const guess = folds ? foldGuess(body) : "fits";
+  const surelyCut = guess === "cut";
+  const cutShort = surelyCut || (folds && measured);
+  const keepPlace = guess === "maybe";
+  useLayoutEffect(() => {
+    const el = text.current;
+    if (!folds || expanded || !el) return;
+    if (surelyCut) return;
+    // A layout measurement of the folded text.
+    setMeasured(el.scrollHeight > el.clientHeight + 1);
+  }, [folds, expanded, body, surelyCut]);
+  // Check 32 P1: Cancel (or Escape) puts focus back on the gap chip that opened the box.
+  const chips = useRef<(HTMLButtonElement | null)[]>([]);
+  const [returnTo, setReturnTo] = useState<number | null>(null);
+  useEffect(() => {
+    if (returnTo === null) return;
+    chips.current[returnTo]?.focus();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot: focus has moved
+    setReturnTo(null);
+  }, [returnTo]);
+  const cancel = () => {
+    if (open !== null) setReturnTo(open);
+    setOpen(null);
+  };
 
   const parts: React.ReactNode[] = [];
   let rest = body;
@@ -57,6 +108,9 @@ export function BodyWithGaps({
     parts.push(
       <button
         key={i}
+        ref={(el) => {
+          chips.current[i] = el;
+        }}
         type="button"
         disabled={readOnly}
         aria-label={`Fill in ${g.label}`}
@@ -75,12 +129,28 @@ export function BodyWithGaps({
 
   return (
     <div className="flex flex-col gap-2">
-      <p className={cn("whitespace-pre-line", !expanded && !gaps.length && "line-clamp-4")}>
+      <p ref={text} className={cn("whitespace-pre-line", folds && !expanded && "line-clamp-4")}>
         {parts}
       </p>
+      {(cutShort || keepPlace) && onToggle ? (
+        // Kept in place while nothing is cut: `invisible` takes it off the screen, out of the
+        // tab order and away from screen readers, and leaves its 44px where it is.
+        <button
+          type="button"
+          className={cn(
+            "inline-flex min-h-tap items-center self-start font-semibold underline underline-offset-4",
+            !cutShort && "invisible",
+          )}
+          aria-expanded={expanded}
+          onClick={onToggle}
+        >
+          {expanded ? "Show less" : "Show full draft"}
+        </button>
+      ) : null}
       {open !== null && gaps[open] ? (
         <form
           className="flex flex-col gap-2 rounded-lg border-2 border-charcoal p-3"
+          onKeyDown={closeOnEscape(cancel)}
           onSubmit={(e) => {
             e.preventDefault();
             if (!value.trim()) return;
@@ -129,7 +199,7 @@ export function BodyWithGaps({
           ) : null}
           <div className="grid grid-cols-2 gap-2">
             <Button type="submit">Fill in</Button>
-            <Button type="button" variant="ghost" onClick={() => setOpen(null)}>
+            <Button type="button" variant="ghost" onClick={cancel}>
               Cancel
             </Button>
           </div>
@@ -239,7 +309,7 @@ export function WhyThis({
       <dl className="flex flex-col gap-2 px-3 pb-3 text-sm">
         <div>
           <dt className="font-black">What it is</dt>
-          <dd>{reason}</dd>
+          <dd>{withoutCategoryPrefix(reason)}</dd>
         </div>
         <div>
           <dt className="font-black">From your business profile</dt>

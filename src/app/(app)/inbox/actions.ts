@@ -6,6 +6,7 @@ import { z } from "zod";
 import { markNeedsOwner } from "@/server/classification";
 import { isTemporaryAiFailure } from "@/ai/client";
 import { createDraftForThread, type OwnerPurpose } from "@/server/drafts";
+import { draftLimitUntil } from "@/server/draft-limit-rules";
 import { hitLimit } from "@/server/rate-limit";
 import { requireOwner } from "@/server/session";
 import { isCategory } from "@/config/categories";
@@ -13,6 +14,7 @@ import { OWNER_SENDER_RULE_ACTIONS, OWNER_SENDER_RULE_SCOPES } from "@/db/schema
 import { ReadOnlyError } from "@/server/lifecycle";
 import { saveRule } from "@/server/sender-rule-store";
 import { resortThread } from "@/server/resort";
+import { takeOffMyList } from "@/server/needs-owner";
 
 const input = z.object({ threadId: z.string().uuid() });
 
@@ -22,6 +24,25 @@ export async function markNeedsOwnerAction(formData: FormData) {
   if (!parsed.success) return;
   await markNeedsOwner(workspace.id, parsed.data.threadId);
   revalidatePath("/inbox");
+}
+
+/**
+ * Check 10 P1: "Take it off my list" on a "Needs you" card the owner already answered. Clears
+ * the flag only (no draft, no send). Scoped to the workspace, read-only refused, rate limited.
+ */
+export async function takeOffListAction(formData: FormData) {
+  const { workspace } = await requireOwner();
+  const parsed = input.safeParse({ threadId: formData.get("threadId") });
+  if (!parsed.success) redirect("/inbox?error=unknown");
+  if (!(await hitLimit("gmailWrite", workspace.id)).allowed) redirect("/inbox?error=busy");
+  let r;
+  try {
+    r = await takeOffMyList(workspace.id, parsed.data.threadId);
+  } catch (err) {
+    if (err instanceof ReadOnlyError) redirect("/inbox?error=readonly");
+    throw err;
+  }
+  redirect(r === "not_found" ? "/inbox?error=unknown" : "/inbox?done=off_list");
 }
 
 /** Skip reasons → the Queue's ?error= keys. Anything else is a plain "couldn't write it". */
@@ -58,7 +79,8 @@ async function askFor(purpose: OwnerPurpose, formData: FormData): Promise<never>
   const { workspace } = await requireOwner();
   const parsed = input.safeParse({ threadId: formData.get("threadId") });
   if (!parsed.success) redirect("/queue?error=unknown");
-  if (!(await hitLimit("draft", workspace.id)).allowed) redirect("/queue?error=busy");
+  // Check 40 P3: the hourly limit counts only a tap that reaches the model.
+  const tap: { retryAfterSec?: number } = {};
   let r;
   try {
     r = await createDraftForThread(parsed.data.threadId, {
@@ -66,6 +88,11 @@ async function askFor(purpose: OwnerPurpose, formData: FormData): Promise<never>
       workspaceId: workspace.id,
       purpose,
       aiMode: "interactive",
+      beforeModelCall: async () => {
+        const limit = await hitLimit("draft", workspace.id);
+        tap.retryAfterSec = limit.retryAfterSec;
+        return limit.allowed;
+      },
     });
   } catch (err) {
     // Check 48 P4: a plain retry message, never a hang.
@@ -75,6 +102,8 @@ async function askFor(purpose: OwnerPurpose, formData: FormData): Promise<never>
   if (r.status === "created") redirect("/queue?done=drafted");
   if (r.status === "reconnect_needed") redirect("/queue?error=reconnect");
   if (purpose === "thank_you" && r.reason === "already_asked") redirect("/queue?error=thanked");
+  if (r.reason === "rate_limited")
+    redirect(`/queue?error=draft_limit&until=${draftLimitUntil(tap.retryAfterSec)}`);
   redirect(`/queue?error=${OFFER_ERRORS[r.reason] ?? "draftfailed"}`);
 }
 

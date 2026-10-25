@@ -11,7 +11,7 @@ import { ensureUserAndWorkspace } from "@/server/accounts";
 import { sendAccessLostAlerts } from "@/server/alerts";
 import { unsortedSweepMailboxes } from "@/server/assistant-status";
 import { runAutopilotSend } from "@/server/autopilot";
-import { applySubscription } from "@/server/billing";
+import { applySubscription, setStripeForTests } from "@/server/billing";
 import { planLookupKey } from "@/server/billing-rules";
 import { classifyPending } from "@/server/classification";
 import {
@@ -40,6 +40,7 @@ import { freshLeads } from "@/server/sms-alerts";
 import { incrementalSync, listSyncableMailboxes } from "@/server/sync";
 import { learnVoice, workspacesNeedingVoice } from "@/server/voice";
 import { setWorkspacePlan } from "@/server/workspace-lifecycle";
+import { FakeStripe } from "../support/fake-stripe";
 import { createTestDb } from "../support/db";
 import { fakeTransport } from "../support/fake-model";
 import { FakeMailbox } from "../support/fake-mailbox";
@@ -77,7 +78,7 @@ beforeEach(async () => {
   boxes = [];
   for (const [i, email] of ["owner@shop.com", "office@shop.com", "jobs@shop.com"].entries()) {
     const m = await saveConnectedMailbox(
-      { id: workspaceId, plan: "crew" },
+      { id: workspaceId, plan: "crew", freePlan: null, freePlanUntil: null },
       { email, refreshToken: `rt${i}`, grantedScopes: [] },
     );
     // Connected a day apart: the first is the oldest.
@@ -149,10 +150,23 @@ describe("a lower plan pauses the extra Gmail addresses", () => {
         metadata: { workspaceId },
         items: { data: [{ price: { lookup_key: planLookupKey(plan) } }] },
       }) as unknown as Stripe.Subscription;
-    await applySubscription(sub("solo"), NOW);
-    expect(await pausedIds()).toEqual([boxes[1]!, boxes[2]!].sort());
-    await applySubscription(sub("company"), NOW);
-    expect(await pausedIds()).toEqual([]);
+    // Check 17 P4 / plan #47 §1.9: the webhook reads the subscription fresh, so the (fake)
+    // Stripe holds the latest payload.
+    const fake = new FakeStripe({ now: NOW });
+    const hold = (plan: "solo" | "crew" | "company") => {
+      const s = { ...sub(plan), discounts: [] } as unknown as Stripe.Subscription;
+      fake.subscriptions.set(s.id, s as never);
+      return s;
+    };
+    setStripeForTests(fake.client);
+    try {
+      await applySubscription(hold("solo"), NOW);
+      expect(await pausedIds()).toEqual([boxes[1]!, boxes[2]!].sort());
+      await applySubscription(hold("company"), NOW);
+      expect(await pausedIds()).toEqual([]);
+    } finally {
+      setStripeForTests(undefined);
+    }
   });
 
   it("an autopilot countdown on a paused address stops", async () => {

@@ -8,7 +8,7 @@ import {
   normalizeInvoiceNumber,
   type InvoiceFacts,
 } from "./money-rules";
-import { canAutoSet } from "./quote-rules";
+import { canAutoSet, DECLINED_FLAG } from "./quote-rules";
 import { autoSetQuoteOutcome, clearNoAnswerGuess } from "./quotes";
 
 /**
@@ -35,6 +35,8 @@ export async function afterClassified(input: {
      * thread, not the job being paid.
      */
     openInvoice?: boolean;
+    /** Check 21 P2: was a quote before this email (sorted one, sticky request time or an outcome). */
+    quoteRequested?: boolean;
   };
   result: Classification;
   /**
@@ -70,18 +72,47 @@ export async function afterClassified(input: {
     await autoSetQuoteOutcome(threadId, "won", now, { why: "accepted" });
   }
 
+  // Check 21 P2: "We went with someone else, thanks." on a quote → lost (our guess). The owner
+  // always wins (canAutoSet here, the same rule in the UPDATE); a waiting nudge is flagged
+  // "They said no. Check before sending." and no new one is drafted (a decided quote).
+  if (
+    result.extracted.declines_quote === true &&
+    (previous.quoteRequested === true ||
+      previous.category === "quote_request" ||
+      result.category === "quote_request") &&
+    canAutoSet(previous.quoteOutcome, previous.quoteOutcomeSource)
+  ) {
+    await autoSetQuoteOutcome(threadId, "lost", now, { why: "declined", flag: DECLINED_FLAG });
+  }
+
   // Invoices (plan #27). Both are guesses: they stop future nudges, flag (never delete) a
   // waiting one, never touch an owner's mark (the guard is in the UPDATE), and show in
   // Activity with "Undo on Money owed".
   const invoice = invoiceOf(result.extracted);
-  if (invoice?.status !== "paid") return;
+  if (!invoice) return;
+  // Check 12 P2: payments that add up to the full amount ("sent the last $3,000") read as paid
+  // on the stored facts (carryInvoiceFacts): our paid guess, never a silent drop. Check 12 P3:
+  // "the check is in the mail" (said_sent) is a promise, never a paid mark.
+  const settledByPayments =
+    (invoice.amount_paid_now ?? 0) > 0 &&
+    input.storedInvoice != null &&
+    input.storedInvoice.status === "paid" &&
+    (input.storedInvoice.paid ?? 0) > 0;
+  if (invoice.status !== "paid" && !settledByPayments) return;
   if (isReceiptSender(input.fromAddress)) {
     // A payment receipt (Stripe, QuickBooks): it only ever marks the ONE open invoice whose
     // number it names (and amount, when both say) — never its own thread, and never by
     // amount alone (A2, A12). A receipt sorted as supplier/vendor is for the owner's own
     // purchase, never a customer paying them.
     if (result.category === "supplier_vendor") return;
+    // Check 12 P4: a receipt for a bill the owner paid (a supplier's bill 1037) is never a
+    // customer paying the owner's invoice 1037 — QuickBooks numbers everyone's from 1001.
+    if (result.extracted.invoice_direction === "owed_by_business") return;
     if (!normalizeInvoiceNumber(invoice.invoice_number)) return;
+    // …and without an amount on the receipt, a number alone never marks anything. (Check 12
+    // P2: a receipt's figure may be read as the payment rather than the invoice total.)
+    const receiptAmount = invoice.amount ?? invoice.amount_paid_now ?? null;
+    if (!(receiptAmount && receiptAmount > 0)) return;
     const open = await openInvoices(input.workspaceId, threadId, now);
     const match = matchReceipt(invoice, open);
     if (match) {

@@ -1,7 +1,9 @@
 import "server-only";
+import { MAIL_LABELS } from "@/mailbox/connector";
 import {
   injectionCheck,
   looksLikePaymentChange,
+  looksLikeUtility,
   looksMunicipal,
   mentionsCarbonMonoxide,
   mentionsElectricalHazard,
@@ -16,6 +18,7 @@ import {
   type Classification,
 } from "@/ai/classify";
 import { AiCapReachedError } from "@/ai/usage";
+import { ACTIVE } from "@/ai/prompts/registry";
 import { moneyMentions } from "@/ai/money-words";
 import { OTHER_JOB_KIND } from "@/config/job-kinds";
 import { db } from "@/db";
@@ -29,6 +32,8 @@ import {
 } from "@/db/schema";
 import { mailboxOn } from "./mailbox-plan-rules";
 import { recentEmergency } from "./emergency-rules";
+import { nudgeAfterFor } from "./followup-rules";
+import { usableTimeZone } from "./snooze-rules";
 import { afterClassified } from "./auto-outcomes";
 import { unflagPendingNudge } from "./drafts";
 import { jobsAllowed } from "./lifecycle";
@@ -42,6 +47,7 @@ import {
   isOwed,
   PAID_GUESS_FLAG,
 } from "./money-rules";
+import { carryPermitFacts, permitOf } from "./permit-rules";
 import { jobKindOf, leadPlatformOf } from "./monthly-rules";
 import { keepQuoteAccepted, quoteAccepted } from "./quote-rules";
 import { ownerGavePrice } from "./quotes";
@@ -50,6 +56,9 @@ import { customerReplyAddress, replyRedirected } from "./reply-address-rules";
 import { junkShortcutBlocked, matchRules } from "./owner-sender-rule-rules";
 import { rulesForWorkspace } from "./sender-rule-store";
 import { channelName, channelOf } from "./channel-rules";
+import { crewContextFor } from "./crew";
+import { isCrewAddress, isNoReplyAddress, type CrewContext } from "./sender-rules";
+import { findUsPhones } from "@/lib/phone-numbers";
 
 /** Classify inbound mail from this far back on the first pass; everything new after that. */
 export const CLASSIFY_LOOKBACK_DAYS = 14;
@@ -63,7 +72,7 @@ export const DEFAULT_AMOUNT_THRESHOLD_DOLLARS = 2_500;
 export const BURST_WINDOW_MS = 30 * 60_000;
 export const BURST_MAX = 4;
 /** Gmail tabs that are never a customer. Skipping the model call here saves real money. */
-const NOISE_LABELS = ["CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL"];
+const NOISE_LABELS: string[] = [MAIL_LABELS.promotions, MAIL_LABELS.social];
 
 /** A lead site's subject that is a lead, not its marketing (Check 22 P1). */
 const LEAD_SUBJECT =
@@ -88,7 +97,14 @@ export function mustReadDespiteTab(m: {
   if (leadPlatformOf(from) && LEAD_SUBJECT.test(subject)) return true;
   if (from.endsWith("@facebookmail.com") && /\blead/i.test(subject)) return true;
   if (PERMIT_WORDS.test(`${subject}\n${m.snippet ?? ""}`)) return true;
-  const text = `${subject}\n${m.bodyText ?? m.snippet ?? ""}`;
+  return safetyCheckFires(`${subject}\n${m.bodyText ?? m.snippet ?? ""}`);
+}
+
+/**
+ * The checks in code that always get an email read by the sorter: a gas smell, a CO alarm,
+ * electrical fire signs, a new bank account, an attack. Pure.
+ */
+export function safetyCheckFires(text: string): boolean {
   return (
     mentionsGasSmell(text) ||
     mentionsCarbonMonoxide(text) ||
@@ -142,6 +158,11 @@ async function pendingFor(mailboxId: string, since: Date) {
       snippet: messages.snippet,
       labelIds: messages.labelIds,
       sentAt: messages.sentAt,
+      autoReply: messages.autoReply,
+      // Check 40 P2: counts only, for the sorter's "Attached: 3 photos" line.
+      attachmentImages: messages.attachmentImages,
+      attachmentPdfs: messages.attachmentPdfs,
+      attachmentOther: messages.attachmentOther,
     })
     .from(messages)
     .innerJoin(threads, eq(threads.id, messages.threadId))
@@ -155,6 +176,16 @@ async function pendingFor(mailboxId: string, since: Date) {
       ),
     )
     .orderBy(desc(messages.sentAt));
+}
+
+/** Check 40 P2: a message's attachment counts, or null when nothing came attached. */
+function attachmentsOf(m: {
+  attachmentImages: number;
+  attachmentPdfs: number;
+  attachmentOther: number;
+}): { images: number; pdfs: number; other: number } | null {
+  const counts = { images: m.attachmentImages, pdfs: m.attachmentPdfs, other: m.attachmentOther };
+  return counts.images + counts.pdfs + counts.other > 0 ? counts : null;
 }
 
 /**
@@ -179,7 +210,44 @@ export async function classifyPending(
     return { classified: 0, superseded: 0, remaining: 0, capped: false, codeOnly: 0 };
 
   const since = new Date(now.getTime() - CLASSIFY_LOOKBACK_DAYS * 86_400_000);
-  const pending = await pendingFor(mailboxId, since);
+  const all = await pendingFor(mailboxId, since);
+  // Check 20 P4 / 21 P1: an automatic reply or bounce is sorted as nothing, with no model call,
+  // and never takes the place of the customer's own newest email: it is set aside here, so
+  // that email is still the one sorted (and drafted for, and chased). A conversation with
+  // nothing else in it is noise.
+  const autoReplies = all.filter((m) => m.autoReply);
+  const pending = all.filter((m) => !m.autoReply);
+  if (autoReplies.length) {
+    await db()
+      .update(messages)
+      .set({ classifiedAt: now })
+      .where(
+        inArray(
+          messages.id,
+          autoReplies.map((m) => m.id),
+        ),
+      );
+    await db()
+      .update(threads)
+      .set({
+        category: sql`coalesce(${threads.categoryManual}, 'noise')`,
+        priority: "low",
+        summary: "Automatic reply.",
+        classifiedAt: now,
+      })
+      .where(
+        and(
+          inArray(threads.id, [
+            ...new Set(
+              autoReplies
+                .map((m) => m.threadId)
+                .filter((t) => !pending.some((p) => p.threadId === t)),
+            ),
+          ]),
+          isNull(threads.category),
+        ),
+      );
+  }
 
   const newestPerThread = new Map<string, (typeof pending)[number]>();
   // The older unsorted emails of each thread, newest first. Marked superseded only once their
@@ -207,6 +275,17 @@ export async function classifyPending(
   };
   // The owner's sender rules (ideas H3), read once per run. Never sent to the model.
   const senderRules = await rulesForWorkspace(box.workspace.id);
+  // Check 22 P10 + 41 P6: the owner's own people, read once per run. Never sent to the model.
+  const crew = await crewContextFor(box.workspace.id);
+  // Check 41 P5: how much of this mailbox's mail we have, once per run (the backfill reads
+  // only 30 days, so "first time" means "not in the mail we've read" for the first year).
+  const [oldest] = await db()
+    .select({ at: sql<string | Date | null>`min(${messages.sentAt})` })
+    .from(messages)
+    .where(eq(messages.mailboxId, mailboxId));
+  const historyDays = oldest?.at
+    ? Math.floor((now.getTime() - new Date(oldest.at).getTime()) / 86_400_000)
+    : 0;
 
   const batch = [...newestPerThread.values()].slice(0, limit);
   let classified = 0;
@@ -224,6 +303,7 @@ export async function classifyPending(
         quoteOutcome: threads.quoteOutcome,
         quoteOutcomeSource: threads.quoteOutcomeSource,
         quoteOutcomeAt: threads.quoteOutcomeAt,
+        quoteDismissedAt: threads.quoteDismissedAt,
         invoicePaidAt: threads.invoicePaidAt,
         invoicePaidSource: threads.invoicePaidSource,
         needsOwnerReason: threads.needsOwnerReason,
@@ -238,6 +318,7 @@ export async function classifyPending(
       payment_change?: unknown;
       asks_if_ai?: unknown;
       bill_direction?: unknown;
+      utility_scam?: unknown;
     };
     // The burst the model reads with it (B4), oldest first.
     const earlier = older
@@ -248,7 +329,11 @@ export async function classifyPending(
       )
       .slice(0, BURST_MAX)
       .reverse()
-      .map((o) => ({ receivedAt: o.sentAt, body: o.bodyText ?? o.snippet ?? "" }));
+      .map((o) => ({
+        receivedAt: o.sentAt,
+        body: o.bodyText ?? o.snippet ?? "",
+        attachments: attachmentsOf(o),
+      }));
     // Every older unsorted email is checked in code too, even outside the burst (B3): the
     // drafter reads them.
     const alsoCheck = older.map((o) => `${o.subject ?? ""}\n${o.bodyText ?? o.snippet ?? ""}`);
@@ -259,6 +344,8 @@ export async function classifyPending(
       paymentChange: prevMarks.payment_change === true,
       // Check 48 P1: "is this a bot?" stays the owner's to answer for the whole thread.
       asksIfAi: prevMarks.asks_if_ai === true,
+      // Check 37 P3: a fake disconnect demand keeps its own line for the whole thread.
+      utilityScam: prevMarks.utility_scam === true,
     };
     // Check 39 P1: past the day's AI limit, only what the checks in code catch is stored now (a
     // gas smell, a CO alarm, a new bank account, an attack), through the same write as any
@@ -296,12 +383,33 @@ export async function classifyPending(
       // (say, everyone at google.com) never quietly junks a caller.
       channel?.kind !== "phone" &&
       channel?.kind !== "phone_text" &&
-      !looksMunicipal(m.fromAddress, m.fromName) &&
+      !looksMunicipal(m.fromAddress, m.fromName, m.subject) &&
       prevMarks.injection !== true &&
       prevMarks.payment_change !== true &&
       !injectionCheck(ruleText).flagged &&
       !junkShortcutBlocked(ruleText);
-    if (capped) {
+    // Check 22 P10 + 41 P6: a conversation with only the owner's own people on it (the crew
+    // list, another of their Gmail addresses, their business domain) is kept for counts as
+    // scheduling, needs nobody and is never drafted by a job — with no model call, unless a
+    // check in code fires (a gas smell at the Smith job still goes to the owner, top priority).
+    const crewOnly =
+      isCrewAddress(m.fromAddress, crew) &&
+      isCrewAddress(customerReplyAddress(m), crew) &&
+      (await everyInboundIsCrew(m.threadId, crew));
+    const crewQuiet =
+      crewOnly &&
+      prevMarks.injection !== true &&
+      prevMarks.payment_change !== true &&
+      !thread?.categoryManual &&
+      ![ruleText, ...alsoCheck].some((t) => safetyCheckFires(t));
+    if (crewQuiet) {
+      result = {
+        ...NOISE,
+        category: "scheduling",
+        summary: m.subject ? `From your crew: ${m.subject}` : "From your crew.",
+        extracted: { ...NOISE.extracted, crew: true },
+      };
+    } else if (capped) {
       const code = codeOnlyResult();
       if (!code) continue;
       result = code;
@@ -319,8 +427,10 @@ export async function classifyPending(
       // websites keep the shortcut (their marketing would eat the daily AI limit).
       channel?.kind !== "phone" &&
       channel?.kind !== "phone_text" &&
-      // A building department landing in Promotions still gets read.
-      !looksMunicipal(m.fromAddress, m.fromName) &&
+      // A building department landing in Promotions still gets read, and so does the electric
+      // company (Check 37 P3).
+      !looksMunicipal(m.fromAddress, m.fromName, m.subject) &&
+      !looksLikeUtility(m.fromAddress, m.fromName) &&
       // A thread already marked keeps its mark (B3): it is never quietly turned into junk.
       prevMarks.injection !== true &&
       prevMarks.payment_change !== true &&
@@ -358,7 +468,16 @@ export async function classifyPending(
               ),
             )
         : [{ n: 1 }];
-      const firstTimeSender = (prior?.n ?? 0) === 0 || (priorReply?.n ?? 0) === 0;
+      let firstTimeSender: boolean | "unknown" =
+        (prior?.n ?? 0) === 0 || (priorReply?.n ?? 0) === 0;
+      // Check 22 P7: a lead site or a voicemail service sends every lead from one robot
+      // address, so "an earlier email from this address" says nothing about the person. With
+      // no usable Reply-To it is "unknown" (judged as first time); a voicemail whose subject
+      // names the caller's number is first time unless an earlier voicemail named that number.
+      if (!replyTo && (isNoReplyAddress(m.fromAddress) || leadPlatformOf(m.fromAddress))) {
+        firstTimeSender =
+          channel?.kind === "phone" ? await voicemailFirstTime(mailboxId, m) : "unknown";
+      }
       // Check 38 P3: amounts the owner already wrote on this conversation (their own words,
       // quoted text cut; never an unsent draft or a forward to the crew). A customer repeating
       // the contract total isn't new money. Never logged.
@@ -391,10 +510,15 @@ export async function classifyPending(
             fromAddress: m.fromAddress,
             subject: m.subject,
             receivedAt: m.sentAt,
+            // Check 22 P7: classify.v6 reads "unknown" (a lead site or voicemail robot) as its
+            // own words; the owner rules count it as first time.
             firstTimeSender,
             threadSummary: thread?.summary ?? null,
             body: m.bodyText ?? m.snippet ?? "",
             earlier,
+            // Check 40 P2: what came attached (counts only); an attachments-only email is
+            // still that person's email to the sorter.
+            attachments: attachmentsOf(m),
           },
           {
             senderIsVip,
@@ -405,6 +529,7 @@ export async function classifyPending(
             channel: channel ? { kind: channel.kind, name: channelName(channel.key) ?? "" } : null,
             serviceTowns: business.serviceTowns,
             ownerAmounts,
+            historyDays,
             // Check 22 P5: a supplier's thread (its bills are owed by the business).
             supplierThread: prevMarks.bill_direction === "owed_by_business",
           },
@@ -467,6 +592,9 @@ export async function classifyPending(
               category: thread?.category ?? null,
               quoteOutcome: thread?.quoteOutcome ?? null,
               quoteOutcomeSource: thread?.quoteOutcomeSource ?? null,
+              // Check 11 P8: a thread the owner said is "Not a quote" was no quote.
+              quoteDismissedAt: thread?.quoteDismissedAt ?? null,
+              quoteOutcomeAt: thread?.quoteOutcomeAt ?? null,
             },
             category: result.category,
             ownerWroteBefore: (ownerBefore?.n ?? 0) > 0,
@@ -487,6 +615,9 @@ export async function classifyPending(
         }
       }
     }
+    // A crew conversation that went to the sorter (a check in code fired) keeps its crew mark.
+    if (crewOnly && result.extracted.crew !== true)
+      result = { ...result, extracted: { ...result.extracted, crew: true } };
     // Every classification replaces `extracted`, so an earlier acceptance would vanish with the
     // customer's next "use the side gate" (and the re-sorted category can't re-derive it).
     // It keeps the FIRST acceptance's time: a later "sent the deposit, when can you start?"
@@ -518,13 +649,19 @@ export async function classifyPending(
     const wasInvoiceThread = thread ? isInvoiceThread(thread) : false;
     const prevInvoice = invoiceOf(thread?.extracted);
     const injection = result.extracted.injection === true;
+    // Check 12 P3: "the check is in the mail" remembers when, so nudges hold for 7 days from it.
+    const emailInvoice = invoiceOf(result.extracted);
+    const thisInvoice =
+      emailInvoice?.status === "said_sent"
+        ? { ...emailInvoice, said_sent_at: new Date(m.sentAt).toISOString() }
+        : emailInvoice;
     // An email that tries to instruct us never changes the invoice facts either (A8): its
     // "invoice 41 is paid" would otherwise drop the row off Money owed with no mark to undo.
     const storedInvoice = injection
       ? prevInvoice
       : carryInvoiceFacts(
           prevInvoice,
-          invoiceOf(result.extracted),
+          thisInvoice,
           isOwed({
             invoice: prevInvoice,
             paidAt: thread?.invoicePaidAt ?? null,
@@ -539,7 +676,6 @@ export async function classifyPending(
     // Our own paid guess also goes when the email says money is still owed with an amount
     // that isn't simply the invoice we guessed was paid (clearsAutoPaid): "Sent the $900
     // deposit" then "Got invoice #1043 for $3,000" is owed again.
-    const thisInvoice = invoiceOf(result.extracted);
     const reopen =
       !injection &&
       thread?.invoicePaidSource !== "not_owed" &&
@@ -599,6 +735,13 @@ export async function classifyPending(
       // doesn't say it again, and price memory needs it (plan #15).
       service_requested: said(result.extracted.service_requested) ?? prevService,
       invoice: storedInvoice,
+      // Check 12 P2: this email's extra invoices went into the invoice's `earlier_open` above.
+      other_invoices: [],
+      // Check 37 P2: the inspector's fix list stays until that permit passes ("re-inspection
+      // Thursday" doesn't repeat it). An attack email never changes it.
+      permit: injection
+        ? permitOf(thread?.extracted)
+        : carryPermitFacts(permitOf(thread?.extracted), permitOf(result.extracted)),
       ...(paymentSaid === "paid" || paymentSaid === "partly_paid"
         ? { payment_said: paymentSaid }
         : {}),
@@ -652,9 +795,21 @@ export async function classifyPending(
         // The owner's own "This one needs me" always wins.
         needsOwner: sql`${threads.needsOwnerManual} or ${result.needsOwner}`,
         needsOwnerReason: sql`case when ${threads.needsOwnerManual} then ${threads.needsOwnerReason} else ${result.needsOwnerReason} end`,
+        // Check 10 P1: when the flag went up — this email's time when it was down (any owner
+        // answer after the email lets go of it, even one sent before this sort ran); kept while
+        // it stays up; cleared with it.
+        needsOwnerSince: sql`case when not (${threads.needsOwnerManual} or ${result.needsOwner}) then null when ${threads.needsOwner} then coalesce(${threads.needsOwnerSince}, ${requestAt}::timestamptz) else ${requestAt}::timestamptz end`,
         summary: result.summary,
         extracted: stored,
+        // Check 30 P6: which prompt version's shape `extracted` has (rule-only sorts too:
+        // they write this version's shape).
+        classifiedPromptVersion: ACTIVE.classify,
         classifiedAt: now,
+        // Check 21 P2: "after the holidays" → no nudge before then. Each new customer email
+        // replaces it (none → cleared); an email that tries to instruct us sets nothing.
+        nudgeAfter: injection
+          ? null
+          : nudgeAfterFor(result.extracted.wait_until, usableTimeZone(profile?.timeZone)),
         // Leads package: kept once set — a later email on the thread doesn't clear it.
         ...(channel ? { leadChannel: channel.key } : {}),
         // Sticky (A1): a later "looks great" never makes a complaint look like a happy
@@ -705,6 +860,11 @@ export async function classifyPending(
       .update(messages)
       .set({ classifiedAt: now })
       .where(inArray(messages.id, [m.id, ...older.map((o) => o.id)]));
+    // Check 21 P1: a bare "thanks, we'll look it over" leaves the ball in the customer's court
+    // (follow-ups keep going; no reply is drafted for it). Stored on the email that was read.
+    if (result.extracted.acknowledgment_only === true && !injection) {
+      await db().update(messages).set({ ackOnly: true }).where(eq(messages.id, m.id));
+    }
     superseded += older.length;
     classified++;
 
@@ -745,6 +905,7 @@ export async function classifyPending(
             quoteOutcomeSource: thread?.quoteOutcomeSource ?? null,
             invoiceThread: wasInvoiceThread,
             openInvoice: invoiceWasOpen(prevInvoice),
+            quoteRequested: wasQuote,
           },
           result,
           storedInvoice,
@@ -765,6 +926,50 @@ export async function classifyPending(
   return { classified, superseded, remaining: capped ? 0 : remaining, capped, codeOnly };
 }
 
+/**
+ * Check 22 P7: a voicemail-by-email whose subject names the caller ("New voicemail from (508)
+ * 555-1234") is from someone new unless an earlier voicemail from the same service named the
+ * same number. No number in the subject: "unknown". Subjects are read here only; never logged.
+ */
+async function voicemailFirstTime(
+  mailboxId: string,
+  m: { fromAddress: string | null; subject: string | null; sentAt: Date },
+): Promise<boolean | "unknown"> {
+  const [number] = findUsPhones(m.subject ?? "");
+  if (!number) return "unknown";
+  const earlier = await db()
+    .select({ subject: messages.subject })
+    .from(messages)
+    .where(
+      and(
+        eq(messages.mailboxId, mailboxId),
+        eq(messages.direction, "in"),
+        eq(messages.fromAddress, m.fromAddress ?? ""),
+        lt(messages.sentAt, m.sentAt),
+      ),
+    )
+    .orderBy(desc(messages.sentAt))
+    .limit(1000);
+  return !earlier.some((e) => findUsPhones(e.subject ?? "").includes(number));
+}
+
+/**
+ * Check 22 P10 + 41 P6: every inbound email on the thread, by sender and reply address, is one
+ * of the owner's own people (a customer thread the crew replied on never is). Never logged.
+ */
+async function everyInboundIsCrew(threadId: string, crew: CrewContext): Promise<boolean> {
+  const rows = await db()
+    .select({ fromAddress: messages.fromAddress, replyToHeader: messages.replyToHeader })
+    .from(messages)
+    .where(and(eq(messages.threadId, threadId), eq(messages.direction, "in")));
+  return (
+    rows.length > 0 &&
+    rows.every(
+      (r) => isCrewAddress(r.fromAddress, crew) && isCrewAddress(customerReplyAddress(r), crew),
+    )
+  );
+}
+
 /** Inbox action: the owner says a thread needs them. Scoped to their workspace. */
 export async function markNeedsOwner(workspaceId: string, threadId: string): Promise<boolean> {
   const owned = await db()
@@ -775,7 +980,13 @@ export async function markNeedsOwner(workspaceId: string, threadId: string): Pro
   if (owned.length === 0) return false;
   await db()
     .update(threads)
-    .set({ needsOwner: true, needsOwnerManual: true, needsOwnerReason: "You marked this one." })
+    .set({
+      needsOwner: true,
+      needsOwnerManual: true,
+      needsOwnerReason: "You marked this one.",
+      // Check 10 P1: a mark set now outlasts every earlier owner reply.
+      needsOwnerSince: sql`${new Date().toISOString()}::timestamptz`,
+    })
     .where(eq(threads.id, threadId));
   await db().insert(activityLog).values({
     workspaceId,

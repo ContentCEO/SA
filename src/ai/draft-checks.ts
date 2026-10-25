@@ -3,6 +3,7 @@
  * invent prices, dates or promises; these catch it when it does anyway. They
  * never rewrite the draft — they flag it for the owner and lower confidence.
  */
+import { languageMismatchFlag, type ReplyLanguage } from "./language";
 import type { Licenses } from "@/config/licenses";
 import { MA_DEPOSIT_DRAFT_FLAG } from "@/config/ma-rules";
 import { overMaDepositCap } from "@/server/deposit-rules";
@@ -136,14 +137,31 @@ const SOFT_PROMISES: [string, RegExp][] = [
  * bots here", "I answer every email myself"). Anthropic's usage policy forbids a bot claiming
  * to be human; the owner may say it if it's true, so it's a flag, never rewritten.
  */
+/** Check 43 P1: the words a "real person" claim has to sit next to ("a real person will call you" is true and passes). */
+const BOT_WORDS =
+  "(bot|bots|robot|robots|ai|a\\.i\\.|assistant|automated|automation|chatbot|computer|machine)";
 const HUMAN_CLAIMS: RegExp[] = [
   /\b(this is|it's|it is|i'm|i am) [a-z][a-z'-]* (himself|herself|themself|themselves|myself)\b/i,
   /\bno bots?\b/i,
   /\bnot (a |an )?(bot|robot|ai|machine|computer)\b/i,
-  /\b(a |an )?real (person|human)\b/i,
+  // Check 43 P1: "real person" only as a claim about who is writing, or near bot / AI words.
+  /\b(this is|it's|it is|i'm|i am|you're talking to|you are talking to|talking to|you've got|you have|from) (a |an )?real (person|human)\b/i,
+  new RegExp(
+    `\\breal (person|human)\\b.{0,60}\\b${BOT_WORDS}\\b|\\b${BOT_WORDS}\\b.{0,60}\\breal (person|human)\\b`,
+    "i",
+  ),
+  /\b(just me|only me|it's me|it is me|me here)\b.{0,30}\breal (person|human)\b/i,
   /\bi (answer|write|read|reply to|handle) (every|each|all (of )?(my|the|your)?) ?(emails?|messages?|repl(y|ies))( \w+)? myself\b/i,
+  /\bi (write|type|wrote|typed|answer|answered) (all|every one|each one|these|this|every single one)( of (these|them|my emails|my replies))? myself\b/i,
   /\bnobody else (writes|answers|reads|replies)\b/i,
   /\bnot automated\b/i,
+  /\bno (robots|ai|a\.i\.|assistant)\b/i,
+  /\bnot an? (a\.i\.|automated (system|reply|response))\b/i,
+  // Check 43 P1: Spanish and Portuguese.
+  /\bno (soy|es) un (robot|bot)\b/i,
+  /(?<![\p{L}])(una )?persona real(?![\p{L}])/iu,
+  /(?<![\p{L}])n[aã]o sou um rob[oô](?![\p{L}])/iu,
+  /(?<![\p{L}])(uma )?pessoa real(?![\p{L}])/iu,
 ];
 export const HUMAN_CLAIM_FLAG =
   "Says a person wrote this without help. Check it's true before sending.";
@@ -239,6 +257,10 @@ export type CheckContext = {
    * in it is an amount the owner gave (review A5), even without a "$".
    */
   ownerInstruction?: string | null;
+  /** Check 43 P8: the language the reply should be in (decided in code). Left out: no check. */
+  replyLanguage?: ReplyLanguage;
+  /** Check 12 P7: an invoice reminder — an easy out ("no worries if not") is flagged. */
+  invoiceReminder?: boolean;
 };
 
 /** What kind of problem each flag is, so the caller can decide to regenerate. */
@@ -270,6 +292,8 @@ export type CheckHit =
    * flags without a rewrite (it is not in REGENERATE_ON).
    */
   | "payment_terms"
+  /** Check 12 P7: an invoice reminder offers an easy out. Flag only. */
+  | "easy_out"
   /** Check 38 P2: asks a Massachusetts customer for more than a one-third deposit. Flag only. */
   | "deposit_cap"
   /** Check 23 P6: a phone number, link, email address or name nobody gave. */
@@ -282,7 +306,9 @@ export type CheckHit =
    */
   | "price_list"
   /** Check 48 P1: says a person wrote it with no help. Flag only, never regenerated. */
-  | "human_claim";
+  | "human_claim"
+  /** Check 43 P8: the reply isn't in the language chosen for it. Flag only. */
+  | "language";
 export type CheckResult = { flags: string[]; confidenceCap: number; hits: CheckHit[] };
 
 /**
@@ -706,6 +732,16 @@ export function phraseRegex(phrase: string): RegExp {
   return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "iu");
 }
 
+/**
+ * Check 41 P2: the draft names a day, date or time (DAYS, TIMES, DATES or a loose "when" like
+ * "tomorrow morning"), whoever wrote that day first. A scheduling reply that does is a visit
+ * confirmation — on a rain day exactly the one the owner may want to change — so it never goes
+ * in "Send together". Gaps are left out first. Pure.
+ */
+export function namesAVisitTime(body: string): boolean {
+  return whenTokens(withoutGaps(body)).length > 0;
+}
+
 export function checkDraft(draftBody: string, ctx: CheckContext): CheckResult {
   // Placeholders ({{price}}…) are gaps for the owner, not facts — check the words around them.
   const body = withoutGaps(draftBody);
@@ -1084,5 +1120,24 @@ export function checkDraft(draftBody: string, ctx: CheckContext): CheckResult {
     hits.push("filler");
   }
 
+  // Check 43 P8: a reply in another language than the one chosen (the owner may not read it).
+  const wrongLanguage = ctx.replyLanguage ? languageMismatchFlag(body, ctx.replyLanguage) : null;
+  if (wrongLanguage) {
+    flags.push(wrongLanguage);
+    cap = Math.min(cap, 0.5);
+    hits.push("language");
+  }
+
+  // Check 12 P7: an invoice reminder never tells someone who owes money that skipping it is fine.
+  if (ctx.invoiceReminder && EASY_OUT.test(body)) {
+    flags.push(EASY_OUT_FLAG);
+    cap = Math.min(cap, 0.5);
+    hits.push("easy_out");
+  }
+
   return { flags, confidenceCap: cap, hits };
 }
+
+const EASY_OUT =
+  /\b(no worries|no rush|no pressure|not a good time|isn't a good time|if it's not a good time|gone another way|went another way|go another way|whenever you get (a chance|to it)|totally fine if|that's fine too|if you'd rather not|if you've decided against|feel free to ignore)\b/i;
+export const EASY_OUT_FLAG = "Offers an easy out on an unpaid invoice. Take that out.";

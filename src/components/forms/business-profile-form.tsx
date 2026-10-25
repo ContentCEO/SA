@@ -1,21 +1,31 @@
 "use client";
 
-import { useActionState, useState, type FormEvent } from "react";
+import Link from "next/link";
+import { useActionState, useEffect, useState, type FormEvent } from "react";
 import { TimeZoneInput } from "./time-zone-input";
 import { LICENSE_LABELS, type Licenses } from "@/config/licenses";
-import { amountSuggestionsFor, MAX_EXTRA_TRADES, TRADE_OPTIONS } from "@/config/trades";
+import {
+  amountSuggestionsFor,
+  MAX_EXTRA_TRADES,
+  servicesExampleFor,
+  TRADE_OPTIONS,
+} from "@/config/trades";
 import { US_STATES } from "@/config/us-states";
 import { depositTermsWarning } from "@/server/deposit-rules";
 import { saveBusinessProfileAction, type FormState } from "@/app/(app)/settings/profile-actions";
+import { CancelLink } from "@/components/app/back-link";
 import { Button } from "@/components/ui/button";
 import { useFocusFirstError } from "./use-focus-first-error";
 import { useKeptForm } from "./use-kept-form";
 import { fingerprintOf } from "@/lib/kept-text";
 import { SelectField, TextArea, TextField } from "./field";
+import { OtherTradeField } from "./other-trade-field";
 
 export type ProfileDefaults = {
   businessName: string | null;
   trade: string | null;
+  /** Check 41 P4: what "Something else" means, in the owner's words. */
+  tradeOther?: string | null;
   /** Up to two more trades (round 2, TW A4). */
   extraTrades: string[];
   services: string | null;
@@ -28,9 +38,15 @@ export type ProfileDefaults = {
   paymentTerms: string | null;
   policies: string | null;
   signature: string | null;
+  /** Check 43 P3: the name in the From line, as saved (null = not set). */
+  fromName: string | null;
+  /** What the From line says while `fromName` is empty (the Google name, else the business). */
+  fromNameFallback: string | null;
   reviewUrl: string | null;
   doNotPromise: string[];
   vipSenders: string[];
+  /** Check 22 P10 + 41 P6: the owner's crew, one email per line. */
+  crewAddresses: string[];
   amountThresholdDollars: number;
   /** Check 38 P6: registration and license numbers. */
   licenses: Licenses;
@@ -53,9 +69,11 @@ const OPTIONAL_FIELDS = [
   "paymentTerms",
   "policies",
   "signature",
+  "fromName",
   "reviewUrl",
   "doNotPromise",
   "vipSenders",
+  "crewAddresses",
   "amountThresholdDollars",
   "state",
   "hicNumber",
@@ -70,6 +88,7 @@ export function BusinessProfileForm({
   returnTo,
   submitLabel,
   setup = false,
+  cancelHref,
 }: {
   defaults: ProfileDefaults;
   returnTo: "/settings/business?done=profile" | "/welcome/learning";
@@ -80,6 +99,8 @@ export function BusinessProfileForm({
    * zone is saved with it, so 7am and quiet hours are the owner's own from day one.
    */
   setup?: boolean;
+  /** Check 15 P3: "Cancel" under the button, back to this screen (Settings only, not setup). */
+  cancelHref?: string;
 }) {
   const [state, action, pending] = useActionState<FormState, FormData>(
     saveBusinessProfileAction,
@@ -89,6 +110,24 @@ export function BusinessProfileForm({
   const formRef = useFocusFirstError(state.errors);
   // Check 8 P1: what's typed survives no signal, a failed save or a reload (this tab only).
   useKeptForm(formRef, "business-profile", fingerprintOf(JSON.stringify(defaults)));
+  // Check 15 P4: "Change" on Your business lands on /settings/profile#<field>: scroll the box
+  // into view and put the cursor in it.
+  useEffect(() => {
+    const goTo = () => {
+      const name = decodeURIComponent(window.location.hash.slice(1));
+      if (!/^[A-Za-z]{1,40}$/.test(name)) return;
+      const el = formRef.current?.querySelector<HTMLElement>(
+        `[name="${name}"]:not([type="hidden"])`,
+      );
+      if (!el) return;
+      el.closest("details")?.setAttribute("open", "");
+      el.scrollIntoView({ block: "center" });
+      el.focus({ preventScroll: true });
+    };
+    goTo();
+    window.addEventListener("hashchange", goTo);
+    return () => window.removeEventListener("hashchange", goTo);
+  }, [formRef]);
   const v = (k: keyof ProfileDefaults, fallback: string | number | null) =>
     state.values?.[k] ?? fallback;
   const lv = (k: string, fallback: string | undefined) => state.values?.[k] ?? fallback ?? "";
@@ -103,12 +142,18 @@ export function BusinessProfileForm({
         : defaults.extraTrades,
     ),
   );
-  const [amount, setAmount] = useState(
-    String(v("amountThresholdDollars", defaults.amountThresholdDollars) ?? ""),
-  );
+  // Check 15 P1: the saved amount reads "2,500"; what was typed comes back as typed.
+  const [amount, setAmount] = useState(() => {
+    const typed = state.values?.amountThresholdDollars;
+    return typed ?? defaults.amountThresholdDollars.toLocaleString("en-US");
+  });
+  // Check 15 P11: the main trade isn't offered again as an extra one, and the services
+  // example matches it (the server still drops the main trade: cleanExtraTrades).
+  const [mainTrade, setMainTrade] = useState(String(v("trade", defaults.trade) ?? ""));
   const readTrades = (ev: FormEvent<HTMLFormElement>) => {
     const t = ev.target as HTMLInputElement | HTMLSelectElement;
     if (t.name !== "trade" && t.name !== "extraTrades") return;
+    if (t.name === "trade") setMainTrade(t.value);
     const data = new FormData(ev.currentTarget);
     setSuggestions(
       amountSuggestionsFor(String(data.get("trade") ?? ""), data.getAll("extraTrades").map(String)),
@@ -140,8 +185,8 @@ export function BusinessProfileForm({
               key={n}
               type="button"
               variant="outline"
-              aria-pressed={amount === String(n)}
-              onClick={() => setAmount(String(n))}
+              aria-pressed={amount.replace(/[$,\s]/g, "") === String(n)}
+              onClick={() => setAmount(n.toLocaleString("en-US"))}
             >
               ${n.toLocaleString("en-US")}
             </Button>
@@ -169,23 +214,25 @@ export function BusinessProfileForm({
         </span>
         <input type="hidden" name="extraTradesShown" value="1" />
         <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2">
-          {extraChoices.map((t) => {
-            const before = state.values
-              ? (state.values.extraTrades ?? "").split(",").includes(t.value)
-              : defaults.extraTrades.includes(t.value);
-            return (
-              <label key={t.value} className="flex min-h-tap items-center gap-3">
-                <input
-                  type="checkbox"
-                  name="extraTrades"
-                  value={t.value}
-                  defaultChecked={before}
-                  className="size-5 shrink-0 accent-current"
-                />
-                <span>{t.label}</span>
-              </label>
-            );
-          })}
+          {extraChoices
+            .filter((t) => t.value !== mainTrade)
+            .map((t) => {
+              const before = state.values
+                ? (state.values.extraTrades ?? "").split(",").includes(t.value)
+                : defaults.extraTrades.includes(t.value);
+              return (
+                <label key={t.value} className="flex min-h-tap items-center gap-3">
+                  <input
+                    type="checkbox"
+                    name="extraTrades"
+                    value={t.value}
+                    defaultChecked={before}
+                    className="size-5 shrink-0 accent-current"
+                  />
+                  <span>{t.label}</span>
+                </label>
+              );
+            })}
         </div>
         {e.extraTrades?.length ? (
           <span id="extraTrades-error" className="font-semibold">
@@ -264,14 +311,37 @@ export function BusinessProfileForm({
         defaultValue={v("policies", defaults.policies) as string}
         error={e.policies}
       />
-      <TextArea
-        name="signature"
-        label="How do you sign your emails?"
-        hint="Exactly as you'd type it."
-        defaultValue={v("signature", defaults.signature) as string}
-        error={e.signature}
-        rows={3}
+      <TextField
+        name="fromName"
+        label="Name customers see on your emails"
+        hint={`Usually your name, or your name and the shop: Mike Rossi, Rossi Plumbing.${
+          defaults.fromNameFallback ? ` Left empty, they see “${defaults.fromNameFallback}”.` : ""
+        }`}
+        autoComplete="name"
+        defaultValue={v("fromName", defaults.fromName) as string}
+        error={e.fromName}
       />
+      <div id="signature" className="flex scroll-mt-4 flex-col gap-1.5">
+        <TextArea
+          name="signature"
+          label="What goes under your name?"
+          hint="Business name, phone, license number. Your sign-off (like “Thanks, Mike”) is set in Your voice."
+          defaultValue={v("signature", defaults.signature) as string}
+          error={e.signature}
+          rows={3}
+        />
+        {/* Check 43 P4: Gmail's own signature is only added in Gmail's web app. */}
+        <p className="text-sm">
+          Your Gmail signature isn&apos;t added to replies sent from Squared Away. Type the lines
+          you want customers to see, like your phone number.
+        </p>
+        <Link
+          href="/settings/voice"
+          className="inline-flex min-h-tap items-center self-start text-sm font-semibold underline underline-offset-4"
+        >
+          Set your sign-off in Your voice
+        </Link>
+      </div>
       <TextField
         name="reviewUrl"
         type="url"
@@ -283,7 +353,7 @@ export function BusinessProfileForm({
       <TextArea
         name="doNotPromise"
         label="Things we should never promise"
-        hint="One per line. Drafts will never say these. “Same-day service”, “A price over email”, “Weekend work”."
+        hint="One per line. If a draft seems to promise one, it's rewritten once, then flagged for you. “Same-day service”, “A price over email”, “Weekend work”."
         defaultValue={v("doNotPromise", joined(defaults.doNotPromise)) as string}
         error={e.doNotPromise}
         rows={4}
@@ -294,6 +364,14 @@ export function BusinessProfileForm({
         hint="One email address per line — your biggest GC, your bookkeeper. Their emails always come straight to you."
         defaultValue={v("vipSenders", joined(defaults.vipSenders)) as string}
         error={e.vipSenders}
+        rows={3}
+      />
+      <TextArea
+        name="crewAddresses"
+        label="Your crew's email addresses (one per line, optional)"
+        hint="Their emails stay in your inbox but aren't customers and don't get drafts."
+        defaultValue={v("crewAddresses", joined(defaults.crewAddresses)) as string}
+        error={e.crewAddresses}
         rows={3}
       />
       <fieldset className="flex flex-col gap-6">
@@ -368,10 +446,16 @@ export function BusinessProfileForm({
         defaultValue={v("trade", defaults.trade) as string}
         error={e.trade}
       />
+      {/* Check 41 P4: the owner's own words for "Something else". */}
+      <OtherTradeField
+        initialTrade={v("trade", defaults.trade) as string}
+        defaultValue={v("tradeOther", defaults.tradeOther ?? null) as string | null}
+        error={e.tradeOther}
+      />
       <TextArea
         name="services"
         label="What work do you take on? (required)"
-        hint="The jobs you want more of, and the ones you don't do. “Service calls, panel upgrades, EV chargers. No new construction.”"
+        hint={`The jobs you want more of, and the ones you don't do. “${servicesExampleFor(mainTrade)}”`}
         defaultValue={v("services", defaults.services) as string}
         error={e.services}
       />
@@ -394,6 +478,7 @@ export function BusinessProfileForm({
       <Button type="submit" size="lg" disabled={pending} className="w-full">
         {pending ? "Saving…" : submitLabel}
       </Button>
+      {cancelHref ? <CancelLink href={cancelHref} /> : null}
     </form>
   );
 }

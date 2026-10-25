@@ -1,6 +1,8 @@
 /**
  * Checks in code that don't trust the model (feature plan #17, #42; review round 2). Pure.
  */
+import { MUNICIPAL_EMAIL_DOMAINS } from "@/config/municipal-domains";
+import { PUBLIC_WEBMAIL_DOMAINS } from "@/server/sender-rules";
 
 /**
  * Check 48 P1 + Check 43 P2: phrases that only ADDRESS the assistant ("Dear AI assistant:",
@@ -113,7 +115,9 @@ export function injectionCheck(text: string | null | undefined): InjectionCheck 
   return { flagged: reasons.length > 0, reasons };
 }
 
-export const INJECTION_REASON = "This email tries to give instructions to the assistant.";
+/** Check 10 P10: says it's a warning and what to do. */
+export const INJECTION_REASON =
+  "Careful: this email has hidden instructions aimed at our AI. We won't write a reply. Check who sent it before you click anything.";
 
 /**
  * Check 48 P1 + Check 43 P2: the customer asks whether a person or an AI is answering ("Am I
@@ -385,6 +389,8 @@ const ELECTRICAL_HAZARD_PATTERNS: RegExp[] = [
   /\b(meter|mast|service|service drop) (box )?(was |got |has been )?(pulled|ripped|torn|came|fell) (off|down|away)\b/,
   // Lights surging.
   /\blights? (keep |are |is )?(going|go|goes|get|getting|flicker(ing)?)( really)? (bright and dim|dim and bright|bright then dim)\b/,
+  // Check 37 P8: half the house bright, the other half dim (a lost neutral).
+  /\blights?\b.{0,30}\b(go|goes|going|get|gets|getting|turn|turns)( really| very| super)? bright\b.{0,50}\b(others?|other half|rest)\b.{0,20}\bdim\b/,
   // Spanish and Portuguese.
   /\bolor a quemado\b|\bchispas\b|\bhumo (del|de la) (enchufe|toma|panel|caja)\b|\bcheiro de queimado\b|\bfa[ií]scas?\b|\btomada quente\b/,
 ];
@@ -404,7 +410,7 @@ export const ELECTRICAL_HAZARD_REASON =
  * suing, a lien filed or threatened against the property, small claims, regulators.
  */
 const REAL_LEGAL =
-  /\b(attorney|attorneys|lawyer|lawyers|legal action|lawsuit|law suit|sue|suing|sued|small claims|litigation|demand letter|cease and desist|better business bureau|bbb|attorney general|consumer protection|93a|licensing board|report you|chargebacks?|charge back)\b|\b(place|put|file|filed|filing|placing|record|recorded|slap)\b.{0,20}\blien\b|\blien (on|against) (the|my|our|your) (house|home|property)\b|\b(take|taking|see|seeing) (you|them|him|her|us) (to|in) court\b|\bcourt (date|case|filing|order)\b|\b(dispute|disputing|disputed) (the|this|that|your|a|his|her) (charge|charges|bill|invoice|payment|transaction)\b|\bdisputing (the|your|this|that)\b|\bfiled (a |the )?dispute\b/;
+  /\b(attorney|attorneys|lawyer|lawyers|legal action|lawsuit|law suit|sue|suing|sued|small claims|litigation|demand letter|cease and desist|better business bureau|bbb|attorney general|consumer protection|93a|licensing board|report you|chargebacks?|charge back)\b|\b(place|put|file|filed|filing|placing|record|recorded|slap)\b.{0,20}\blien\b|\blien (on|against) (the|my|our|your) (house|home|property)\b|\b(take|taking|see|seeing) (you|them|him|her|us) (to|in) court\b|\bcourt (date|case|filing|order)\b|\b(dispute|disputing|disputed) (the|this|that|your|a|his|her) (charge|charges|bill|invoice|payment|transaction)\b|\bdisputing (the|your|this|that) (?!(depreciation|claim|supplement|adjuster'?s?|estimate|scope|denial|carrier|insurance|deductible)\b)|\bfiled (a |the )?dispute\b/;
 
 /**
  * Check 45 P4: other states' consumer-protection laws and licensing boards (whole words; "roc"
@@ -447,6 +453,46 @@ export function mentionsRealLegal(text: string | null | undefined): boolean {
 const LEGAL_THREAT =
   /\b(attorneys?|lawyers?|law (office|offices|firm)|lawsuits?|law suits?|small claims|demand letter|cease and desist|93a|attorney general|consumer protection|suing|sued|(will|going to|gonna|plan to|intend to|i'll|we'll|we will|i will) sue|sue (you|your|the company|him|her|them))\b|\b(file|filed|filing|place|placed|placing|put) (a |an )?(mechanic'?s )?lien\b|\blien (on|against) (the|my|our|your) (house|home|property)\b/;
 
+/**
+ * Check 38 P5: a homeowner asking about cancelling a signed contract or their rights under it:
+ * cancelling or backing out of the contract / agreement, a right to cancel, the three-day
+ * window, rescinding, the deposit back or refunded, the Guaranty Fund, arbitration, a complaint
+ * or report to the state, the HIC program or a licensing board, "is that legal / allowed" about
+ * the contract or deposit. Whole words, lower-cased, like REAL_LEGAL. Everyday cancelling
+ * ("cancel Tuesday's visit", "cancel the tile order", "back out of the driveway") is not this.
+ * Facts (malegislature.gov): c.93 §48 (three business days on a home-solicited sale), c.142A
+ * §2(a)(6) (deposit cap), c.142A §5 (the Guaranty Fund).
+ */
+const CONTRACT_WORDS = "(contract|agreement|proposal we signed|paperwork we signed|what we signed)";
+const CONTRACT_RIGHTS = new RegExp(
+  [
+    `\\b(cancel|cancelling|canceling|back out of|get out of|void|rescind|rescinding|terminate|terminating|undo) (the|this|our|that|my) (signed )?${CONTRACT_WORDS}\\b`,
+    `\\b${CONTRACT_WORDS} (be )?(cancel+ed|voided|rescinded|terminated)\\b`,
+    `\\bright to cancel\\b`,
+    `\\b(three|3)[- ](business[- ])?day(s)? (to cancel|window|right|cancellation|cooling)\\b`,
+    `\\bcooling[- ]off period\\b`,
+    `\\bcancell?ation (period|window|rights?|notice|form)\\b`,
+    `\\b(deposit|down payment|retainer) (back|returned|refunded)\\b`,
+    `\\b(refund|return|give back|get back|keep|keeping|keeps|lose|losing) (of )?(the|our|my|that|a) (full |whole |entire )?(deposit|down payment|retainer)\\b`,
+    `\\bguarant(y|ee) fund\\b`,
+    `\\barbitration\\b`,
+    `\\b(complaint|report|file|filing|complain) (to|with) (the )?(state|attorney general|hic|home improvement|licensing|board of|office of consumer|consumer affairs)\\b`,
+    `\\b(hic|home improvement) (program|complaint|office)\\b`,
+    `\\b(is|was) (that|this|it) (even )?(legal|allowed|lawful)\\b.{0,80}\\b(contract|deposit|agreement|sign|signed)\\b`,
+    `\\b(contract|deposit|agreement|signed)\\b.{0,80}\\b(is|was) (that|this|it) (even )?(legal|allowed|lawful)\\b`,
+    `\\b(limits?|caps?|cap on|limit on|maximum) (the |a |on the |for the )?deposits?\\b`,
+    `\\bdeposits? (are |is )?(limited|capped)\\b`,
+  ].join("|"),
+);
+
+export function mentionsContractRights(text: string | null | undefined): boolean {
+  const t = (text ?? "").toLowerCase().replace(/\s+/g, " ");
+  return CONTRACT_RIGHTS.test(t);
+}
+
+export const CONTRACT_RIGHTS_REASON =
+  "Asks about cancelling or their rights under the contract. Answer this one yourself.";
+
 export function mentionsLegalThreat(text: string | null | undefined): boolean {
   // Check 22 P11 / 45 P4: a closing lawyer isn't a threat; other states' words are.
   return legalSentences((text ?? "").replace(/\bpower of attorney\b/gi, " ")).some(
@@ -457,12 +503,83 @@ export function mentionsLegalThreat(text: string | null | undefined): boolean {
 /**
  * Town, city or county building departments, permit offices and inspectors, and every other
  * town office a contractor hears from (review TW A5): wire, plumbing and gas inspectors, fire
- * prevention, boards of health, conservation and historic commissions, and the permit portals
- * that send on a town's behalf. The model's signal is the main source; this catches the
- * obvious senders.
+ * prevention, boards of health, conservation and historic commissions, water and sewer offices
+ * (Check 36 P5), public works (Check 40 P7), Sun Belt and West Coast building office names
+ * (Check 45 P3), and the permit portals that send on a town's behalf. The model's signal is the
+ * main source; this catches the obvious senders.
+ *
+ * Every phrase is a whole-phrase match on the sender's display name (lower-cased).
  */
-const MUNICIPAL_NAME =
-  /\b(building (dept|department|division|inspector|inspectors|inspections?|official|commissioner)|permit(ting)? (office|center|dept|department|desk|portal)|code enforcement|inspectional services|(inspector|inspection) of (wires|wiring|buildings)|wir(e|ing) inspector|electrical inspector|plumbing (and|&) gas inspector|plumbing inspector|gas inspector|fire prevention|fire marshal|board of health|health (dept|department)|conservation (commission|agent|office)|historic(al)? (district )?commission|zoning (board|office|enforcement|administrator)|planning (board|department|office))\b|^(town|city|county|village|borough|township) of [a-z .'-]+$|\b(town|city|county|village|borough|township) of [a-z.'-]+( [a-z.'-]+)? (via|permits?|building|inspections?)\b/;
+const MUNICIPAL_PHRASES = [
+  "building (dept|department|division|inspector|inspectors|official|commissioner)",
+  "permit(ting)? (office|center|dept|department|desk|portal)",
+  "code enforcement",
+  "inspectional services",
+  "(inspector|inspection) of (wires|wiring|buildings)",
+  "wir(e|ing) inspector",
+  "electrical inspector",
+  "plumbing (and|&) gas inspector",
+  "plumbing inspector",
+  "gas inspector",
+  "fire prevention",
+  "fire marshal",
+  "board of health",
+  "health (dept|department)",
+  "conservation (commission|agent|office)",
+  "historic(al)? (district )?commission",
+  "zoning (board|office|enforcement|administrator)",
+  "planning (board|department|office)",
+  // Check 36 P5: the water side of town hall (backflow test notices, shutoffs, sewer permits).
+  "water (department|dept|division|district|commission|board|works)",
+  "(department|dept) of public works",
+  "dpw",
+  "public works (department|dept|division)",
+  "sewer (department|dept|division|commission)",
+  "water (and|&) sewer",
+  "cross[- ]connection( control)?( program)?",
+  "backflow (program|prevention program|office)",
+  // Check 45 P3: building office names used in the South and West.
+  "building (and|&) safety",
+  "building safety (division|department)",
+  "building services (division|department)",
+  "development services( department| center)?",
+  "permits? (and|&) inspections",
+  "planning (and|&) development( department| services)?",
+  "community development (department|dept)",
+  "code compliance",
+  "building (and|&) zoning",
+  "permitting services",
+];
+const TOWN_WORDS = "town|city|county|village|borough|township";
+/** "Town of Acton", "City of Lowell via OpenGov", "Dumpster Permit - City of Lowell" (Check 40 P7). */
+const MUNICIPAL_SHAPES = [
+  `^(${TOWN_WORDS}) of [a-z .'-]+$`,
+  `\\b(${TOWN_WORDS}) of [a-z.'-]+( [a-z.'-]+)? (via|permits?|building|inspections?)\\b`,
+  `\\s[-–—|:]\\s*(${TOWN_WORDS}) of [a-z.'-]+( [a-z.'-]+)?$`,
+];
+const MUNICIPAL_NAME = new RegExp(
+  [`\\b(${MUNICIPAL_PHRASES.join("|")})\\b`, ...MUNICIPAL_SHAPES].join("|"),
+);
+const MUNICIPAL_NAME_ALL = new RegExp(MUNICIPAL_NAME.source, "g");
+
+/**
+ * Words a private company also uses ("Pioneer Valley Building Inspections", "Public Works
+ * Supply", "Dumpster Permit Express"): they count only next to "town", "city" or "county", or
+ * with "DPW" / "Department of Public Works" (Check 22 P8, Check 40 P7).
+ */
+const TOWN_TIED = new RegExp(
+  `\\b(building inspections?|public works|street (opening|obstruction|occupancy) permits?|dumpster permits?|right[- ]of[- ]way permits?)\\b`,
+);
+const TOWN_TIED_ALL = new RegExp(TOWN_TIED.source, "g");
+const TOWN_WORD = new RegExp(`\\b(${TOWN_WORDS})\\b|\\bdpw\\b|\\bdepartment of public works\\b`);
+
+/**
+ * Check 22 P8: a company merely named like a town office ("Northeast Fire Prevention Co.",
+ * "Example Development Services LLC"). Looked for in the name with the town-office words taken
+ * out, so "Inspectional Services" and "Development Services" still count.
+ */
+const COMPANY_WORDS =
+  /\b(inc|llc|l\.l\.c|corp|corporation|company|group|services|ltd|pllc)\b|\bco\.|\bco$|&\s*sons\s*$/;
 
 /** Portals that email permit and inspection notices for a town (OpenGov, ViewPoint…). */
 const PERMIT_PORTAL_DOMAINS = [
@@ -473,25 +590,146 @@ const PERMIT_PORTAL_DOMAINS = [
   "accela.com",
   "govpilot.com",
   "cloudpermit.com",
+  // Check 45 P3: MGO Connect (MyGovernmentOnline), the portal Irving, Georgetown and Amarillo TX
+  // use. Named in the review; not yet seen in a pilot shop's mail.
+  "mgoconnect.org",
+  // Check 37 P6: PermitEyes (Full Circle Technologies), used by Ludlow, Pittsfield, Deerfield
+  // and other Massachusetts towns. From the review's probe; not yet confirmed from a real
+  // notification header (docs/notes/w2-lists.md).
+  "permiteyes.us",
 ];
+/** Check 37 P6: what a portal's own notice is about. */
+const PORTAL_NOTICE = /\b(permits?|inspections?|records?|applications?|licen[cs]es?)\b/;
+/** A portal vendor selling to towns, not writing for one. */
+const PORTAL_MARKETING =
+  /\b(webinar|demo|newsletter|product (update|news)|free trial|conference|ebook|e-book|case study|register now|join us|join our)\b/;
 
-export function looksMunicipal(fromAddress: string | null, fromName: string | null): boolean {
-  const domain = (fromAddress ?? "").toLowerCase().split("@")[1] ?? "";
+/** Check 22 P8: shown on the card when only the name says town office, from a personal address. */
+export const MUNICIPAL_NAME_ONLY_CAUTION =
+  "Says it's a town office but writes from a personal address.";
+
+export type MunicipalRead = {
+  /** The hard rule: never junk, never drafted by a job. */
+  municipal: boolean;
+  /** Check 22 P8: only the name says town office, from gmail.com and the like (a caution). */
+  nameOnlyWebmail: boolean;
+};
+
+function nameSaysTown(name: string): boolean {
+  const hard = MUNICIPAL_NAME.test(name);
+  const tied = TOWN_TIED.test(name) && TOWN_WORD.test(name);
+  if (!hard && !tied) return false;
+  const rest = name.replace(MUNICIPAL_NAME_ALL, " ").replace(TOWN_TIED_ALL, " ");
+  return !COMPANY_WORDS.test(rest);
+}
+
+const onDomain = (domain: string, list: readonly string[]) =>
+  list.some((d) => domain === d || domain.endsWith(`.${d}`));
+
+export function readMunicipal(
+  fromAddress: string | null,
+  fromName: string | null,
+  subject?: string | null,
+): MunicipalRead {
+  const domain = (fromAddress ?? "").toLowerCase().trim().split("@")[1] ?? "";
   const name = (fromName ?? "").toLowerCase().replace(/\s+/g, " ").trim();
-  if (domain.endsWith(".gov")) return true;
+  const yes = { municipal: true, nameOnlyWebmail: false };
+  const no = { municipal: false, nameOnlyWebmail: false };
+  if (domain.endsWith(".gov")) return yes;
   // Older US local-government domains: ci.lowell.ma.us, town.acton.ma.us, co.dane.wi.us,
   // and the plain <town>.<state>.us ones (dracut.ma.us).
-  if (/(^|\.)(ci|co|town|city|county|twp|vil)\.[a-z-]+\.[a-z]{2}\.us$/.test(domain)) return true;
-  if (/(^|\.)[a-z-]+\.[a-z]{2}\.us$/.test(domain)) return true;
-  if (/^(townof|cityof|countyof|villageof)[a-z-]+\./.test(domain)) return true;
-  // A permit portal sending as the town: "City of Lowell via OpenGov".
-  if (PERMIT_PORTAL_DOMAINS.some((d) => domain === d || domain.endsWith(`.${d}`))) {
-    return /\b(town|city|county|village|borough|township|permits?|building|inspections?)\b/.test(
-      name,
-    );
+  if (/(^|\.)(ci|co|town|city|county|twp|vil)\.[a-z-]+\.[a-z]{2}\.us$/.test(domain)) return yes;
+  if (/(^|\.)[a-z-]+\.[a-z]{2}\.us$/.test(domain)) return yes;
+  if (/^(townof|cityof|countyof|villageof)[a-z-]+\./.test(domain)) return yes;
+  // Check 44 P4: towns that write from .org / .com addresses, exact list only.
+  if (onDomain(domain, MUNICIPAL_EMAIL_DOMAINS)) return yes;
+  // A permit portal sending as the town: "City of Lowell via OpenGov", or (Check 37 P6) its own
+  // notice about a permit or an inspection. The vendor's marketing isn't the town.
+  if (onDomain(domain, PERMIT_PORTAL_DOMAINS)) {
+    if (new RegExp(`\\b(${TOWN_WORDS}|permits?|building|inspections?)\\b`).test(name)) return yes;
+    const about = `${name} ${(subject ?? "").toLowerCase().replace(/\s+/g, " ")}`;
+    return PORTAL_NOTICE.test(about) && !PORTAL_MARKETING.test(about) ? yes : no;
   }
-  return MUNICIPAL_NAME.test(name);
+  if (!nameSaysTown(name)) return no;
+  // Check 22 P8: anyone can call a Gmail account "Building Dept".
+  if (PUBLIC_WEBMAIL_DOMAINS.has(domain)) return { municipal: false, nameOnlyWebmail: true };
+  return yes;
 }
+
+export function looksMunicipal(
+  fromAddress: string | null,
+  fromName: string | null,
+  subject?: string | null,
+): boolean {
+  return readMunicipal(fromAddress, fromName, subject).municipal;
+}
+
+/**
+ * Check 37 P3: the electric company. Work requests, cut-and-reconnect appointments, meter sets
+ * and planned outages for a job are never junk and never answered by a job. Checked before
+ * `looksMunicipal`: a town light plant writing from a .gov address is the electric company, not
+ * the building office.
+ *
+ * Domains are the utilities' own (verify each against a real email; docs/notes/w2-lists.md).
+ * A big utility's NAME only counts from one of these domains (anyone can call themselves
+ * "Eversource"); a light plant's name counts from any domain but public webmail.
+ */
+const UTILITY_DOMAINS = ["eversource.com", "nationalgrid.com", "nationalgridus.com", "unitil.com"];
+const UTILITY_BRAND = /\b(eversource|national ?grid|unitil)\b/;
+const LIGHT_PLANT =
+  /\b(light (department|dept|plant|board)|electric light|light (&|and) power|municipal light|municipal electric)\b/;
+
+function senderParts(fromAddress: string | null, fromName: string | null) {
+  return {
+    domain: (fromAddress ?? "").toLowerCase().trim().split("@")[1] ?? "",
+    name: (fromName ?? "").toLowerCase().replace(/\s+/g, " ").trim(),
+  };
+}
+
+export function looksLikeUtility(fromAddress: string | null, fromName: string | null): boolean {
+  const { domain, name } = senderParts(fromAddress, fromName);
+  if (onDomain(domain, UTILITY_DOMAINS)) return true;
+  return LIGHT_PLANT.test(name) && !!domain && !PUBLIC_WEBMAIL_DOMAINS.has(domain);
+}
+
+/** Wants money now: "pay now", "payment today", "to avoid disconnection", "past due". */
+const PAY_DEMAND =
+  /\b(pay|payment|paid|remit)\b.{0,40}\b(now|today|immediately|right away|within|to avoid|or (your )?(power|service|electricity))\b|\b(past due|overdue|final notice|amount due|balance due)\b/;
+const DISCONNECT = /\b(disconnect(ed|ion|ing)?|shut ?off|shut(ting)? off|cut off)\b/g;
+const SOON = /\b(hours?|today|immediately|now)\b/;
+const SCAM_PAYMENT =
+  /\b(gift ?cards?|prepaid|green ?dot|moneypak|vanilla|reloadit|bitcoin|btc|crypto(currency)?|zelle|cash ?app|venmo)\b/;
+
+/**
+ * Check 37 P3: a fake disconnect demand. (a) The name says a big utility but the address isn't
+ * one of its domains, and the email wants payment; or (b) anyone threatening a shutoff within
+ * hours or today (within 60 characters) and naming a scammer's way to pay (gift card, Zelle,
+ * Bitcoin…). Eversource warns that imposters threaten shutoffs and demand immediate payment
+ * this way, and that real disconnections come with written notice.
+ */
+export function looksLikeUtilityScam(
+  text: string | null | undefined,
+  fromAddress: string | null,
+  fromName: string | null,
+): boolean {
+  const flat = flatten(text);
+  const { domain, name } = senderParts(fromAddress, fromName);
+  if (UTILITY_BRAND.test(name) && !onDomain(domain, UTILITY_DOMAINS) && PAY_DEMAND.test(flat))
+    return true;
+  if (!SCAM_PAYMENT.test(flat)) return false;
+  for (const m of flat.matchAll(DISCONNECT)) {
+    const at = m.index ?? 0;
+    const near = flat.slice(Math.max(0, at - 60), at + m[0].length + 60);
+    if (SOON.test(near)) return true;
+  }
+  return false;
+}
+
+export const UTILITY_SCAM_REASON =
+  "Says it's from the electric company and wants payment now. Don't pay from this email; call the number on your bill.";
+/** Check 37 P3: a utility email that carries a date. */
+export const UTILITY_DATE_REASON =
+  "From the electric company about a job date. Check it with your crew and the customer.";
 
 /**
  * Check 39 P2: dollar figures that are a program's or a lender's, not the job's — "Mass Save

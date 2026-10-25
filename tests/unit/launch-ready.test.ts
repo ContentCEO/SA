@@ -19,7 +19,9 @@ import { createTestDb } from "../support/db";
 /** Check 50 P6: "Ready for paying owners" on /admin. */
 
 const session = vi.hoisted(() => ({ user: null as { id: string; email: string } | null }));
-vi.mock("@/auth", () => ({ auth: async () => (session.user ? { user: session.user } : null) }));
+vi.mock("@/auth", () => ({
+  auth: async () => (session.user ? { user: { ...session.user, sv: 0 } } : null),
+}));
 class Redirected extends Error {
   constructor(readonly url: string) {
     super("redirect");

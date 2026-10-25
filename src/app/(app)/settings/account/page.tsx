@@ -7,13 +7,15 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { OFFLINE_COOKIE } from "@/lib/device-prefs";
 import { cn } from "@/lib/utils";
 import { requireOwner } from "@/server/session";
-import { deleteAccountAction } from "../actions";
+import { deleteAccountAction, signOutEverywhereAction } from "../actions";
 import { SettingsScreen } from "../screen";
 
 export const metadata: Metadata = { title: "Account" };
 
 export default async function AccountSettingsPage(props: PageProps<"/settings/account">) {
-  const { workspace } = await requireOwner();
+  const { workspace, session } = await requireOwner();
+  // Check 42 P5: which Google account this is (one sign-in per shop).
+  const signedInAs = session?.user?.email ?? null;
   return (
     <SettingsScreen
       path="/settings/account"
@@ -24,6 +26,11 @@ export default async function AccountSettingsPage(props: PageProps<"/settings/ac
         <h2 id="account" className="sr-only">
           Account
         </h2>
+        {signedInAs ? (
+          <p className="text-lg break-words">
+            Signed in as <span className="font-semibold">{signedInAs}</span> (Google)
+          </p>
+        ) : null}
         <Link href="/billing" className={cn(buttonVariants({ variant: "outline" }), "w-full")}>
           Plan &amp; billing
         </Link>
@@ -37,6 +44,15 @@ export default async function AccountSettingsPage(props: PageProps<"/settings/ac
         >
           <Button type="submit" variant="outline" className="w-full">
             Sign out
+          </Button>
+        </form>
+        <form action={signOutEverywhereAction} className="flex flex-col gap-2">
+          <p className="text-sm text-muted-foreground">
+            Lost a phone, or signed in on a shared computer? This signs you out on every one, this
+            one too. You sign in again with Google.
+          </p>
+          <Button type="submit" variant="outline" className="w-full">
+            Sign out of every phone and computer
           </Button>
         </form>
         <DeleteAccountButton

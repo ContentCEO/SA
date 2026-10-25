@@ -170,6 +170,18 @@ export const ADMIN_MOVES = {
   mark_setup_call_done: ["setup_paid"],
   pause: ["invited", "evaluating", "evaluation_expired", "setup_paid", "active", "past_due"],
   resume: ["paused"],
+  // Check 26 P3: ends every sign-in on the owner's account (a lost phone). Changes no status,
+  // so it is allowed from any of them.
+  sign_out_everywhere: [
+    "invited",
+    "evaluating",
+    "evaluation_expired",
+    "setup_paid",
+    "active",
+    "past_due",
+    "canceled",
+    "paused",
+  ],
 } as const satisfies Record<string, readonly Status[]>;
 
 export type AdminMove = keyof typeof ADMIN_MOVES;

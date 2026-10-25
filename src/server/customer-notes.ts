@@ -1,5 +1,5 @@
 import "server-only";
-import { and, count, eq, inArray, sql } from "drizzle-orm";
+import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { customerNotes, mailboxes, messages, workspaces } from "@/db/schema";
 import { effectiveStatus, jobsAllowed, ReadOnlyError } from "./lifecycle";
@@ -83,7 +83,10 @@ export async function notesForThreads(
         sql`not ${sideEmailSql("messages")}`,
         sql`${messages.sentAt} = (select max(n.sent_at) from messages n where n.thread_id = ${messages.threadId} and n.direction = 'in' and not ${sideEmailSql("n")})`,
       ),
-    );
+    )
+    // Two emails at the same second: the first row per thread wins below, so give ties a fixed
+    // order (id, as elsewhere) instead of whatever the query plan returns.
+    .orderBy(desc(messages.id));
   const notes = await notesForAddresses(
     workspaceId,
     rows.map((r) => r.address),

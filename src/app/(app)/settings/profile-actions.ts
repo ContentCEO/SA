@@ -2,22 +2,32 @@
 
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { enqueue, voiceLearnRequested } from "@/jobs/client";
+import { enqueue, voiceLearnRequested, voiceExamplesRequested } from "@/jobs/client";
 import {
-  businessProfileInput,
+  businessProfileInputFor,
   digestSettingsInput,
+  getBusinessProfile,
+  getVoiceProfile,
   followupSettingsInput,
   saveBusinessProfile,
   saveDigestSettings,
   saveFollowupSettings,
+  saveDetectedTimeZone,
+  replyLanguagesInput,
+  saveReplyLanguages,
   saveVoiceEdits,
-  voiceEditInput,
+  saveWorkHours,
+  setOwnerTimeZone,
+  voiceEditInputFor,
+  workHoursInput,
 } from "@/server/profile";
+import { isTimeZone, pickedTimeZone } from "@/server/time-zone-rules";
 import { AutopilotNotAllowedError, setAutopilot } from "@/server/autopilot";
 import { decideSuggestion } from "@/server/edit-learning";
 import { hitLimit } from "@/server/rate-limit";
 import { requireOwner } from "@/server/session";
 import { resumeTrialEmails, stopTrialEmails } from "@/server/trial-emails";
+import { resetVoiceRestarts } from "@/server/voice";
 
 export type FormState = { errors?: Record<string, string[]>; values?: Record<string, string> };
 
@@ -39,7 +49,14 @@ export async function saveBusinessProfileAction(
       .getAll("extraTrades")
       .map((v) => String(v))
       .join(",");
-  const parsed = businessProfileInput.safeParse(raw);
+  // Check 45 P1: only first-time setup sends the browser's zone; Settings saves never move it.
+  if (raw.returnTo !== "/welcome/learning") delete raw.timeZone;
+  // Check 30 P3: a trade or state stored by newer code is kept when posted back unchanged.
+  const stored = await getBusinessProfile(workspace.id);
+  const parsed = businessProfileInputFor({
+    trade: workspace.trade,
+    state: stored?.state,
+  }).safeParse(raw);
   if (!parsed.success)
     return {
       errors: z.flattenError(parsed.error).fieldErrors as Record<string, string[]>,
@@ -52,13 +69,19 @@ export async function saveBusinessProfileAction(
 export async function saveVoiceAction(_prev: FormState, formData: FormData): Promise<FormState> {
   const { workspace } = await requireOwner();
   const raw = values(formData);
-  const parsed = voiceEditInput.safeParse(raw);
+  const parsed = voiceEditInputFor({
+    formality: (await getVoiceProfile(workspace.id))?.formality,
+  }).safeParse(raw);
   if (!parsed.success)
     return {
       errors: z.flattenError(parsed.error).fieldErrors as Record<string, string[]>,
       values: raw,
     };
   await saveVoiceEdits(workspace.id, parsed.data);
+  // Check 24 P8: a changed greeting, sign-off, formality or length → fresh samples, from the
+  // settings only.
+  if ((await getVoiceProfile(workspace.id))?.examplesStale)
+    await enqueue(voiceExamplesRequested.create({ workspaceId: workspace.id }));
   redirect("/settings/writing?done=voice");
 }
 
@@ -66,6 +89,8 @@ export async function relearnVoiceAction() {
   const { workspace } = await requireOwner();
   if (!(await hitLimit("relearn", workspace.id)).allowed)
     redirect("/settings/writing?error=relearn_busy");
+  // Check 29 P2: an explicit owner action, so the stuck-restart count starts again.
+  await resetVoiceRestarts(workspace.id);
   await enqueue(voiceLearnRequested.create({ workspaceId: workspace.id, force: true }));
   redirect("/settings/writing?done=relearn");
 }
@@ -75,6 +100,7 @@ export async function saveFollowupSettingsAction(formData: FormData) {
   const parsed = followupSettingsInput.safeParse({
     enabled: formData.get("enabled") ?? undefined,
     days: formData.get("days"),
+    bigQuoteDays: formData.get("bigQuoteDays") ?? undefined,
   });
   if (!parsed.success) redirect("/settings/follow-ups?error=unknown");
   await saveFollowupSettings(workspace.id, parsed.data);
@@ -86,11 +112,60 @@ export async function saveDigestSettingsAction(formData: FormData) {
   const parsed = digestSettingsInput.safeParse({
     enabled: formData.get("enabled") ?? undefined,
     hour: formData.get("hour"),
-    timeZone: formData.get("timeZone"),
+    timeZone: formData.get("timeZone") ?? undefined,
   });
   if (!parsed.success) redirect("/settings/morning-email?error=unknown");
   await saveDigestSettings(workspace.id, parsed.data);
+  // Check 44 P5 / 15 P7: the visible select; saved (as the owner's pick) only when the owner
+  // changed it from what the screen showed (`pickedTimeZone`).
+  const picked = pickedTimeZone(parsed.data.timeZone, formData.get("timeZoneShown"));
+  if (picked) await setOwnerTimeZone(workspace.id, picked);
   redirect("/settings/morning-email?done=saved");
+}
+
+/** Check 15 P8: "Your working days (for alerts)" on Settings → Your business. */
+export async function saveWorkHoursAction(formData: FormData) {
+  const { workspace } = await requireOwner();
+  const parsed = workHoursInput.safeParse({
+    days: formData.getAll("days").map(String),
+    startHour: formData.get("startHour"),
+    endHour: formData.get("endHour"),
+  });
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    if (issue?.path[0] === "days") redirect("/settings/business?error=work_days");
+    if (issue?.path[0] === "endHour") redirect("/settings/business?error=work_hours");
+    redirect("/settings/business?error=unknown");
+  }
+  await saveWorkHours(workspace.id, parsed.data);
+  redirect("/settings/business?done=work_hours");
+}
+
+/** Check 43 P8: the languages the owner answers customers in (Settings → Your voice). */
+export async function saveReplyLanguagesAction(formData: FormData) {
+  const { workspace } = await requireOwner();
+  const parsed = replyLanguagesInput.safeParse(formData.getAll("languages").map(String));
+  if (!parsed.success) redirect("/settings/writing?error=unknown");
+  await saveReplyLanguages(workspace.id, parsed.data);
+  redirect("/settings/writing?done=languages");
+}
+
+/** Check 44 P5: "Use Central time" — a deliberate tap to take this phone's zone. */
+export async function takePhoneZoneAction(formData: FormData) {
+  const { workspace } = await requireOwner();
+  const tz = formData.get("timeZone");
+  if (!isTimeZone(tz)) redirect("/settings/morning-email?error=zone");
+  await setOwnerTimeZone(workspace.id, tz);
+  redirect("/settings/morning-email?done=zone");
+}
+
+/**
+ * Check 45 P1: the browser's zone from the first signed-in page load (ZoneCapture). Saves only
+ * while the zone was never set; anything else (a bad zone, a browser or owner zone) is ignored.
+ */
+export async function saveDetectedTimeZoneAction(timeZone: unknown): Promise<void> {
+  const { workspace } = await requireOwner();
+  await saveDetectedTimeZone(workspace.id, timeZone);
 }
 
 /** Trial emails on or off (2026-10-16). Off is the same flag as the emails' "Stop these emails". */
@@ -122,6 +197,9 @@ export async function decideVoiceIdeaAction(formData: FormData) {
   if (!id.success) redirect("/settings/writing?error=unknown");
   const r = await decideSuggestion(workspace.id, id.data, formData.get("answer") === "yes");
   if (r === "type_it") redirect("/settings/voice");
+  // Check 24 P8: an accepted idea that moved the length or formality makes the samples stale.
+  if (r === "accepted" && (await getVoiceProfile(workspace.id))?.examplesStale)
+    await enqueue(voiceExamplesRequested.create({ workspaceId: workspace.id }));
   redirect(
     r === "accepted"
       ? "/settings/writing?done=idea_yes"

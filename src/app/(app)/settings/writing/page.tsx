@@ -6,7 +6,16 @@ import { openSuggestions } from "@/server/edit-learning";
 import { listMailboxes } from "@/server/mailboxes";
 import { describeVoice, getBusinessProfile, getVoiceProfile } from "@/server/profile";
 import { requireOwner } from "@/server/session";
-import { decideVoiceIdeaAction, relearnVoiceAction } from "../profile-actions";
+import { hasVoiceContent, lastUpdateNote, voiceAttempt, writersNotice } from "@/server/voice-rules";
+import { ownerFirstName } from "@/ai/prompts/draft.v9";
+import { AutoSaveForm } from "@/components/forms/auto-save-form";
+import { LANGUAGE_NAMES } from "@/ai/language";
+import { OPTIONAL_REPLY_LANGUAGES } from "@/server/profile";
+import {
+  decideVoiceIdeaAction,
+  relearnVoiceAction,
+  saveReplyLanguagesAction,
+} from "../profile-actions";
 import { SettingsScreen } from "../screen";
 import { saveNeverSayAction } from "../wording-actions";
 import { showGaps } from "@/ai/gaps";
@@ -14,23 +23,35 @@ import { showGaps } from "@/ai/gaps";
 export const metadata: Metadata = { title: "Your voice" };
 
 export default async function WritingSettingsPage(props: PageProps<"/settings/writing">) {
-  const { workspace } = await requireOwner();
+  const { workspace, session } = await requireOwner();
   const [profile, voice, ideas, mailboxes] = await Promise.all([
     getBusinessProfile(workspace.id),
     getVoiceProfile(workspace.id),
     openSuggestions(workspace.id),
     listMailboxes(workspace.id),
   ]);
-  const voiceLine =
-    voice?.status === "ready"
-      ? describeVoice(voice)
-      : voice?.status === "learning"
-        ? "Reading your sent mail to learn how you write…"
-        : voice?.status === "not_enough_mail"
-          ? "Not enough sent mail to learn from yet. You can describe it yourself."
-          : voice?.status === "failed"
-            ? "Couldn't learn your style last time. You can describe it yourself, or try again."
-            : "Not learned yet. It starts once your email has been read.";
+  // Check 24 P1: what's stored decides the screen; the newest attempt only adds a note.
+  const stored = hasVoiceContent(voice);
+  const attempt = voice ? voiceAttempt(voice) : null;
+  const voiceLine = stored
+    ? describeVoice(voice!) || "We've learned how you write."
+    : attempt === "learning"
+      ? "Reading your sent mail to learn how you write…"
+      : attempt === "not_enough_mail"
+        ? "Not enough sent mail to learn from yet. You can describe it yourself."
+        : attempt === "failed" || attempt === "capped" || attempt === "reconnect_needed"
+          ? "Couldn't learn your style last time. You can describe it yourself, or try again."
+          : "Not learned yet. It starts once your email has been read.";
+  const updateNote = lastUpdateNote(voice, profile?.timeZone ?? "America/New_York");
+  const writersLine = writersNotice(
+    voice?.writers,
+    ownerFirstName(voice?.signoffStyle, profile?.signature) ??
+      ownerFirstName(null, session.user?.name ?? null),
+  );
+  // Check 24 P6: which inbox the voice came from (the owner's own address when it's connected).
+  const learnedFrom = stored
+    ? mailboxes.find((m) => m.id === voice?.learnedFromMailboxId)?.email
+    : undefined;
 
   return (
     <SettingsScreen path="/settings/writing" heavy="your voice." params={await props.searchParams}>
@@ -40,17 +61,24 @@ export default async function WritingSettingsPage(props: PageProps<"/settings/wr
         </h2>
         <div className="flex flex-col gap-2 rounded-xl border bg-card p-4">
           <p className="text-lg">{voiceLine}</p>
-          {voice?.status === "ready" && voice.phrasesUsed.length ? (
+          {/* Check 24 P9: someone else answers mail from this Gmail; drafts stay the owner's. */}
+          {stored && writersLine ? <p className="text-base font-semibold">{writersLine}</p> : null}
+          {updateNote ? <p className="font-semibold">{updateNote}</p> : null}
+          {learnedFrom ? (
+            <p className="break-all text-muted-foreground">Learned from {learnedFrom}</p>
+          ) : null}
+          {stored && voice?.phrasesUsed.length ? (
             <p className="text-muted-foreground">
               You say things like “{voice.phrasesUsed.slice(0, 3).join("”, “")}”.
             </p>
           ) : null}
-          {voice?.status === "ready" && voice.phrasesAvoided.length ? (
+          {stored && voice?.phrasesAvoided.length ? (
             <p className="text-muted-foreground">
-              Drafts will never say “{voice.phrasesAvoided.slice(0, 2).join("” or “")}”.
+              Drafts try not to say “{voice.phrasesAvoided.slice(0, 2).join("” or “")}” and flag it
+              if they do.
             </p>
           ) : null}
-          {voice?.examples.length ? (
+          {voice?.examples.length && !voice.examplesStale ? (
             <details>
               <summary className="inline-flex min-h-tap cursor-pointer items-center font-semibold">
                 Sample replies in your style
@@ -124,6 +152,37 @@ export default async function WritingSettingsPage(props: PageProps<"/settings/wr
         ) : null}
       </section>
 
+      {/* Check 43 P8: which languages a reply may be written in. */}
+      <section aria-labelledby="languages-heading" className="flex flex-col gap-3">
+        <h2 id="languages-heading" className="text-xl font-black">
+          Languages you answer customers in
+        </h2>
+        <p className="text-muted-foreground">
+          Turn one on only if you can read a reply in it before you send.
+        </p>
+        <AutoSaveForm action={saveReplyLanguagesAction} hideButton className="flex flex-col gap-2">
+          <label className="flex min-h-tap items-center gap-3">
+            <input type="checkbox" defaultChecked disabled className="size-6 shrink-0" />
+            <span className="font-semibold">English (always on)</span>
+          </label>
+          {OPTIONAL_REPLY_LANGUAGES.map((l) => (
+            <label key={l} className="flex min-h-tap items-center gap-3">
+              <input
+                type="checkbox"
+                name="languages"
+                value={l}
+                defaultChecked={(profile?.replyLanguages ?? []).includes(l)}
+                className="size-6 shrink-0"
+              />
+              <span className="font-semibold">{LANGUAGE_NAMES[l]}</span>
+            </label>
+          ))}
+          <Button type="submit" variant="outline" className="sa-autosave-button w-full">
+            Save languages
+          </Button>
+        </AutoSaveForm>
+      </section>
+
       <section aria-labelledby="never-say-heading" className="flex flex-col gap-3">
         <h2 id="never-say-heading" className="text-xl font-black">
           Never say this
@@ -146,6 +205,13 @@ export default async function WritingSettingsPage(props: PageProps<"/settings/wr
             Save never-say list
           </Button>
         </form>
+        <p className="text-muted-foreground">
+          To stop promises (like same-day service), use Things we should never promise in{" "}
+          <Link href="/settings/business" className="font-semibold underline underline-offset-4">
+            Your business
+          </Link>
+          .
+        </p>
       </section>
     </SettingsScreen>
   );

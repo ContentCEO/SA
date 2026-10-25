@@ -1,0 +1,12 @@
+# Check 26 P11: security updates for npm packages, checked weekly. Each one arrives as a pull
+# request that runs CI like any other change.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    # Security updates only: no routine version-bump pull requests.
+    open-pull-requests-limit: 0
+    labels:
+      - dependencies

@@ -1,6 +1,11 @@
 import "server-only";
 import { z } from "zod";
-import { MissingScopesError, type ConnectResult, type MailboxConnector } from "../connector";
+import {
+  MissingScopesError,
+  NoGmailError,
+  type ConnectResult,
+  type MailboxConnector,
+} from "../connector";
 import { googleEndpoints } from "@/config/e2e";
 import { ALL_CONNECT_SCOPES, REQUIRED_GMAIL_SCOPES, missingScopes } from "./scopes";
 
@@ -26,12 +31,23 @@ function clientCredentials() {
   return { clientId, clientSecret };
 }
 
-export function createGmailConnector(fetchImpl: Fetch = fetch): MailboxConnector {
+/**
+ * How long Disconnect / Delete my account wait on Google's revoke before treating it as failed.
+ * Both already carry on when revoke fails (the owner asked to delete; `revokedAtProvider: false`
+ * is logged), so a hung request must fail too instead of leaving "Disconnecting…" on screen.
+ */
+export const REVOKE_TIMEOUT_MS = 10_000;
+
+export function createGmailConnector(
+  fetchImpl: Fetch = fetch,
+  opts: { revokeTimeoutMs?: number } = {},
+): MailboxConnector {
   async function revoke(tokenValue: string) {
     const res = await fetchImpl(googleEndpoints().revoke, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({ token: tokenValue }),
+      signal: AbortSignal.timeout(opts.revokeTimeoutMs ?? REVOKE_TIMEOUT_MS),
     });
     // 400 invalid_token means it's already revoked — that's the outcome we wanted.
     if (!res.ok && res.status !== 400) {
@@ -43,7 +59,7 @@ export function createGmailConnector(fetchImpl: Fetch = fetch): MailboxConnector
     provider: "gmail",
     requiredScopes: REQUIRED_GMAIL_SCOPES,
 
-    authorizationUrl({ state, redirectUri, loginHint }) {
+    authorizationUrl({ state, redirectUri, loginHint, prompt }) {
       const url = new URL(AUTH_URL);
       url.search = new URLSearchParams({
         client_id: clientCredentials().clientId,
@@ -53,6 +69,8 @@ export function createGmailConnector(fetchImpl: Fetch = fetch): MailboxConnector
         // Offline + consent guarantees Google hands us a refresh token every time.
         access_type: "offline",
         prompt: "consent",
+        // Check 42 P3: adding another inbox also shows Google's account chooser.
+        ...(prompt === "consent select_account" ? { prompt } : {}),
         include_granted_scopes: "true",
         state,
         ...(loginHint ? { login_hint: loginHint } : {}),
@@ -84,6 +102,26 @@ export function createGmailConnector(fetchImpl: Fetch = fetch): MailboxConnector
         throw new MissingScopesError(missing);
       }
       if (!token.refresh_token) throw new Error("Google did not return a refresh token.");
+
+      // Check 47 P1: a Google account isn't always a Gmail account. Ask Gmail itself before
+      // anything is saved (the trial clock starts on the first save).
+      const profileRes = await fetchImpl(`${googleEndpoints().gmailApi}/profile`, {
+        headers: { authorization: `Bearer ${token.access_token}` },
+      });
+      if (!profileRes.ok) {
+        const err = (await profileRes.json().catch(() => ({}))) as {
+          error?: { message?: string; errors?: { reason?: string }[] };
+        };
+        const noGmail =
+          profileRes.status === 400 &&
+          (err.error?.errors?.[0]?.reason === "failedPrecondition" ||
+            /mail service not enabled/i.test(err.error?.message ?? ""));
+        if (noGmail) {
+          await revoke(token.refresh_token);
+          throw new NoGmailError();
+        }
+        throw new Error(`Gmail profile failed (${profileRes.status}).`);
+      }
 
       const infoRes = await fetchImpl(googleEndpoints().userinfo, {
         headers: { authorization: `Bearer ${token.access_token}` },

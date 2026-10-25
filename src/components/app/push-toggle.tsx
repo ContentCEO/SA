@@ -31,7 +31,17 @@ export function PushToggle({ publicKey }: { publicKey: string }) {
       if (Notification.permission === "denied") return "blocked";
       const reg = await navigator.serviceWorker.getRegistration();
       const sub = await reg?.pushManager.getSubscription();
-      return sub ? "on" : "off";
+      if (!sub) return "off";
+      // Check 19 P5: "On." only for a phone the server will push to. Saving again is an
+      // upsert, so a row the server dropped (a dead address, a renewed subscription) comes
+      // back; an address it refuses is unsubscribed here and reads "off".
+      // No signal right now: trust the browser until the next visit.
+      const saved = await savePushAction(sub.endpoint).catch(() => null);
+      if (saved === false) {
+        await sub.unsubscribe().catch(() => false);
+        return "off";
+      }
+      return "on";
     })()
       .then((s) => live && setState(s as State))
       .catch(() => live && setState("unsupported"));

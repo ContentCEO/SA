@@ -16,10 +16,14 @@ import { describe, expect, it } from "vitest";
 
 /**
  * Statements already in the repo that the rule would flag, by file, each with the reason it was
- * safe. Empty on 2026-10-17: all 35 migrations pass. Don't loosen the patterns; add a row here
+ * safe. Empty on 2026-10-17 (all 35 migrations passed); one row since 2026-10-19. Don't loosen the patterns; add a row here
  * on purpose, with the reason, if a reviewed statement ever needs one.
  */
-const REVIEWED: Record<string, string> = {};
+const REVIEWED: Record<string, string> = {
+  "0076_drop_reply_address_index.sql":
+    "drops only the index messages_mailbox_reply_address_idx (shipped in 0070): dropping an index " +
+    "never breaks old code; held back until main carries notesForThreads' tie-break (PR #14)",
+};
 
 const REFUSED = /\bDROP\b|\bRENAME\b|SET NOT NULL|ALTER COLUMN .* TYPE|TRUNCATE|^\s*DELETE\b/im;
 

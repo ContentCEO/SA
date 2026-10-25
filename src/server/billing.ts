@@ -1,5 +1,5 @@
 import "server-only";
-import { eq } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import Stripe from "stripe";
 import { pricing, type PlanId } from "@/config/pricing";
 import { db } from "@/db";
@@ -13,15 +13,17 @@ import {
 } from "@/db/schema";
 import { appUrl } from "@/lib/app-url";
 import { brandEmail } from "@/lib/email-layout";
-import { sendEmail, type EmailSender } from "@/lib/email";
+import { emailErrorFields, sendEmail, type EmailSender } from "@/lib/email";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import {
+  cancelAtOf,
   checkoutTerms,
   eventFromOtherMode,
   isPlanId,
   PLAN_IDS,
   planFromLookupKey,
   planLookupKey,
+  localDateKey,
   type SalesTaxStatus,
   setupLookupKey,
   statusAfterCheckout,
@@ -29,10 +31,23 @@ import {
   stripeKeyMode,
 } from "./billing-rules";
 import { paymentNoticeCopy } from "./first-week-rules";
+import {
+  billingChangeNoticeCopy,
+  CHECKOUT_NOTICE_ACTIONS,
+  checkoutNoticeFrom,
+  setupConfirmationCopy,
+  type BillingChangeKind,
+  type CheckoutNoticeKind,
+} from "./billing-notice-rules";
+import { siteConfig } from "@/config/site";
 import { resumeTarget, setupReallyPaid } from "./lifecycle";
 import { fitMailboxesToPlan } from "./mailbox-plan";
-import { creditReferralSafely } from "./referrals";
+import { freeMonthRunning, portalSchedulesDowngrades } from "./referral-rules";
+import { creditReferralSafely, reconcileReferralSafely } from "./referrals";
+import { recordDispute, recordRefunds } from "./stripe-money";
+import { workspaceTimeZone } from "./snooze";
 import { isTermsUrlMissingError, stripeErrorReason } from "./stripe-error-rules";
+import { applyPlanChange } from "./workspace-lifecycle";
 
 let client: Stripe | undefined;
 let override: Stripe | undefined;
@@ -71,6 +86,13 @@ export const WEBHOOK_PATH = "/api/stripe/webhook";
 const WEBHOOK_SECRET_KEY = "stripe_webhook_secret";
 const WEBHOOK_EVENTS: Stripe.WebhookEndpointCreateParams.EnabledEvent[] = [
   "checkout.session.completed",
+  // Check 17 P5: bank debits and other delayed methods finish after the page closes.
+  "checkout.session.async_payment_succeeded",
+  "checkout.session.async_payment_failed",
+  // Check 17 P8: recorded and shown on /admin; they never move an account on their own.
+  "charge.refunded",
+  "charge.dispute.created",
+  "charge.dispute.closed",
   "customer.subscription.created",
   "customer.subscription.updated",
   "customer.subscription.deleted",
@@ -96,6 +118,35 @@ export async function salesTaxStatus(): Promise<SalesTaxStatus | null> {
     // reason code is what tells a key problem (auth, permission) from a blip (connection).
     const reason = stripeErrorReason(err);
     console.error("stripe_tax_status_failed", {
+      error: err instanceof Error ? err.name : "unknown",
+      reason,
+    });
+    return "unknown";
+  }
+}
+
+/**
+ * Plan #47, for the /admin Payments card: what Stripe's default billing-page settings mean for
+ * free months. Null without Stripe, "unknown" when it can't be read quickly; never throws.
+ */
+export async function portalStatus(): Promise<
+  { schedulesDowngrades: boolean; loginPage: boolean } | "unknown" | null
+> {
+  if (!stripeConfigured()) return null;
+  try {
+    const list = await stripe().billingPortal.configurations.list(
+      { is_default: true, limit: 1 },
+      { timeout: 5_000, maxNetworkRetries: 0 },
+    );
+    const config = list.data[0];
+    if (!config) return { schedulesDowngrades: false, loginPage: false };
+    return {
+      schedulesDowngrades: portalSchedulesDowngrades(config),
+      loginPage: !!config.login_page?.enabled,
+    };
+  } catch (err) {
+    const reason = stripeErrorReason(err);
+    console.error("stripe_portal_status_failed", {
       error: err instanceof Error ? err.name : "unknown",
       reason,
     });
@@ -277,17 +328,33 @@ export async function createCheckout(workspace: Workspace, plan: PlanId): Promis
 
   let customer = workspace.stripeCustomerId;
   if (!customer) {
-    const c = await s.customers.create({
-      email: owner?.email,
-      name: workspace.businessName ?? owner?.name ?? undefined,
-      metadata: { workspaceId: workspace.id },
-    });
-    customer = c.id;
-    await db()
+    // Check 17 P4: two quick taps make one Stripe customer (same key → same customer), and
+    // only the first one is stored.
+    const c = await s.customers.create(
+      {
+        email: owner?.email,
+        name: workspace.businessName ?? owner?.name ?? undefined,
+        metadata: { workspaceId: workspace.id },
+      },
+      { idempotencyKey: `customer-${workspace.id}` },
+    );
+    const [stored] = await db()
       .update(workspaces)
-      .set({ stripeCustomerId: customer })
-      .where(eq(workspaces.id, workspace.id));
+      .set({ stripeCustomerId: c.id })
+      .where(and(eq(workspaces.id, workspace.id), isNull(workspaces.stripeCustomerId)))
+      .returning({ id: workspaces.stripeCustomerId });
+    if (stored?.id) customer = stored.id;
+    else {
+      const [row] = await db()
+        .select({ id: workspaces.stripeCustomerId })
+        .from(workspaces)
+        .where(eq(workspaces.id, workspace.id));
+      customer = row?.id ?? c.id;
+    }
   }
+  // Check 17 P4: an earlier checkout still open (another tab, or Back and choose again) is
+  // closed first, so two can't both be paid.
+  await expireOpenCheckout(workspace.id);
 
   const metadata = {
     workspaceId: workspace.id,
@@ -315,7 +382,8 @@ export async function createCheckout(workspace: Workspace, plan: PlanId): Promis
     subscription_data: { metadata: { workspaceId: workspace.id } },
     allow_promotion_codes: true,
     ...tax,
-    success_url: appUrl("/billing?done=paid"),
+    // Check 17 P9: Stripe fills in the session id, only so a "waiting" record can name it.
+    success_url: `${appUrl("/billing?done=paid")}&session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: appUrl("/billing?error=canceled"),
   };
   let session: Stripe.Checkout.Session;
@@ -331,6 +399,7 @@ export async function createCheckout(workspace: Workspace, plan: PlanId): Promis
     withBox = false;
     session = await s.checkout.sessions.create(params);
   }
+  await setSetting(openCheckoutKey(workspace.id), session.id);
   // The /admin note is a reminder only: writing it never stops a payment.
   await noteTermsBox(withBox);
   if (!session.url) throw new Error("Stripe didn't return a checkout link.");
@@ -390,6 +459,122 @@ export async function termsBoxOffSince(): Promise<Date | null> {
   return row?.updatedAt ?? null;
 }
 
+/** Plan #47 (Q3, Davi 2026-10-16): the billing-page settings without plan changes, per mode. */
+export const NO_PLAN_CHANGE_PORTAL_KEY = (mode: "live" | "test") =>
+  `stripe_portal_no_plan_change:${mode}`;
+
+/**
+ * The default billing-page settings with plan changes switched off and nothing else changed
+ * (Davi's Dashboard edits carry over): card, address, invoices and cancel stay as he set them.
+ */
+export function noPlanChangePortalParams(
+  d: Stripe.BillingPortal.Configuration,
+): Stripe.BillingPortal.ConfigurationCreateParams {
+  const f = d.features ?? ({} as Partial<Stripe.BillingPortal.Configuration.Features>);
+  const bp = d.business_profile;
+  const cancel = f.subscription_cancel;
+  return {
+    ...(bp
+      ? {
+          business_profile: {
+            headline: bp.headline ?? "",
+            ...(bp.privacy_policy_url ? { privacy_policy_url: bp.privacy_policy_url } : {}),
+            ...(bp.terms_of_service_url ? { terms_of_service_url: bp.terms_of_service_url } : {}),
+          },
+        }
+      : {}),
+    ...(d.default_return_url ? { default_return_url: d.default_return_url } : {}),
+    features: {
+      customer_update: f.customer_update
+        ? {
+            enabled: f.customer_update.enabled,
+            allowed_updates: f.customer_update.allowed_updates.length
+              ? f.customer_update.allowed_updates
+              : "",
+          }
+        : { enabled: false },
+      invoice_history: { enabled: f.invoice_history?.enabled ?? true },
+      payment_method_update: { enabled: f.payment_method_update?.enabled ?? true },
+      subscription_cancel: cancel
+        ? {
+            enabled: cancel.enabled,
+            mode: cancel.mode,
+            proration_behavior: cancel.proration_behavior,
+            ...(cancel.cancellation_reason
+              ? {
+                  cancellation_reason: {
+                    enabled: cancel.cancellation_reason.enabled,
+                    options: cancel.cancellation_reason.options.length
+                      ? cancel.cancellation_reason.options
+                      : "",
+                  },
+                }
+              : {}),
+          }
+        : { enabled: true, mode: "at_period_end" },
+      subscription_update: { enabled: false },
+    },
+    // The hosted login page belongs to the default settings only.
+    login_page: { enabled: false },
+    metadata: { purpose: "referral_free_month_no_plan_change" },
+  };
+}
+
+type CachedPortal = { id: string; defaultUpdated: number };
+
+function parseCachedPortal(value: string | undefined): CachedPortal | null {
+  try {
+    const v = JSON.parse(value ?? "null") as Partial<CachedPortal> | null;
+    return v && typeof v.id === "string" && typeof v.defaultUpdated === "number"
+      ? { id: v.id, defaultUpdated: v.defaultUpdated }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Plan #47 (§1.8.2): the billing-page settings used while a free month runs, so plan changes
+ * happen only through Keep / Go back in the app. Built from the retrieved default settings,
+ * cached per Stripe mode in app_settings, rebuilt when the default changed (its `updated`) or
+ * was switched off, made again if Stripe no longer has it. Null without a default to copy.
+ */
+export async function ensureNoPlanChangePortal(): Promise<string | null> {
+  const mode = stripeMode();
+  if (!mode) return null;
+  const s = stripe();
+  const def = (await s.billingPortal.configurations.list({ is_default: true, limit: 1 })).data[0];
+  if (!def) return null;
+  const key = NO_PLAN_CHANGE_PORTAL_KEY(mode);
+  const [row] = await db().select().from(appSettings).where(eq(appSettings.key, key));
+  const cached = parseCachedPortal(row?.value);
+  const params = noPlanChangePortalParams(def);
+  let id: string | null = null;
+  if (cached) {
+    try {
+      const c = await s.billingPortal.configurations.retrieve(cached.id);
+      const current =
+        c.active &&
+        cached.defaultUpdated >= def.updated &&
+        c.features?.subscription_update?.enabled === false;
+      id = current
+        ? c.id
+        : (await s.billingPortal.configurations.update(cached.id, { ...params, active: true })).id;
+    } catch (err) {
+      if ((err as { code?: string }).code !== "resource_missing") throw err;
+    }
+  }
+  id ??= (await s.billingPortal.configurations.create(params)).id;
+  if (!cached || cached.id !== id || cached.defaultUpdated !== def.updated) {
+    const value = JSON.stringify({ id, defaultUpdated: def.updated } satisfies CachedPortal);
+    await db()
+      .insert(appSettings)
+      .values({ key, value })
+      .onConflictDoUpdate({ target: appSettings.key, set: { value, updatedAt: new Date() } });
+  }
+  return id;
+}
+
 /**
  * Stripe's own page for changing card, plan, invoices or canceling. It comes back to Plan &
  * billing, or to the terms screen when it was opened from there (someone who won't agree to new
@@ -400,9 +585,26 @@ export async function createPortal(
   returnTo: "/billing" | "/welcome/terms" = "/billing",
 ): Promise<string> {
   if (!workspace.stripeCustomerId) throw new CheckoutNotAllowedError();
+  // Plan #47 (Q3): while a free month runs, Stripe's page offers card, invoices and cancel
+  // only. If those settings can't be made, the default page opens (the owner can always
+  // update their card or cancel) and the backstop removes any charge for the free days.
+  let configuration: string | null = null;
+  if (freeMonthRunning(workspace)) {
+    try {
+      configuration = await ensureNoPlanChangePortal();
+    } catch (err) {
+      const reason = stripeErrorReason(err);
+      console.error("stripe_portal_no_plan_change_failed", {
+        workspaceId: workspace.id,
+        error: err instanceof Error ? err.name : "unknown",
+        reason,
+      });
+    }
+  }
   const portal = await stripe().billingPortal.sessions.create({
     customer: workspace.stripeCustomerId,
     return_url: appUrl(returnTo),
+    ...(configuration ? { configuration } : {}),
   });
   return portal.url;
 }
@@ -415,6 +617,165 @@ export async function cancelSubscriptionNow(subscriptionId: string) {
     if ((err as { code?: string }).code === "resource_missing") return;
     throw err;
   }
+}
+
+/**
+ * Check 17 P4: every subscription of this customer that is still live, plus the stored one, for
+ * Delete my account to cancel (a second paid checkout would otherwise keep charging).
+ */
+export async function liveSubscriptionIds(
+  customerId: string | null,
+  storedId: string | null,
+): Promise<string[]> {
+  const ids = new Set<string>();
+  // Without a key there's nothing to ask (an account billed only by hand). A customer Stripe
+  // doesn't know (a test-mode id under the live key) has no subscriptions to stop.
+  if (customerId && stripeConfigured()) {
+    try {
+      const list = await stripe().subscriptions.list({
+        customer: customerId,
+        status: "all",
+        limit: 100,
+      });
+      for (const sub of list.data) if (!subscriptionEnded(sub.status)) ids.add(sub.id);
+    } catch (err) {
+      if ((err as { code?: string }).code !== "resource_missing") throw err;
+    }
+  }
+  if (storedId) ids.add(storedId);
+  return [...ids];
+}
+
+const subscriptionEnded = (status: string) =>
+  status === "canceled" || status === "incomplete_expired";
+
+async function setSetting(key: string, value: string, now: Date = new Date()) {
+  await db()
+    .insert(appSettings)
+    .values({ key, value, updatedAt: now })
+    .onConflictDoUpdate({ target: appSettings.key, set: { value, updatedAt: now } });
+}
+
+async function getSetting(key: string) {
+  const [row] = await db().select().from(appSettings).where(eq(appSettings.key, key));
+  return row;
+}
+
+/**
+ * app_settings keys held per workspace for billing (Check 17 P4/P9). Delete my account removes
+ * them (`like 'stripe-ws:%:<id>'`). Values are Stripe ids, never shown on a page.
+ */
+export const workspaceBillingKeyPattern = (workspaceId: string) => `stripe-ws:%:${workspaceId}`;
+const openCheckoutKey = (workspaceId: string) => `stripe-ws:open-checkout:${workspaceId}`;
+const secondSubKey = (workspaceId: string) => `stripe-ws:second-sub:${workspaceId}`;
+const waitingKey = (workspaceId: string) => `stripe-ws:waiting:${workspaceId}`;
+
+/**
+ * Check 17 P9: the owner came back from Stripe's page, the refreshes ran out and no notice had
+ * arrived. Recorded for /admin (with the checkout session id when it looks like one, for Davi to
+ * look up in Stripe); never trusted to change anything. Cleared when the checkout's notice lands.
+ */
+export async function noteStripeWaiting(
+  workspaceId: string,
+  sessionId: string | null,
+  now: Date = new Date(),
+) {
+  const id = sessionId && /^cs_[A-Za-z0-9_]{1,200}$/.test(sessionId) ? sessionId : "";
+  await setSetting(waitingKey(workspaceId), id, now);
+}
+
+/** For /admin: the workspaces whose owner paid but no Stripe notice arrived. */
+export async function stripeWaitingWorkspaces(): Promise<Set<string>> {
+  const rows = await db()
+    .select({ key: appSettings.key })
+    .from(appSettings)
+    .where(sql`${appSettings.key} like 'stripe-ws:waiting:%'`);
+  return new Set(rows.map((r) => r.key.slice(r.key.lastIndexOf(":") + 1)));
+}
+
+/** Closes the workspace's earlier open checkout. Already complete or expired is fine. */
+async function expireOpenCheckout(workspaceId: string) {
+  const open = await getSetting(openCheckoutKey(workspaceId));
+  if (!open) return;
+  try {
+    await stripe().checkout.sessions.expire(open.value);
+  } catch (err) {
+    const reason = stripeErrorReason(err);
+    console.info("stripe_checkout_expire_skipped", {
+      error: err instanceof Error ? err.name : "unknown",
+      reason,
+    });
+  }
+  await db().delete(appSettings).where(eq(appSettings.key, open.key));
+}
+
+/** The subscription as Stripe has it now; a deleted one counts as canceled. */
+async function freshSubscription(sub: Stripe.Subscription): Promise<Stripe.Subscription> {
+  try {
+    // Plan #47: with its discounts, for the free months (design §1.9).
+    return await stripe().subscriptions.retrieve(sub.id, { expand: ["discounts"] });
+  } catch (err) {
+    if ((err as { code?: string }).code === "resource_missing") {
+      return { ...sub, status: "canceled" } as Stripe.Subscription;
+    }
+    throw err;
+  }
+}
+
+/** A stored subscription that is still live at Stripe, or null (ended or gone). */
+async function liveStored(id: string): Promise<Stripe.Subscription | null> {
+  try {
+    const sub = await stripe().subscriptions.retrieve(id, { expand: ["discounts"] });
+    return subscriptionEnded(sub.status) ? null : sub;
+  } catch (err) {
+    if ((err as { code?: string }).code === "resource_missing") return null;
+    throw err;
+  }
+}
+
+/**
+ * Check 17 P4: a second live subscription for an account that already has one. Nothing changes
+ * on the account; /admin says so until one of them ends. One content-free activity row.
+ */
+async function flagSecondSubscription(workspaceId: string, otherId: string) {
+  const had = await getSetting(secondSubKey(workspaceId));
+  await setSetting(secondSubKey(workspaceId), otherId);
+  if (!had) await log(workspaceId, "second_subscription", {});
+}
+
+/** For /admin: which of these workspaces have two live Stripe plans. */
+export async function workspacesWithTwoPlans(ids: string[]): Promise<Set<string>> {
+  if (!ids.length) return new Set();
+  const rows = await db()
+    .select({ key: appSettings.key })
+    .from(appSettings)
+    .where(inArray(appSettings.key, ids.map(secondSubKey)));
+  return new Set(rows.map((r) => r.key.slice(r.key.lastIndexOf(":") + 1)));
+}
+
+/** app_settings key: how many live Stripe plans or paid checkouts had no account here. */
+const ORPHANS_KEY = "stripe_orphans";
+
+async function noteOrphan(now: Date) {
+  await db()
+    .insert(appSettings)
+    .values({ key: ORPHANS_KEY, value: "1", updatedAt: now })
+    .onConflictDoUpdate({
+      target: appSettings.key,
+      set: { value: sql`((${appSettings.value})::int + 1)::text`, updatedAt: now },
+    });
+}
+
+/** For /admin Payments: the count and the last time, or null. Database only. */
+export async function stripeOrphans(): Promise<{ count: number; at: Date } | null> {
+  const row = await getSetting(ORPHANS_KEY);
+  if (!row) return null;
+  return { count: Number(row.value) || 0, at: row.updatedAt };
+}
+
+/** Davi checked Stripe: forget the count. */
+export async function clearStripeOrphans() {
+  await db().delete(appSettings).where(eq(appSettings.key, ORPHANS_KEY));
 }
 
 async function log(workspaceId: string, action: string, detail: Record<string, unknown>) {
@@ -462,6 +823,7 @@ export async function notifyPaymentReceived(
       text,
       html,
       idempotencyKey: `payment-${sessionId}`,
+      replyTo: null,
     });
     if (outcome === "not_configured") return "skipped";
     await db()
@@ -470,24 +832,113 @@ export async function notifyPaymentReceived(
       .onConflictDoNothing();
     return "sent";
   } catch (err) {
-    console.error("payment_notice_failed", { error: err instanceof Error ? err.name : "unknown" });
+    console.error("payment_notice_failed", emailErrorFields(err));
     return "failed";
   }
 }
 
 /**
- * The plan's Gmail limit after a payment or plan change (2026-10-16). Never fails the webhook:
- * the 15-minute job fits it again if this didn't (`fitAllMailboxesToPlans`). Ids and names only.
+ * Check 1 P3: tell Davi when Stripe moves an account to past due, back from it, or to canceled.
+ * Same rules as notifyPaymentReceived: content-free (plan name and kind), once per Stripe event
+ * (`app_settings` marker, Resend idempotency key), never throws, never fails the webhook.
  */
-async function fitMailboxesSafely(workspaceId: string, now: Date) {
+export async function notifyBillingChange(
+  eventId: string,
+  kind: BillingChangeKind,
+  plan: PlanId | null,
+  deps: { send?: EmailSender } = {},
+): Promise<"sent" | "skipped" | "failed"> {
+  const admin = process.env.ADMIN_EMAIL;
+  if (!admin) return "skipped";
+  const key = `billing-notice:${eventId}`;
   try {
-    await fitMailboxesToPlan(workspaceId, now);
-  } catch (err) {
-    console.error("mailbox_plan_fit_failed", {
-      workspaceId,
-      error: err instanceof Error ? err.name : "unknown",
+    if (await getSetting(key)) return "skipped";
+    const c = billingChangeNoticeCopy({
+      kind,
+      planName: plan ? pricing.plans[plan].name : null,
+      adminUrl: appUrl("/admin"),
     });
+    const { text, html } = brandEmail(c);
+    const outcome = await (deps.send ?? sendEmail)({
+      to: admin,
+      subject: c.subject,
+      text,
+      html,
+      idempotencyKey: `billing-${eventId}`,
+      replyTo: null,
+    });
+    if (outcome === "not_configured") return "skipped";
+    await db()
+      .insert(appSettings)
+      .values({ key, value: new Date().toISOString() })
+      .onConflictDoNothing();
+    return "sent";
+  } catch (err) {
+    console.error("billing_notice_failed", emailErrorFields(err));
+    return "failed";
   }
+}
+
+/**
+ * Check 1 P3: the owner's one "You're set up" email after a paid checkout that included setup.
+ * Plan name only, no amounts. Once per checkout session. Never throws.
+ */
+export async function sendSetupConfirmation(
+  sessionId: string,
+  workspace: Pick<Workspace, "id" | "ownerUserId">,
+  plan: PlanId | null,
+  deps: { send?: EmailSender } = {},
+): Promise<"sent" | "skipped" | "failed"> {
+  const key = `setup-confirmation:${sessionId}`;
+  try {
+    if (await getSetting(key)) return "skipped";
+    const [owner] = await db()
+      .select({ email: users.email })
+      .from(users)
+      .where(eq(users.id, workspace.ownerUserId));
+    if (!owner?.email) return "skipped";
+    const c = setupConfirmationCopy({
+      planName: plan ? pricing.plans[plan].name : null,
+      operatorFirstName: siteConfig.operator.split(" ")[0]!,
+      phone: siteConfig.phone,
+      queueUrl: appUrl("/queue"),
+    });
+    const { text, html } = brandEmail(c);
+    const outcome = await (deps.send ?? sendEmail)({
+      to: owner.email,
+      subject: c.subject,
+      text,
+      html,
+      idempotencyKey: `setup-confirmation-${sessionId}`,
+    });
+    if (outcome === "not_configured") return "skipped";
+    await db()
+      .insert(appSettings)
+      .values({ key, value: new Date().toISOString() })
+      .onConflictDoNothing();
+    return "sent";
+  } catch (err) {
+    console.error("setup_confirmation_failed", {
+      ...emailErrorFields(err),
+    });
+    return "failed";
+  }
+}
+
+/** Check 17 P5: what happened to this account's last checkout that didn't simply pay. */
+export async function checkoutNotice(workspaceId: string): Promise<CheckoutNoticeKind | null> {
+  const [row] = await db()
+    .select({ action: activityLog.action })
+    .from(activityLog)
+    .where(
+      and(
+        eq(activityLog.workspaceId, workspaceId),
+        inArray(activityLog.action, [...CHECKOUT_NOTICE_ACTIONS]),
+      ),
+    )
+    .orderBy(desc(activityLog.createdAt), desc(activityLog.id))
+    .limit(1);
+  return checkoutNoticeFrom(row?.action);
 }
 
 export async function applyCheckoutCompleted(
@@ -495,10 +946,51 @@ export async function applyCheckoutCompleted(
   now = new Date(),
   deps: { send?: EmailSender } = {},
 ) {
-  if (session.mode !== "subscription" || session.payment_status !== "paid") return "ignored";
+  if (session.mode !== "subscription") return "ignored";
+  // Check 17 P5: every finished checkout leads somewhere. Only "paid" turns sending on.
+  const status = session.payment_status;
+  if (status !== "paid" && status !== "unpaid" && status !== "no_payment_required") {
+    return "ignored";
+  }
   const w = await workspaceById(session.metadata?.workspaceId ?? session.client_reference_id);
-  if (!w) return "unknown_workspace";
-  const plan = isPlanId(session.metadata?.plan) ? session.metadata.plan : w.plan;
+  if (!w) {
+    if (status !== "unpaid") await noteOrphan(now);
+    return "unknown_workspace";
+  }
+  await db()
+    .delete(appSettings)
+    .where(and(eq(appSettings.key, openCheckoutKey(w.id)), eq(appSettings.value, session.id)));
+  // Check 17 P9: Stripe's notice arrived; the owner isn't waiting on us any more.
+  await db()
+    .delete(appSettings)
+    .where(eq(appSettings.key, waitingKey(w.id)));
+  const newSub = typeof session.subscription === "string" ? session.subscription : null;
+  // Check 17 P4: a second paid checkout while the stored subscription is still live keeps the
+  // stored one (and its plan) and flags both for Davi, instead of losing track of the first.
+  const second =
+    !!newSub &&
+    !!w.stripeSubscriptionId &&
+    newSub !== w.stripeSubscriptionId &&
+    (await liveStored(w.stripeSubscriptionId)) !== null;
+  if (second) await flagSecondSubscription(w.id, newSub);
+  const subscriptionId = second ? w.stripeSubscriptionId : (newSub ?? w.stripeSubscriptionId);
+  if (status !== "paid") {
+    // A bank payment still clearing, or nothing charged (a full discount): keep Stripe's ids so
+    // the account can't pay twice, but nothing that turns sending on (no status, no plan, no
+    // setupPaidVia). The owner sees a line on /billing; Davi decides a free checkout in Stripe.
+    await db()
+      .update(workspaces)
+      .set({
+        stripeCustomerId:
+          typeof session.customer === "string" ? session.customer : w.stripeCustomerId,
+        stripeSubscriptionId: subscriptionId,
+      })
+      .where(eq(workspaces.id, w.id));
+    const action = status === "unpaid" ? "payment_pending" : "checkout_needs_review";
+    await log(w.id, action, {});
+    return status === "unpaid" ? "pending" : "needs_review";
+  }
+  const plan = second ? w.plan : isPlanId(session.metadata?.plan) ? session.metadata.plan : w.plan;
   const includesSetup = session.metadata?.includesSetup === "1";
   // Check 17 P1: a paused account isn't moved by Stripe; the payment is kept in paused_from,
   // where Resume takes it back to.
@@ -508,36 +1000,175 @@ export async function applyCheckoutCompleted(
     now,
   );
   const to = paused ? w.status : settled;
-  await db()
-    .update(workspaces)
-    .set({
-      status: to,
-      ...(paused ? { pausedFrom: settled } : {}),
-      plan,
-      stripeCustomerId:
-        typeof session.customer === "string" ? session.customer : w.stripeCustomerId,
-      stripeSubscriptionId:
-        typeof session.subscription === "string" ? session.subscription : w.stripeSubscriptionId,
-      // The only place a real setup payment is recorded — and what turns sending on. The date is
-      // this payment's unless one was already really paid (a hand-marked or test-card date isn't).
-      ...(includesSetup
-        ? {
-            setupPaidAt: setupReallyPaid(w) ? (w.setupPaidAt ?? now) : now,
-            setupPaidVia: "stripe" as const,
-          }
-        : {}),
-    })
-    .where(eq(workspaces.id, w.id));
+  // The plan's effects land with the plan, whichever event Stripe delivers first: a canceled
+  // Crew owner who comes back on Solo has the extra inboxes paused here, because once the plan
+  // reads Solo the subscription event no longer sees a move down (Q2). Check 17 P6: the same
+  // effects and `plan_changed` row as a plan change in /admin.
+  await db().transaction(async (tx) => {
+    await tx
+      .update(workspaces)
+      .set({
+        status: to,
+        ...(paused ? { pausedFrom: settled } : {}),
+        plan,
+        stripeCustomerId:
+          typeof session.customer === "string" ? session.customer : w.stripeCustomerId,
+        stripeSubscriptionId: subscriptionId,
+        // The only place a real setup payment is recorded — and what turns sending on. The date is
+        // this payment's unless one was already really paid (a hand-marked or test-card date isn't).
+        ...(includesSetup
+          ? {
+              setupPaidAt: setupReallyPaid(w) ? (w.setupPaidAt ?? now) : now,
+              setupPaidVia: "stripe" as const,
+            }
+          : {}),
+      })
+      .where(eq(workspaces.id, w.id));
+    await applyPlanChange(w.id, w.plan, plan, "stripe", now, tx);
+    // A cheaper plan pauses the Gmail addresses it doesn't cover; a bigger one turns them back
+    // on (decisions 2026-10-16; plan #47's Q2), for the plan that counts (`effectivePlan`).
+    await fitMailboxesToPlan(w.id, now, tx);
+  });
   await log(w.id, "payment_received", { plan, includesSetup, from: w.status, to });
-  await fitMailboxesSafely(w.id, now);
   await notifyPaymentReceived(session.id, { plan, includesSetup }, deps);
+  if (includesSetup) await sendSetupConfirmation(session.id, w, plan, deps);
   // Plan #47: a referral is settled the first time the account is active. Never fails the webhook.
   if (to === "active") await creditReferralSafely(w.id, now);
   return "applied";
 }
 
-export async function applySubscription(sub: Stripe.Subscription, now = new Date()) {
-  let w = await workspaceById(sub.metadata?.workspaceId);
+/**
+ * Check 17 P5: a bank payment for a checkout didn't go through. Nothing turned sending on, so
+ * nothing turns off; a subscription that never got paid is let go so the owner can choose a plan
+ * again ("Choose a plan to try again").
+ */
+export async function applyCheckoutAsyncFailed(session: Stripe.Checkout.Session) {
+  if (session.mode !== "subscription") return "ignored";
+  const w = await workspaceById(session.metadata?.workspaceId ?? session.client_reference_id);
+  if (!w) return "unknown_workspace";
+  const subId = typeof session.subscription === "string" ? session.subscription : null;
+  if (subId && w.stripeSubscriptionId === subId) {
+    const live = await liveStored(subId);
+    if (!live || !["active", "trialing", "past_due"].includes(live.status)) {
+      await db()
+        .update(workspaces)
+        .set({ stripeSubscriptionId: null })
+        .where(and(eq(workspaces.id, w.id), eq(workspaces.stripeSubscriptionId, subId)));
+    }
+  }
+  await log(w.id, "payment_failed_bank", {});
+  return "applied";
+}
+
+/** Check 17 P3: one activity row when a plan end date is newly scheduled (the date only). */
+async function notePlanEnd(w: Workspace, endsAt: Date | null) {
+  if (!endsAt || endsAt.getTime() === w.stripeCancelAt?.getTime()) return;
+  const endsOn = localDateKey(endsAt, await workspaceTimeZone(w.id));
+  await log(w.id, "plan_cancel_scheduled", { endsOn });
+}
+
+/** Check 1 P3: which of Davi's notices a status move is, if any. */
+function billingChangeKind(from: Workspace["status"], to: Workspace["status"]) {
+  if (from === to) return null;
+  if (to === "past_due") return "past_due" as const;
+  if (to === "canceled") return "canceled" as const;
+  if ((from === "past_due" || from === "canceled") && (to === "setup_paid" || to === "active")) {
+    return "recovered" as const;
+  }
+  return null;
+}
+
+/**
+ * Status, plan and "set to end" from a fresh subscription read, with the plan's effects in the
+ * same transaction: under a plan without autopilot every category goes back to drafts
+ * (whichever page the plan changed on); a move down to a plan with fewer inboxes pauses the
+ * newest-created extras (Davi, 2026-10-16, Q2: as at the end of a free month — nothing
+ * deleted, the owner can swap); room on the plan switches paused ones back on. The plan that
+ * counts (`effectivePlan`) decides, so a running free month keeps its inboxes. Returns the new
+ * status.
+ */
+export async function applyLiveSubscription(
+  w: Workspace,
+  sub: Stripe.Subscription,
+  now: Date = new Date(),
+  deps: { eventId?: string; send?: EmailSender } = {},
+) {
+  const plan = planFromLookupKey(sub.items.data[0]?.price?.lookup_key) ?? w.plan;
+  const ended = subscriptionEnded(sub.status);
+  // Check 17 P3: a cancellation from Stripe's page keeps the plan on until a date; say when.
+  const cancelAt = cancelAtOf(sub);
+  await notePlanEnd(w, cancelAt);
+  // Check 17 P1: a paused account stays paused, but what Stripe says is kept in paused_from,
+  // so Resume takes it to where the payment stands now (never back to "active" after a
+  // canceled or failed subscription).
+  const paused = w.status === "paused";
+  const settled = statusAfterSubscription(
+    paused ? { ...w, status: w.pausedFrom ?? resumeTarget(w, now) } : w,
+    sub.status,
+    now,
+  );
+  const to = paused ? w.status : settled;
+  await db().transaction(async (tx) => {
+    await tx
+      .update(workspaces)
+      .set({
+        status: to,
+        ...(paused ? { pausedFrom: settled } : {}),
+        plan,
+        stripeSubscriptionId: ended ? null : sub.id,
+        stripeCancelAt: cancelAt,
+      })
+      .where(eq(workspaces.id, w.id));
+    // Check 17 P6: a downgrade in Stripe's page has the same effects (and a `plan_changed` row)
+    // as one in /admin.
+    await applyPlanChange(w.id, w.plan, plan, "stripe", now, tx);
+    // A cheaper plan pauses the Gmail addresses it doesn't cover; a bigger one turns them back
+    // on (decisions 2026-10-16; plan #47's Q2), for the plan that counts (`effectivePlan`).
+    await fitMailboxesToPlan(w.id, now, tx);
+  });
+  if (paused) {
+    if (settled !== w.pausedFrom || plan !== w.plan) {
+      await log(w.id, "subscription_changed", {
+        stripeStatus: sub.status,
+        from: w.status,
+        to: w.status,
+        pausedFrom: { before: w.pausedFrom, after: settled },
+        plan,
+      });
+    }
+    // Stripe doesn't move a paused account, so there's no billing notice for one.
+    return to;
+  }
+  if (to !== w.status || plan !== w.plan) {
+    await log(w.id, "subscription_changed", { stripeStatus: sub.status, from: w.status, to, plan });
+  }
+  // Check 1 P3: Davi hears about every past due, recovery and cancellation (never for his own
+  // house account).
+  const kind = billingChangeKind(w.status, to);
+  if (kind && w.setupPaidVia !== "house") {
+    await notifyBillingChange(
+      deps.eventId ?? `${sub.id}:${kind}:${now.toISOString()}`,
+      kind,
+      plan,
+      deps,
+    );
+  }
+  return to;
+}
+
+/**
+ * A subscription event. Stripe doesn't promise the order of events (Check 17 P4; plan #47,
+ * design §1.9), so the payload only names the subscription: what it says now is retrieved fresh
+ * (with its discounts, for the free months), and an event about a subscription other than the
+ * account's own never changes the account.
+ */
+export async function applySubscription(
+  event: Stripe.Subscription,
+  now = new Date(),
+  deps: { eventId?: string; send?: EmailSender } = {},
+) {
+  const sub = await freshSubscription(event);
+  let w = await workspaceById(sub.metadata?.workspaceId ?? event.metadata?.workspaceId);
   if (!w) {
     const [bySub] = await db()
       .select()
@@ -545,41 +1176,39 @@ export async function applySubscription(sub: Stripe.Subscription, now = new Date
       .where(eq(workspaces.stripeSubscriptionId, sub.id));
     w = bySub;
   }
-  if (!w) return "unknown_workspace";
-  const plan = planFromLookupKey(sub.items.data[0]?.price?.lookup_key) ?? w.plan;
-  const ended = sub.status === "canceled" || sub.status === "incomplete_expired";
-  if (w.status === "paused") {
-    // Check 17 P1: a paused account stays paused, but what Stripe says is kept in paused_from,
-    // so Resume takes it to where the payment stands now (never back to "active" after a
-    // canceled or failed subscription).
-    const before = w.pausedFrom ?? resumeTarget(w, now);
-    const after = statusAfterSubscription({ ...w, status: before }, sub.status, now);
-    await db()
-      .update(workspaces)
-      .set({ pausedFrom: after, plan, stripeSubscriptionId: ended ? null : sub.id })
-      .where(eq(workspaces.id, w.id));
-    if (after !== w.pausedFrom || plan !== w.plan) {
-      await log(w.id, "subscription_changed", {
-        stripeStatus: sub.status,
-        from: w.status,
-        to: w.status,
-        pausedFrom: { before: w.pausedFrom, after },
-        plan,
-      });
+  if (!w) {
+    if (!subscriptionEnded(sub.status)) await noteOrphan(now);
+    return "unknown_workspace";
+  }
+  if (w.stripeSubscriptionId && w.stripeSubscriptionId !== sub.id) {
+    if (subscriptionEnded(sub.status)) {
+      // A late or old subscription ending: not the account's plan. Ids are never logged.
+      console.info("stripe_event_stale");
+      await db()
+        .delete(appSettings)
+        .where(and(eq(appSettings.key, secondSubKey(w.id)), eq(appSettings.value, sub.id)));
+      return "stale";
     }
-    if (plan !== w.plan) await fitMailboxesSafely(w.id, now);
-    return "applied";
+    if ((await liveStored(w.stripeSubscriptionId)) !== null) {
+      await flagSecondSubscription(w.id, sub.id);
+      return "second_subscription";
+    }
+    // The stored one is gone at Stripe: this live subscription is the account's plan now.
   }
-  const to = statusAfterSubscription(w, sub.status, now);
-  await db()
-    .update(workspaces)
-    .set({ status: to, plan, stripeSubscriptionId: ended ? null : sub.id })
-    .where(eq(workspaces.id, w.id));
-  if (to !== w.status || plan !== w.plan) {
-    await log(w.id, "subscription_changed", { stripeStatus: sub.status, from: w.status, to, plan });
+  let current = sub;
+  if (subscriptionEnded(sub.status) && w.stripeSubscriptionId === sub.id) {
+    // The account's plan ended while a second one is still live: that one carries on.
+    const other = await getSetting(secondSubKey(w.id));
+    if (other) {
+      await db().delete(appSettings).where(eq(appSettings.key, other.key));
+      const live = await liveStored(other.value);
+      if (live) current = live;
+    }
   }
-  // A cheaper plan pauses the Gmail addresses it doesn't cover; a bigger one turns them back on.
-  if (plan !== w.plan) await fitMailboxesSafely(w.id, now);
+  const to = await applyLiveSubscription(w, current, now, deps);
+  // Plan #47's free months follow the same fresh read. Never fails the webhook: the status and
+  // plan above have landed, and the 15-minute sweep catches the reward up.
+  await reconcileReferralSafely(w.id, current, now);
   if (to === "active") await creditReferralSafely(w.id, now);
   return "applied";
 }
@@ -615,12 +1244,29 @@ export async function handleStripeWebhook(rawBody: string, signature: string | n
   try {
     switch (event.type) {
       case "checkout.session.completed":
+      case "checkout.session.async_payment_succeeded":
+        // async_payment_succeeded arrives with payment_status "paid".
         await applyCheckoutCompleted(event.data.object);
+        break;
+      case "checkout.session.async_payment_failed":
+        await applyCheckoutAsyncFailed(event.data.object);
         break;
       case "customer.subscription.created":
       case "customer.subscription.updated":
       case "customer.subscription.deleted":
-        await applySubscription(event.data.object);
+        await applySubscription(event.data.object, new Date(), { eventId: event.id });
+        break;
+      case "charge.refunded":
+        await recordRefunds(event.data.object);
+        break;
+      case "charge.dispute.created":
+      case "charge.dispute.closed":
+        await recordDispute(
+          event.data.object,
+          event.type === "charge.dispute.created" ? "dispute_opened" : "dispute_closed",
+          new Date(),
+          { livemode: event.livemode === true },
+        );
         break;
     }
   } catch (err) {

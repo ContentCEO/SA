@@ -10,8 +10,10 @@ import {
   GROWTH_NOTIFY_TIMEOUT_MS,
   growthNotifyKey,
   normalizeUsPhone,
+  growthConfirmKey,
   notifyGrowthRequest,
   requestGrowthCall,
+  sendGrowthConfirmation,
 } from "@/server/growth";
 import { splitWaitlistNote } from "@/server/growth-note";
 import { requestGrowthCallAction } from "@/app/growth-actions";
@@ -232,15 +234,40 @@ describe("Ask Davi to call me: where it's kept", () => {
 });
 
 describe("Ask Davi to call me: the form action", () => {
-  it("a bot that fills the hidden field is told it worked; nothing is stored, sent or counted", async () => {
-    const r = await requestGrowthCallAction(
-      { status: "idle" },
-      form({ ...goodForm, website: "http://spam.example" }),
-    );
-    expect(r).toEqual({ status: "requested" });
+  it("a bot that fills the hidden field with junk around it is told it worked; nothing is stored, sent or counted", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    for (const trap of ["sa_hp", "website"]) {
+      const r = await requestGrowthCallAction(
+        { status: "idle" },
+        form({ name: "Bot", email: "bot@x.com", [trap]: "http://spam.example" }),
+      );
+      expect(r).toEqual({ status: "requested" });
+    }
     expect(await database.select().from(waitlist)).toEqual([]);
     expect(await database.select().from(rateLimits)).toEqual([]);
     expect(sendEmail).not.toHaveBeenCalled();
+    expect(info).toHaveBeenCalledWith("growth_trap_hit", { stored: false });
+  });
+
+  it("Check 2 P3: a real-looking request with the hidden field filled is stored, flagged, and nobody is emailed", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const r = await requestGrowthCallAction(
+      { status: "idle" },
+      form({ ...goodForm, note: "Lowell kitchen", sa_hp: "https://mikes.example" }),
+    );
+    expect(r).toEqual({ status: "requested", phone: "617-555-0142" });
+    const [row] = await database.select().from(waitlist);
+    expect(row!.note).toContain("Flag: hidden field filled");
+    expect(splitWaitlistNote(row!.note).growth[0]).toMatchObject({
+      phone: "617-555-0142",
+      trapFilled: true,
+    });
+    expect(sendEmail).not.toHaveBeenCalled();
+    expect(info).toHaveBeenCalledWith("growth_trap_hit", { stored: true });
+    const logged = JSON.stringify(info.mock.calls);
+    for (const leak of ["Mike", "617", "mike@shop.com", "Lowell", "mikes.example"]) {
+      expect(logged).not.toContain(leak);
+    }
   });
 
   it("shares the waitlist's limit: 10 tries an hour from one place across both forms", async () => {
@@ -278,10 +305,27 @@ describe("Ask Davi to call me: the form action", () => {
     const info = vi.spyOn(console, "info").mockImplementation(() => {});
     const r = await requestGrowthCallAction({ status: "idle" }, form(goodForm));
     expect(r).toEqual({ status: "requested", phone: "617-555-0142" });
-    expect(sendEmail).toHaveBeenCalledTimes(1);
-    expect(info).toHaveBeenCalledWith("growth_call_requested", { existing: false, services: 2 });
+    // Davi's notice and the visitor's confirmation (Check 2 P2).
+    expect(sendEmail).toHaveBeenCalledTimes(2);
+    expect(sendEmail.mock.calls.map((c) => c[0].to).sort()).toEqual([ADMIN, "mike@shop.com"]);
+    expect(info).toHaveBeenCalledWith("growth_call_requested", {
+      existing: false,
+      services: 2,
+      heardFrom: false,
+    });
     const logged = JSON.stringify(info.mock.calls);
     for (const leak of ["Mike", "617", "mike@shop.com"]) expect(logged).not.toContain(leak);
+  });
+
+  it('Check 41 P4: the form\'s "Which trade?" reaches the stored request (integrator fix)', async () => {
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    const r = await requestGrowthCallAction(
+      { status: "idle" },
+      form({ ...goodForm, trade: "other", tradeOther: "pest control" }),
+    );
+    expect(r).toEqual({ status: "requested", phone: "617-555-0142" });
+    const [row] = await database.select().from(waitlist).where(eq(waitlist.email, "mike@shop.com"));
+    expect(row).toMatchObject({ trade: "other", tradeOther: "pest control" });
   });
 
   it("if the notice to Davi fails, the request still counts and only the error's name is logged", async () => {
@@ -292,6 +336,8 @@ describe("Ask Davi to call me: the form action", () => {
     expect(r).toEqual({ status: "requested", phone: "617-555-0142" });
     expect(await database.select().from(waitlist)).toHaveLength(1);
     expect(warn).toHaveBeenCalledWith("growth_notify_failed", { error: "TypeError" });
+    expect(warn).toHaveBeenCalledWith("growth_confirm_failed", { error: "TypeError" });
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("mike@shop.com");
   });
 
   it("a notice that never finishes doesn't hold the visitor up past the timeout", async () => {
@@ -301,7 +347,7 @@ describe("Ask Davi to call me: the form action", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
       const pending = requestGrowthCallAction({ status: "idle" }, form(goodForm));
-      await vi.waitFor(() => expect(sendEmail).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() => expect(sendEmail).toHaveBeenCalledTimes(2));
       await vi.advanceTimersByTimeAsync(GROWTH_NOTIFY_TIMEOUT_MS);
       expect(await pending).toEqual({ status: "requested", phone: "617-555-0142" });
     } finally {
@@ -373,5 +419,173 @@ describe("the notice to Davi", () => {
     vi.stubEnv("ADMIN_EMAIL", "");
     expect(await notifyGrowthRequest("mike@shop.com", { send: sendEmail })).toBe("skipped");
     expect(sendEmail).not.toHaveBeenCalled();
+  });
+});
+
+describe("Check 2 P2: the visitor's confirmation", () => {
+  it("holds no typed name, note or service, only fixed words and Davi's number", async () => {
+    await requestGrowthCallAction(
+      { status: "idle" },
+      form({ ...goodForm, name: "Zed Quill", note: "Lowell kitchen", services: ["website"] }),
+    );
+    const mail = sendEmail.mock.calls.map((c) => c[0]).find((e) => e.to === "mike@shop.com")!;
+    expect(mail.subject).toBe("Your Squared Away Growth call");
+    const body = `${mail.subject}\n${mail.text}\n${mail.html}`;
+    for (const typed of ["Zed", "Quill", "Lowell", "Website", "617-555-0142"]) {
+      expect(body).not.toContain(typed);
+    }
+    expect(mail.text).toContain("Davi will call you for your free Squared Away Growth call.");
+    expect(mail.text).toContain("978-201-9763");
+    expect(mail.text).toContain("We won't email you about anything else.");
+  });
+
+  it("one per address per New York day (the key), with no address in the key", async () => {
+    const now = new Date("2026-10-12T18:05:00Z");
+    const key = growthConfirmKey("Mike@Shop.com", now);
+    expect(key).toBe(growthConfirmKey("mike@shop.com", new Date("2026-10-12T23:59:00Z")));
+    expect(key).not.toBe(growthConfirmKey("mike@shop.com", new Date("2026-10-13T12:00:00Z")));
+    expect(key).toMatch(/^growth-confirm-[0-9a-f]{16}-2026-10-12$/);
+    expect(key).not.toContain("mike");
+    await sendGrowthConfirmation("Mike@Shop.com", { send: sendEmail, now });
+    expect(sendEmail.mock.calls[0]![0].idempotencyKey).toBe(key);
+  });
+
+  it("sets Reply-To from SUPPORT_EMAIL only when it is set", async () => {
+    await sendGrowthConfirmation("mike@shop.com", { send: sendEmail });
+    expect(sendEmail.mock.calls[0]![0].replyTo).toBeUndefined();
+    vi.stubEnv("SUPPORT_EMAIL", "help@squaredaway.app");
+    await sendGrowthConfirmation("mike@shop.com", { send: sendEmail });
+    expect(sendEmail.mock.calls[1]![0].replyTo).toBe("help@squaredaway.app");
+  });
+
+  it("a confirmation that fails or isn't configured leaves the request and the row alone", async () => {
+    sendEmail.mockImplementation(async (e) => {
+      if (e.to === "mike@shop.com") return "not_configured";
+      return "sent";
+    });
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    const r = await requestGrowthCallAction({ status: "idle" }, form(goodForm));
+    expect(r).toEqual({ status: "requested", phone: "617-555-0142" });
+    const [row] = await database.select().from(waitlist);
+    expect(splitWaitlistNote(row!.note).growth).toHaveLength(1);
+  });
+
+  it("the hidden-field path sends nothing", async () => {
+    await requestGrowthCallAction({ status: "idle" }, form({ website: "http://spam.example" }));
+    expect(sendEmail).not.toHaveBeenCalled();
+  });
+});
+
+describe("Check 3 P4: Not sure yet", () => {
+  it("is accepted alone, stored last with its label; an empty list and unknown values still fail", async () => {
+    expect(parse({ services: ["not_sure", "reviews"] }).services).toEqual(["reviews", "not_sure"]);
+    await requestGrowthCall(parse({ services: ["not_sure"] }));
+    const [row] = await database.select().from(waitlist);
+    expect(row!.note).toContain("Help with: Not sure yet — tell me what to do first");
+    expect(splitWaitlistNote(row!.note).growth[0]!.services).toEqual([
+      "Not sure yet — tell me what to do first",
+    ]);
+    const empty = growthInput.safeParse({ ...good, services: [] });
+    expect(empty.error?.issues[0]?.message).toBe("Pick at least one thing you want help with.");
+    const unknown = growthInput.safeParse({ ...good, services: ["seo"] });
+    expect(unknown.error?.issues[0]?.message).toBe("Pick from the list.");
+  });
+});
+
+describe("Check 5 P2 + Check 45 P5: optional heard-from, sent-by, state and time zone", () => {
+  it("blank is fine; unknown values are refused in plain words; a bad zone is dropped", () => {
+    expect(parse()).toMatchObject({ heardFrom: null, sentBy: null, state: null, timeZone: null });
+    expect(parse({ heardFrom: "", state: "", timeZone: "" })).toMatchObject({
+      heardFrom: null,
+      state: null,
+      timeZone: null,
+    });
+    expect(growthInput.safeParse({ ...good, heardFrom: "radio" }).error?.issues[0]?.message).toBe(
+      "Pick from the list.",
+    );
+    expect(growthInput.safeParse({ ...good, state: "ZZ" }).error?.issues[0]?.message).toBe(
+      "Pick a state from the list.",
+    );
+    expect(parse({ state: "AZ", timeZone: "America/Phoenix" })).toMatchObject({
+      state: "AZ",
+      timeZone: "America/Phoenix",
+    });
+    expect(parse({ timeZone: "Mars/Olympus" }).timeZone).toBeNull();
+  });
+
+  it("Sent by is one line, at most 80 characters, and kept only with Another contractor", () => {
+    expect(
+      growthInput.safeParse({ ...good, heardFrom: "contractor", sentBy: "x".repeat(81) }).error
+        ?.issues[0]?.message,
+    ).toBe("Keep it under 80 characters.");
+    expect(parse({ heardFrom: "contractor", sentBy: "Mike\n[Growth call]" }).sentBy).toBe(
+      "Mike (growth call)",
+    );
+    expect(parse({ heardFrom: "google", sentBy: "Mike" }).sentBy).toBeNull();
+  });
+
+  it("is stored as value ids in the block, and never logged", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const r = await requestGrowthCallAction(
+      { status: "idle" },
+      form({
+        ...goodForm,
+        heardFrom: "contractor",
+        sentBy: "Zed Quill",
+        state: "AZ",
+        timeZone: "America/Phoenix",
+      }),
+    );
+    expect(r.status).toBe("requested");
+    const [row] = await database.select().from(waitlist);
+    expect(splitWaitlistNote(row!.note).growth[0]).toMatchObject({
+      heardFrom: "contractor",
+      sentBy: "Zed Quill",
+      state: "AZ",
+      timeZone: "America/Phoenix",
+    });
+    expect(row!.note).not.toContain("Another contractor told me");
+    expect(info).toHaveBeenCalledWith("growth_call_requested", {
+      existing: false,
+      services: 2,
+      heardFrom: true,
+    });
+    expect(JSON.stringify(info.mock.calls)).not.toMatch(/Zed|contractor|AZ|Phoenix/);
+  });
+});
+
+describe("Check 26 P8: at most 5 requests a day for one email", () => {
+  it("the 6th request for one address in a day is refused in plain words, from any IP", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    for (let i = 0; i < 5; i++) {
+      ip = `203.0.113.${i + 1}`;
+      const r = await requestGrowthCallAction(
+        { status: "idle" },
+        form({ ...goodForm, note: `try ${i}` }),
+      );
+      expect(r.status).toBe("requested");
+    }
+    ip = "203.0.113.99";
+    const r = await requestGrowthCallAction({ status: "idle" }, form({ ...goodForm, note: "6" }));
+    expect(r.status).toBe("error");
+    expect(r.errors?.form).toEqual([
+      "Too many tries for this email today. Try again tomorrow, or call or text 978-201-9763.",
+    ]);
+    const [row] = await database.select().from(waitlist);
+    expect(splitWaitlistNote(row!.note).growth[0]!.note).toBe("try 4");
+    // The key is the HMAC, never the address.
+    const keys = (await database.select().from(rateLimits)).map((k) => k.key);
+    expect(keys.join(" ")).not.toContain("mike");
+  });
+
+  it("the waitlist form shares the per-email limit", async () => {
+    const wl = { name: "Mike", email: "mike@shop.com", trade: "plumbing", teamSize: "2–5" };
+    for (let i = 0; i < 5; i++) {
+      ip = `203.0.113.${i + 10}`;
+      expect((await joinWaitlistAction({ status: "idle" }, form(wl))).status).toBe("joined");
+    }
+    ip = "203.0.113.98";
+    const r = await joinWaitlistAction({ status: "idle" }, form(wl));
+    expect(r.errors?.form?.[0]).toContain("Too many tries for this email today.");
   });
 });

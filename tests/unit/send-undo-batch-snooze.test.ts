@@ -6,8 +6,10 @@ import type { Database } from "@/db";
 import { activityLog, drafts, messages, threads, workspaces } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { batchEligible, firstLine, type BatchCandidate } from "@/server/batch-rules";
+import { namesAVisitTime } from "@/ai/draft-checks";
 import {
   batchCandidates,
+  batchReview,
   batchSend,
   bodyHash,
   deliverQueuedSend,
@@ -172,6 +174,22 @@ describe("plan M5 sending: undo (#7), batch (#5), snooze (#6)", () => {
       expect(await undoSend(workspaceId, draft.id)).toBe(false);
     });
 
+    it("a conversation trashed in Gmail during the window never sends (Check 25 P2)", async () => {
+      const { thread, draft } = await seed();
+      await queueSend(workspaceId, draft.id, deps());
+      await database
+        .update(messages)
+        .set({ labelIds: ["TRASH"] })
+        .where(eq(messages.threadId, thread.id));
+      await database.update(threads).set({ inInbox: false }).where(eq(threads.id, thread.id));
+      expect(await deliverQueuedSend(draft.id, deps(later(21)))).toEqual({
+        status: "stopped",
+        why: "left_inbox",
+      });
+      expect(writer.sent).toEqual([]);
+      expect((await row(draft.id)).sendAfter).toBeNull();
+    });
+
     it("tapping Send twice starts one window, and a direct send can't jump it", async () => {
       const { draft } = await seed();
       await queueSend(workspaceId, draft.id, deps());
@@ -245,6 +263,7 @@ describe("plan M5 sending: undo (#7), batch (#5), snooze (#6)", () => {
       autopilotCounting: false,
       acceptsQuote: false,
       purpose: null,
+      visitTime: false,
     };
     const all = ["quote_request", "customer_question", "scheduling", "invoice_payment"];
 
@@ -269,6 +288,50 @@ describe("plan M5 sending: undo (#7), batch (#5), snooze (#6)", () => {
         batchEligible({ ...base, category: "invoice_payment", amountsInEmail: [1200] }, all),
       ).toBe(false);
       expect(batchEligible({ ...base, category: "invoice_payment" }, all)).toBe(true);
+    });
+
+    it("Check 41 P2: a scheduling reply that confirms a day or time goes one at a time", () => {
+      expect(namesAVisitTime("Yes, still on for tomorrow morning.")).toBe(true);
+      expect(namesAVisitTime("See you Tuesday at 8am.")).toBe(true);
+      expect(namesAVisitTime("Thanks, noted, we'll skip you.")).toBe(false);
+      expect(namesAVisitTime("I can be there at {{time}}.")).toBe(false);
+      const visit = "Yes, we're still planning on tomorrow morning.";
+      const sched = { ...base, category: "scheduling", body: visit, visitTime: true };
+      // The customer wrote "tomorrow" first — still refused: it confirms the visit.
+      expect(batchEligible(sched, all)).toBe(false);
+      expect(
+        batchEligible(
+          {
+            ...base,
+            category: "scheduling",
+            body: "Thanks, noted, we'll skip you.",
+            visitTime: false,
+          },
+          all,
+        ),
+      ).toBe(true);
+      // Other kinds naming a day are unchanged (still decided by flags).
+      expect(
+        batchEligible(
+          { ...base, category: "customer_question", body: visit, visitTime: true },
+          all,
+        ),
+      ).toBe(true);
+    });
+
+    it("Check 41 P2: batchSend refuses a day-confirming scheduling reply the browser sends", async () => {
+      const ok = await seed();
+      const rain = await seed({
+        category: "scheduling",
+        body: "Hi Dana,\nYes, still on for tomorrow morning.\nSam",
+      });
+      const review = await batchReview(workspaceId, all);
+      expect(review.rows.map((r) => r.draftId)).toEqual([ok.draft.id]);
+      expect(review.heldForVisitTime).toBe(1);
+      const r = await batchSend(workspaceId, [ok.draft.id, rain.draft.id], all, deps());
+      expect(r.queued.map((q) => q.draftId)).toEqual([ok.draft.id]);
+      expect(r.refused).toBe(1);
+      expect((await row(rain.draft.id)).sendAfter).toBeNull();
     });
 
     it("ineligible drafts are refused even when the browser sends their IDs", async () => {

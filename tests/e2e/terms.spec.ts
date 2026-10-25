@@ -132,7 +132,7 @@ test("an account that hasn't agreed is held on /welcome/terms until it does", as
   // The button without the box: refused on the server, nothing recorded.
   const agreeButton = page.getByRole("button", { name: "Agree and continue" });
   await atLeast44High(agreeButton);
-  await atLeast44High(page.getByRole("button", { name: "Sign out" }));
+  await atLeast44High(page.getByRole("button", { name: "Sign out", exact: true }));
   await atLeast44High(page.locator("label").filter({ has: agreeBox(page) }));
   await agreeButton.click();
   await expect(errorLine(page)).toHaveText(AGREE_REQUIRED_MESSAGE);
@@ -177,7 +177,7 @@ test("someone who doesn't agree can sign out from the terms screen", async ({ pa
   await signInAs(context, owner, { agreedToTerms: false });
   await page.goto("/queue");
   await expect(page).toHaveURL(/\/welcome\/terms/);
-  await page.getByRole("button", { name: "Sign out" }).click();
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(page).toHaveURL(/\/$/);
   await page.goto("/queue");
   await expect(page).toHaveURL(/\/signin$/);
@@ -211,6 +211,7 @@ test("someone who doesn't agree can still disconnect Gmail and delete their acco
   const confirm = page.getByRole("form", { name: "Delete my account" });
   await expect(confirm).toContainText("This can't be undone");
   await noHorizontalScroll(page);
+  await confirm.getByLabel("Type DELETE to confirm").fill("delete");
   await confirm.getByRole("button", { name: "Yes, delete everything" }).click();
   await expect(page).toHaveURL(/\/goodbye$/);
   expect(
@@ -225,4 +226,32 @@ test("a link back to another site is never followed", async ({ page, context }) 
   await agreeBox(page).check();
   await page.getByRole("button", { name: "Agree and continue" }).click();
   await expect(page).toHaveURL(/\/queue$/);
+});
+
+test("an owner on an older version is told what changed (Check 27 P3)", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await signInAs(context, owner);
+  // The first version anyone agreed to: every later entry in docs/legal-changes.md applies.
+  await testDb
+    .update(schema.users)
+    .set({ termsVersion: "2026-10-15" })
+    .where(eq(schema.users.id, owner.userId));
+
+  await page.goto("/queue");
+  await expect(page).toHaveURL(/\/welcome\/terms\?next=%2Fqueue$/);
+  const changed = page.getByRole("region", { name: "What changed" });
+  await expect(changed.getByRole("heading", { level: 2, name: "What changed" })).toBeVisible();
+  expect(await changed.getByRole("listitem").count()).toBeGreaterThanOrEqual(2);
+  await expect(changed).toContainText("two Gmail permissions");
+  await noHorizontalScroll(page);
+
+  // Someone who never agreed reads the whole documents: no list.
+  await signInAs(context, owner, { agreedToTerms: false });
+  await page.goto("/queue");
+  await expect(page).toHaveURL(/\/welcome\/terms\?next=%2Fqueue$/);
+  await expect(page.getByRole("heading", { level: 1 })).toContainText("one thing first,");
+  await expect(page.getByRole("heading", { name: "What changed" })).toHaveCount(0);
 });

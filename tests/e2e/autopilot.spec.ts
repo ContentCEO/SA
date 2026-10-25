@@ -59,6 +59,20 @@ test("unlocked: each kind of email shows its progress; earned ones can be turned
   await expect(section).toContainText(
     "Unlocks after 10 replies you sent without changing them (0 so far)",
   );
+  // Check 20 P6: one rule per line, true to the code.
+  await expect(
+    section.getByText("It sends on its own only when all of these are true:"),
+  ).toBeVisible();
+  await expect(
+    section.getByRole("listitem").filter({ hasText: "No price or amount anywhere in the reply." }),
+  ).toBeVisible();
+  await expect(section).toContainText(
+    'For Invoices & payments: only when the email has no amount, like "Did you get my check?"',
+  );
+  await expect(section).toContainText("At most 20 in any 24 hours.");
+  await expect(section).toContainText("Each one waits 10 minutes in your queue with Hold it.");
+  await expect(section).toContainText("The email and the reply are in English.");
+  await expect(section).not.toContainText("anything about money");
 
   const row = section.getByRole("listitem").filter({ hasText: "Scheduling" });
   await row.getByText("Turn on").click();
@@ -91,7 +105,7 @@ test("queue: an autopilot reply says when it sends, and Hold it stops it", async
   await signInAs(context, owner);
 
   await page.goto("/queue");
-  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  const card = page.getByRole("article", { name: "Priya · draft reply" });
   await expect(card.getByRole("status")).toContainText(/Autopilot sends this at \d{1,2}:\d{2}/);
   await card.getByRole("button", { name: "Hold it" }).click();
   await expect(page.getByText("Held. It won't send until you tap Send reply.")).toBeVisible();
@@ -113,7 +127,7 @@ test("queue: the autopilot countdown moves on its own and refreshes at zero (Che
   await signInAs(context, owner);
   await page.clock.install();
   await page.goto("/queue");
-  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  const card = page.getByRole("article", { name: "Priya · draft reply" });
   await expect(card.getByText(/^Sends in [78] min$/)).toBeVisible();
   // The clock time is there once for screen readers, not on every tick.
   await expect(card.getByRole("status")).toContainText(/Autopilot sends this at \d{1,2}:\d{2}/);
@@ -134,7 +148,11 @@ test("admin: set an owner's plan by hand", async ({ page, context }) => {
   const card = page.getByRole("article", { name: owner.email });
   await card.getByLabel("Plan").selectOption("crew");
   await card.getByRole("button", { name: "Save plan" }).click();
-  await expect(page.getByText("Plan saved.")).toBeVisible();
+  // Check 16 P6: the notice lands on the card it changed, naming it.
+  await page.waitForURL(new RegExp(`#acct-${owner.workspaceId}$`));
+  await expect(
+    page.getByRole("article", { name: owner.email }).getByText(/^Plan saved for .+: Crew\.$/),
+  ).toBeVisible();
   const [w] = await testDb
     .select()
     .from(schema.workspaces)

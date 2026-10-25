@@ -266,14 +266,20 @@ describe("C3: every route handler is in the table with the guard it uses", () =>
     | "e2e-hook" // local e2e only: 404 unless e2e mode + ≥32-char secret (the e2e app is bound to loopback in playwright.config.ts)
     | "authjs" // Auth.js's own handlers
     | "signed-link" // a link we emailed: HMAC over the id with AUTH_SECRET, constant-time, first
+    | "twilio-signature" // Check 19 P6: X-Twilio-Signature over our callback URL, constant time, first
+    | "graph-client-state" // Plan #49: 404 unless Outlook is offered; then Graph's per-subscription clientState (sha256 stored, constant time)
     | "shared-secret" // Check 1 P4: an env secret compared in constant time, first; else 404
     | "public"; // static, reads nothing private
   const ROUTES: Record<string, Guard> = {
     "src/app/api/badge/route.ts": "session",
     "src/app/api/push/summary/route.ts": "session",
+    "src/app/api/push/subscription/route.ts": "session",
+    "src/app/api/twilio/status/route.ts": "twilio-signature",
     "src/app/api/drafts/[id]/send/route.ts": "session",
     "src/app/api/gmail/callback/route.ts": "session+state",
     "src/app/api/gmail/push/route.ts": "token",
+    "src/app/api/outlook/notify/route.ts": "graph-client-state",
+    "src/app/api/outlook/callback/route.ts": "session+state",
     "src/app/api/stripe/webhook/route.ts": "stripe-signature",
     "src/app/api/inngest/route.ts": "inngest-signature",
     "src/app/api/test-hooks/run/route.ts": "e2e-hook",
@@ -324,10 +330,14 @@ describe("C3: every route handler is in the table with the guard it uses", () =>
             if (at > -1) expect(terms, work).toBeLessThan(at);
           }
           if (guard === "session") {
-            expect(src).toContain("getWorkspaceForUser(session.user.id)");
+            // Check 26 P3: the workspace comes with the session-version check.
+            expect(src).toMatch(/getWorkspaceForSession\(session\??\.user\)/);
+            expect(src).not.toContain("getWorkspaceForUser(");
             expect(src).toMatch(/status: 401/);
           } else {
-            expect(src).toMatch(/statesMatch\(expected, params\.get\("state"\)\)/);
+            // Check 42 P3: the cookie also says which Gmail the connect is for; the random
+            // state part is what's compared.
+            expect(src).toMatch(/statesMatch\(cookie\?\.state, params\.get\("state"\)\)/);
             expect(readFileSync("src/mailbox/gmail/oauth-state.ts", "utf8")).toContain(
               "timingSafeEqual",
             );
@@ -336,8 +346,11 @@ describe("C3: every route handler is in the table with the guard it uses", () =>
         }
         case "token": {
           const [post] = handlers(file);
-          expect(firstStatement(post!.fn)).toMatch(/^if \(!tokenOk\(/);
-          expect(src).toContain("timingSafeEqual");
+          // Check 26 P10: Pub/Sub's signed ID token (the old ?token= only during the switch).
+          expect(firstStatement(post!.fn)).toMatch(/^if \(!\(await pushAuthorized\(request\)\)\)/);
+          const auth = readFileSync("src/server/pubsub-auth.ts", "utf8");
+          expect(auth).toContain('verify("RSA-SHA256"');
+          expect(auth).toContain("timingSafeEqual");
           break;
         }
         case "stripe-signature":
@@ -370,10 +383,55 @@ describe("C3: every route handler is in the table with the guard it uses", () =>
           expect(readFileSync("src/server/trial-email-links.ts", "utf8")).toContain(
             "timingSafeEqual",
           );
+          // Check 18 P9: `k=digest` links can only turn the morning email off (rate-limited per
+          // link; GET only redirects to a page that asks). Each kind signs its own purpose.
           expect(src.match(/await [a-zA-Z.]+\(/g)).toEqual([
             "await stopTrialEmails(",
+            "await hitLimit(",
+            "await turnOffDigest(",
+            "await request.formData(",
             "await stopTrialEmails(",
           ]);
+          const get = src.slice(
+            src.indexOf("export async function GET"),
+            src.indexOf("export async function POST"),
+          );
+          expect(get).not.toContain("turnOffDigest");
+          expect(readFileSync("src/server/trial-email-links.ts", "utf8")).toContain(
+            'digest: "digest-emails:stop:"',
+          );
+          break;
+        }
+        case "twilio-signature": {
+          const hs = handlers(file);
+          expect(hs.map((h) => h.name)).toEqual(["POST"]);
+          // Nothing but reading the body happens before the signature check.
+          const body = src.slice(src.indexOf("export async function POST"));
+          const check = body.indexOf("twilioSignatureOk(");
+          expect(check).toBeGreaterThan(-1);
+          expect(body.slice(0, check).match(/await [a-zA-Z.]+\(/g)).toEqual([
+            "await request.text(",
+          ]);
+          expect(body.indexOf("status: 403")).toBeGreaterThan(check);
+          expect(readFileSync("src/lib/twilio-signature.ts", "utf8")).toContain("timingSafeEqual");
+          break;
+        }
+        case "graph-client-state": {
+          const hs = handlers(file);
+          expect(hs.map((h) => h.name)).toEqual(["POST"]);
+          // Off (404) before anything else, then nothing but the handshake echo or a
+          // clientState-checked sync wake.
+          expect(firstStatement(hs[0]!.fn)).toBe(
+            "if (!outlookOffered()) return new NextResponse(null, { status: 404 });",
+          );
+          expect(src).toContain("clientStateMatches(box.clientStateSha256, n.clientState)");
+          expect(src.match(/await [a-zA-Z.]+\(/g)).toEqual([
+            "await request.json(",
+            "await db(",
+            "await db(",
+            "await enqueue(",
+          ]);
+          expect(readFileSync("src/server/outlook-push.ts", "utf8")).toContain("timingSafeEqual");
           break;
         }
         case "shared-secret": {
@@ -933,8 +991,12 @@ describe("C4: no open redirects", () => {
         "createPortal() got from Stripe, never from the form",
     ],
     [
-      "src/app/(app)/connect/actions.ts: redirect(createGmailConnector().authorizationUrl({ state, redirectUri: appUrl(gmailRedirectPath), loginHint: session?.user?.email ?? undefined, }))",
+      'src/app/(app)/connect/actions.ts: redirect(createGmailConnector().authorizationUrl({ state, redirectUri: appUrl(gmailRedirectPath), loginHint, prompt: connect.mode === "add" ? "consent select_account" : "consent", }))',
       "Google's consent screen, built by our connector with our own callback URL",
+    ],
+    [
+      'src/app/(app)/connect/actions.ts: redirect(createOutlookConnector().authorizationUrl({ state, redirectUri: appUrl(outlookRedirectPath), loginHint, prompt: connect.mode === "add" ? "consent select_account" : "consent", codeChallenge: pkceChallenge(verifier), }))',
+      "Plan #49: Microsoft's sign-in page (a fixed login.microsoftonline.com URL), built by our connector with our own callback URL",
     ],
     [
       'src/app/(app)/settings/profile-actions.ts: redirect(returnTo.catch("/settings/business?done=profile").parse(raw.returnTo))',
@@ -948,6 +1010,16 @@ describe("C4: no open redirects", () => {
     [
       "src/app/welcome/terms/page.tsx: redirect(back)",
       "the same, for someone who had already agreed: const back = safeNextPath(next)",
+    ],
+    [
+      "src/proxy.ts: NextResponse.redirect(new URL(to, request.url))",
+      'Check 29 P3: "/" with a session cookie → `to` is homeRedirect()\'s fixed SIGNED_IN_HOME ' +
+        '("/start") on this site, never anything from the request (pinned in home-static.test.ts)',
+    ],
+    [
+      "src/app/signin/actions.ts: redirectTo(safeNextPath(next))",
+      "Check 26 P4: back to the screen that asked for a fresh sign-in (Delete my account) " +
+        "after Google: safeNextPath allows only a path on this site",
     ],
   ];
 
@@ -1112,7 +1184,16 @@ describe("C4: no open redirects", () => {
       [
         `src/app/welcome/terms/actions.ts ${READS[0]}`,
         "src/app/welcome/terms/page.tsx { next }",
+        // Check 26 P4: the fresh sign-in before Delete my account comes back to that screen.
+        `src/app/signin/actions.ts ${READS[0]}`,
+        "src/app/signin/page.tsx { next }",
       ].sort(),
+    );
+    expect(readFileSync("src/app/signin/page.tsx", "utf8")).toContain(
+      'const back = recent && typeof next === "string" ? safeNextPath(next) : undefined;',
+    );
+    expect(readFileSync("src/app/signin/actions.ts", "utf8")).toContain(
+      'await signIn("google", { redirectTo: safeNextPath(next) });',
     );
     const page = readFileSync("src/app/welcome/terms/page.tsx", "utf8");
     expect(page).toContain(
@@ -1210,7 +1291,13 @@ describe("Secrets at rest (re-confirmed in the M11 audit)", () => {
           writes.push(`${rel(f)} (shorthand)`);
       });
     }
-    expect(writes).toEqual(["src/server/mailboxes.ts encryptSecret(result.refreshToken)"]);
+    expect(writes).toEqual([
+      "src/server/mailboxes.ts encryptSecret(result.refreshToken)",
+      // Check 47 P2: a refresh token a provider rotated on refresh.
+      "src/server/mailboxes.ts encryptSecret(token)",
+      // Check 26 P7: pnpm reseal:secrets, moving a token to the current key.
+      "src/server/reseal-secrets.ts encryptSecret(plain)",
+    ]);
     // Nothing writes the column through raw SQL either.
     for (const f of ALL)
       expect(readFileSync(f, "utf8"), rel(f)).not.toMatch(/encrypted_refresh_token\s*=/);
@@ -1282,13 +1369,17 @@ describe("Only two places can send mail", () => {
     return out;
   }
 
-  /** String literals naming a Gmail send endpoint. */
-  function sendEndpoints(sf: ts.SourceFile): string[] {
+  /**
+   * String literals naming a send endpoint: Gmail's (`/messages/send`, `/drafts/send`) and
+   * Microsoft Graph's (`/me/messages/{id}/send`, whose literal tail is `/send`, and `/sendMail`).
+   */
+  function sendEndpoints(sf: ts.SourceFile, graphShapes = true): string[] {
     const out: string[] = [];
     walk(sf, (n) => {
       if (
         (ts.isStringLiteralLike(n) || ts.isTemplateLiteralToken(n)) &&
-        /\/(messages|drafts)\/send/.test(n.text)
+        (/\/(messages|drafts)\/send/.test(n.text) ||
+          (graphShapes && /^\/send(Mail)?$|\/sendMail\b/.test(n.text)))
       ) {
         out.push(n.text);
       }
@@ -1307,16 +1398,33 @@ describe("Only two places can send mail", () => {
     for (const s of SEND_SITES) expect(s.why.length, s.site).toBeGreaterThan(10);
   });
 
-  it("names Gmail's send endpoints only in the Gmail client", () => {
+  /**
+   * The provider clients that may name a send endpoint, with why. Both only implement the
+   * MailboxWriter's sendDraft / sendMessage, which only SEND_SITES above may call.
+   */
+  const SEND_ENDPOINT_FILES: Record<string, string> = {
+    "src/mailbox/gmail/api.ts": "Gmail's drafts.send and messages.send",
+    // Plan #49 (FEATURE_OUTLOOK): Graph's POST /me/messages/{id}/send, for sendDraft and for the
+    // practice copy (made as a draft, then sent). Never sendMail, never a new send path.
+    "src/mailbox/outlook/writer.ts": "Microsoft Graph's message send (sendDraft, sendMessage)",
+  };
+
+  it("names send endpoints only in the provider clients", () => {
     const found: string[] = [];
     for (const f of ALL) {
       const file = rel(f);
-      for (const text of sendEndpoints(parse(f))) found.push(`${file}: ${text}`);
+      // Graph's bare "/send" tail is only a provider endpoint in provider code (the app's own
+      // gated route, /api/drafts/[id]/send, ends the same way).
+      for (const text of sendEndpoints(parse(f), file.startsWith("src/mailbox/")))
+        found.push(`${file}: ${text}`);
     }
-    expect(found.map((x) => x.split(":")[0]).every((f) => f === "src/mailbox/gmail/api.ts")).toBe(
-      true,
-    );
-    expect(found.length).toBeGreaterThanOrEqual(2);
+    const files = new Set(found.map((x) => x.split(":")[0]!));
+    expect([...files].sort()).toEqual(Object.keys(SEND_ENDPOINT_FILES).sort());
+    expect(
+      found.filter((x) => x.startsWith("src/mailbox/gmail/api.ts")).length,
+    ).toBeGreaterThanOrEqual(2);
+    // Outlook never uses sendMail (a send with no draft and no id).
+    expect(found.filter((x) => /sendMail/.test(x))).toEqual([]);
   });
 
   it("self-test: catches the four call shapes, and the endpoint strings", () => {
@@ -1338,5 +1446,379 @@ describe("Only two places can send mail", () => {
         parseText("f.ts", 'fetch(base + "/messages/send"); fetch(`${b}/drafts/send`);'),
       ),
     ).toHaveLength(2);
+    // Plan #49: Graph's shapes too.
+    expect(
+      sendEndpoints(
+        parseText(
+          "f.ts",
+          'g.call(`${msgPath(id)}/send`); g.call("/me/sendMail"); g.call(`/me/messages/${id}/send`);',
+        ),
+      ),
+    ).toHaveLength(3);
+  });
+});
+
+/**
+ * Check 31 P4: every rate limit is called where it should be — before the work it guards. One
+ * row per hitLimit call in src: the function that makes it, the limit, and the calls that do
+ * the work. `hook` rows count inside createDraftForThread's `beforeModelCall` option instead
+ * (Check 40 P3: only a tap that reaches the model counts). Deleting any one hitLimit call, or
+ * moving it after its work, fails here.
+ */
+type LimitSite = {
+  file: string;
+  fn: string;
+  limit: string;
+  /** The calls that do the guarded work; the limit must come before the first of them. */
+  work: string[];
+  hook?: "beforeModelCall";
+};
+const LIMIT_SITES: LimitSite[] = [
+  // Send reply (three ways in the queue) and the send API.
+  { file: "src/app/(app)/queue/actions.ts", fn: "sendTap", limit: "send", work: ["queueSend"] },
+  {
+    file: "src/app/(app)/queue/actions.ts",
+    fn: "practiceSendAction",
+    limit: "send",
+    work: ["practiceSend"],
+  },
+  {
+    file: "src/app/(app)/queue/actions.ts",
+    fn: "batchSendAction",
+    limit: "send",
+    work: ["batchSend"],
+  },
+  { file: "src/app/api/drafts/[id]/send/route.ts", fn: "POST", limit: "send", work: ["queueSend"] },
+  // Draft a reply and the other owner-asked drafts.
+  {
+    file: "src/app/(app)/queue/actions.ts",
+    fn: "draftReplyAction",
+    limit: "draft",
+    work: ["createDraftForThread"],
+    hook: "beforeModelCall",
+  },
+  {
+    file: "src/app/(app)/inbox/actions.ts",
+    fn: "askFor",
+    limit: "draft",
+    work: ["createDraftForThread"],
+    hook: "beforeModelCall",
+  },
+  {
+    file: "src/app/(app)/queue/first-week-actions.ts",
+    fn: "foundMoneyDraftsAction",
+    limit: "draft",
+    work: ["claimFoundMoneyDrafts", "enqueue"],
+  },
+  {
+    file: "src/app/(app)/money/actions.ts",
+    fn: "draftReminderAction",
+    limit: "draft",
+    work: ["draftInvoiceReminder"],
+  },
+  {
+    file: "src/app/(app)/queue/leads-actions.ts",
+    fn: "addTownAction",
+    limit: "draft",
+    work: ["addServiceTown"],
+  },
+  {
+    file: "src/app/(app)/queue/actions.ts",
+    fn: "reviseDraftAction",
+    limit: "revise",
+    work: ["reviseDraft"],
+  },
+  {
+    file: "src/app/(app)/settings/profile-actions.ts",
+    fn: "relearnVoiceAction",
+    limit: "relearn",
+    work: ["resetVoiceRestarts", "enqueue"],
+  },
+  // Billing.
+  {
+    file: "src/app/(app)/billing/actions.ts",
+    fn: "startCheckoutAction",
+    limit: "billing",
+    work: ["createCheckout"],
+  },
+  {
+    file: "src/app/(app)/billing/actions.ts",
+    fn: "openPortalAction",
+    limit: "billing",
+    work: ["createPortal"],
+  },
+  {
+    // Check 17 P9 (batch C): the owner reports a checkout that never came back.
+    file: "src/app/(app)/billing/actions.ts",
+    fn: "reportStripeWaitingAction",
+    limit: "billing",
+    work: ["noteStripeWaiting"],
+  },
+  {
+    file: "src/app/(app)/billing/actions.ts",
+    fn: "keepFreePlanAction",
+    limit: "billing",
+    work: ["keepFreePlan"],
+  },
+  {
+    file: "src/app/(app)/billing/actions.ts",
+    fn: "goBackAction",
+    limit: "billing",
+    work: ["goBackToPaidPlan"],
+  },
+  {
+    file: "src/app/welcome/terms/actions.ts",
+    fn: "openPortalFromTermsAction",
+    limit: "billing",
+    work: ["createPortal"],
+  },
+  // Gmail connect.
+  {
+    file: "src/app/(app)/connect/actions.ts",
+    fn: "startGmailConnect",
+    limit: "connect",
+    work: ["newOAuthState", "authorizationUrl"],
+  },
+  // Plan #49: Outlook connect (FEATURE_OUTLOOK), the same limit.
+  {
+    file: "src/app/(app)/connect/actions.ts",
+    fn: "startOutlookConnect",
+    limit: "connect",
+    work: ["newOAuthState", "authorizationUrl"],
+  },
+  {
+    file: "src/app/(app)/settings/actions.ts",
+    fn: "swapMailboxAction",
+    limit: "connect",
+    work: ["swapPlanMailbox"],
+  },
+  // Public forms, per hashed IP.
+  {
+    file: "src/app/waitlist-actions.ts",
+    fn: "joinWaitlistAction",
+    limit: "waitlist",
+    work: ["joinWaitlist"],
+  },
+  {
+    file: "src/app/growth-actions.ts",
+    fn: "requestGrowthCallAction",
+    limit: "waitlist",
+    work: ["requestGrowthCall"],
+  },
+  // Check 26 P8: the same two forms, per email address (after validation, before the save).
+  {
+    file: "src/app/waitlist-actions.ts",
+    fn: "joinWaitlistAction",
+    limit: "formEmail",
+    work: ["joinWaitlist"],
+  },
+  {
+    file: "src/app/growth-actions.ts",
+    fn: "requestGrowthCallAction",
+    limit: "formEmail",
+    work: ["requestGrowthCall"],
+  },
+  // Text alerts.
+  {
+    file: "src/server/sms-alerts.ts",
+    fn: "startPhoneVerification",
+    limit: "smsCode",
+    work: ["upsertProfile"],
+  },
+  { file: "src/server/sms-alerts.ts", fn: "confirmPhone", limit: "smsVerify", work: ["db"] },
+  // The count-only endpoints phones poll.
+  { file: "src/app/api/badge/route.ts", fn: "GET", limit: "poll", work: ["badgeCount"] },
+  {
+    // Check 19 P5: the service worker's renewed push address.
+    file: "src/app/api/push/subscription/route.ts",
+    fn: "POST",
+    limit: "poll",
+    work: ["replacePushSubscription"],
+  },
+  {
+    file: "src/app/api/push/summary/route.ts",
+    fn: "GET",
+    limit: "poll",
+    work: ["queueMembership", "leadsAtRisk"],
+  },
+  // Check 18 P2 / P4 / P9: Davi's email buttons on /admin and the morning email's one-click stop.
+  {
+    file: "src/app/(app)/admin/actions.ts",
+    fn: "sendTestEmailAction",
+    limit: "emailTest",
+    work: ["sendAdminTestEmail"],
+  },
+  {
+    file: "src/app/(app)/admin/actions.ts",
+    fn: "emailInviteAgainAction",
+    limit: "inviteAgain",
+    work: ["sendInviteEmail"],
+  },
+  {
+    file: "src/app/(app)/admin/actions.ts",
+    fn: "catchUpWaitlistEmailsAction",
+    limit: "waitlistCatchup",
+    work: ["catchUpWaitlistConfirmations"],
+  },
+  {
+    file: "src/app/api/emails/stop/route.ts",
+    fn: "POST",
+    limit: "emailStop",
+    work: ["turnOffDigest"],
+  },
+  // Owner taps that write to Gmail.
+  {
+    file: "src/app/(app)/queue/actions.ts",
+    fn: "editorAction",
+    limit: "gmailWrite",
+    work: ["saveDraftEdit"],
+  },
+  {
+    file: "src/app/(app)/queue/actions.ts",
+    fn: "discardDraftAction",
+    limit: "gmailWrite",
+    work: ["discardDraft"],
+  },
+  {
+    file: "src/app/(app)/inbox/actions.ts",
+    fn: "takeOffListAction",
+    limit: "gmailWrite",
+    work: ["takeOffMyList"],
+  },
+  {
+    file: "src/app/(app)/inbox/actions.ts",
+    fn: "resortAction",
+    limit: "gmailWrite",
+    work: ["resortThread"],
+  },
+];
+
+/** The name a call is made by: `f()` → "f", `a.b.c()` → "c". */
+function callName(c: ts.CallExpression): string | null {
+  let x: ts.Expression = c.expression;
+  while (ts.isParenthesizedExpression(x)) x = x.expression;
+  if (ts.isIdentifier(x)) return x.text;
+  if (ts.isPropertyAccessExpression(x)) return x.name.text;
+  return null;
+}
+/** `hitLimit("<name>", …)` → "<name>". */
+function limitOf(c: ts.CallExpression): string | null {
+  if (callName(c) !== "hitLimit") return null;
+  const a = c.arguments[0];
+  return a && ts.isStringLiteral(a) ? a.text : "?";
+}
+/** The top-level function (declared or `const f = …`) a node sits in, by name. */
+function topFunctionName(n: ts.Node): string | null {
+  let top: ts.Node | null = null;
+  for (let p: ts.Node | undefined = n; p; p = p.parent) if (isFnLike(p)) top = p;
+  if (!top) return null;
+  if (ts.isFunctionDeclaration(top)) return top.name?.text ?? null;
+  return ts.isVariableDeclaration(top.parent) && ts.isIdentifier(top.parent.name)
+    ? top.parent.name.text
+    : null;
+}
+/** The named top-level function of a module (exported or not). */
+function moduleFunction(sf: ts.SourceFile, name: string): FnLike | null {
+  return (
+    exportedFunctions(sf).find((f) => f.name === name)?.fn ?? localFunctions(sf).get(name) ?? null
+  );
+}
+
+/** What's wrong with one row in a parsed file, or null. */
+function limitSiteProblem(sf: ts.SourceFile, site: LimitSite): string | null {
+  const fn = moduleFunction(sf, site.fn);
+  if (!fn) return "function not found";
+  const calls: ts.CallExpression[] = [];
+  walk(fn, (n) => {
+    if (ts.isCallExpression(n)) calls.push(n);
+  });
+  const work = calls.find((c) => site.work.includes(callName(c) ?? ""));
+  if (!work) return `no ${site.work.join(" / ")} call`;
+  const limits = calls.filter((c) => limitOf(c) === site.limit);
+  const awaited = (c: ts.CallExpression) => {
+    let p: ts.Node = c.parent;
+    while (ts.isParenthesizedExpression(p)) p = p.parent;
+    return ts.isAwaitExpression(p);
+  };
+  if (site.hook) {
+    // The limit is counted in the work call's own `beforeModelCall` option.
+    const hooked = limits.some((c) => {
+      for (let p: ts.Node | undefined = c; p && p !== work; p = p.parent) {
+        if (ts.isPropertyAssignment(p) && p.name.getText() === site.hook)
+          return awaited(c) && p.parent.parent === work;
+      }
+      return false;
+    });
+    return hooked ? null : `no awaited hitLimit("${site.limit}") in ${site.hook}`;
+  }
+  const first = limits.find(awaited);
+  if (!first) return `no awaited hitLimit("${site.limit}")`;
+  if (first.getStart() > work.getStart()) return `hitLimit("${site.limit}") comes after the work`;
+  return null;
+}
+
+describe("Check 31 P4: every rate limit is called before the work it guards", () => {
+  for (const site of LIMIT_SITES) {
+    it(`${site.file}#${site.fn}: ${site.limit} before ${site.work.join(" / ")}`, () => {
+      expect(limitSiteProblem(parse(join(ROOT, site.file)), site)).toBeNull();
+    });
+  }
+
+  it("every LIMITS key has a row, and every hitLimit call in src is in the table", async () => {
+    const { LIMITS } = await import("@/server/rate-limit");
+    const covered = new Set(LIMIT_SITES.map((s) => s.limit));
+    expect(Object.keys(LIMITS).filter((k) => !covered.has(k))).toEqual([]);
+    const found: string[] = [];
+    for (const f of ALL) {
+      if (rel(f) === "src/server/rate-limit.ts") continue;
+      walk(parse(f), (n) => {
+        if (!ts.isCallExpression(n)) return;
+        const limit = limitOf(n);
+        if (limit) found.push(`${rel(f)}#${topFunctionName(n)}:${limit}`);
+      });
+    }
+    expect(found.sort()).toEqual(LIMIT_SITES.map((s) => `${s.file}#${s.fn}:${s.limit}`).sort());
+  });
+
+  it("self-test: a limit after the work, a missing limit and a limit outside the hook are caught", () => {
+    const site: LimitSite = { file: "x.ts", fn: "act", limit: "send", work: ["queueSend"] };
+    const fixture = (body: string) =>
+      parseText("x.ts", `export async function act() {\n${body}\n}`);
+    expect(
+      limitSiteProblem(fixture(`await hitLimit("send", w);\nawait queueSend(w);`), site),
+    ).toBeNull();
+    expect(
+      limitSiteProblem(fixture(`await queueSend(w);\nawait hitLimit("send", w);`), site),
+    ).toMatch(/after the work/);
+    expect(limitSiteProblem(fixture(`await queueSend(w);`), site)).toMatch(/no awaited/);
+    expect(limitSiteProblem(fixture(`hitLimit("send", w);\nawait queueSend(w);`), site)).toMatch(
+      /no awaited/,
+    );
+    expect(
+      limitSiteProblem(fixture(`await hitLimit("draft", w);\nawait queueSend(w);`), site),
+    ).toMatch(/no awaited/);
+    const hook: LimitSite = {
+      file: "x.ts",
+      fn: "act",
+      limit: "draft",
+      work: ["createDraftForThread"],
+      hook: "beforeModelCall",
+    };
+    expect(
+      limitSiteProblem(
+        fixture(
+          `await createDraftForThread(t, { beforeModelCall: async () => (await hitLimit("draft", w)).allowed });`,
+        ),
+        hook,
+      ),
+    ).toBeNull();
+    expect(
+      limitSiteProblem(
+        fixture(
+          `await createDraftForThread(t, { other: async () => await hitLimit("draft", w) });`,
+        ),
+        hook,
+      ),
+    ).toMatch(/beforeModelCall/);
   });
 });

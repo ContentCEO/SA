@@ -221,6 +221,8 @@ describe("history", () => {
       );
     await expect(reader(f).r.listHistory({ startHistoryId: "1" })).resolves.toEqual({
       added: [{ id: "a", threadId: "t" }],
+      labelChanges: [],
+      deleted: [],
       historyId: "9",
       nextPageToken: undefined,
     });
@@ -250,7 +252,39 @@ describe("history", () => {
       { id: "a", threadId: "t" },
     ]);
     const url = new URL(String(f.mock.calls[1]![0]));
-    expect(url.searchParams.getAll("historyTypes").sort()).toEqual(["labelAdded", "messageAdded"]);
+    expect(url.searchParams.getAll("historyTypes").sort()).toEqual([
+      "labelAdded",
+      "labelRemoved",
+      "messageAdded",
+      "messageDeleted",
+    ]);
+  });
+
+  it("maps labelsAdded, labelsRemoved and messagesDeleted (Check 25 P2)", async () => {
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(token())
+      .mockResolvedValueOnce(
+        json({
+          historyId: "20",
+          history: [
+            { labelsAdded: [{ message: { id: "a", threadId: "t1" }, labelIds: ["INBOX"] }] },
+            { labelsRemoved: [{ message: { id: "b", threadId: "t2" }, labelIds: ["INBOX"] }] },
+            { labelsAdded: [{ message: { id: "c", threadId: "t3" }, labelIds: ["TRASH"] }] },
+            { messagesDeleted: [{ message: { id: "d", threadId: "t4" } }] },
+            { labelsAdded: [{ message: { id: "e", threadId: "t5" }, labelIds: ["SENT"] }] },
+          ],
+        }),
+      );
+    const page = await reader(f).r.listHistory({ startHistoryId: "1" });
+    expect(page.added).toEqual([{ id: "e", threadId: "t5" }]);
+    expect(page.labelChanges).toEqual([
+      { id: "a", threadId: "t1", added: ["INBOX"], removed: [] },
+      { id: "b", threadId: "t2", added: [], removed: ["INBOX"] },
+      { id: "c", threadId: "t3", added: ["TRASH"], removed: [] },
+      { id: "e", threadId: "t5", added: ["SENT"], removed: [] },
+    ]);
+    expect(page.deleted).toEqual([{ id: "d", threadId: "t4" }]);
   });
 
   it("lists a thread's unsent drafts by id only (format=minimal); [] when the thread is gone", async () => {
@@ -278,6 +312,22 @@ describe("history", () => {
     // Not even the snippet (minimal still returns it): ids and labels only.
     expect(url.searchParams.get("fields")).toBe("messages(id,labelIds)");
     expect(await r.threadDraftMessageIds("gone")).toEqual([]);
+  });
+
+  it("Check 20 P2: lists every message of a thread with its labels, ids and labels only", async () => {
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(token())
+      .mockResolvedValueOnce(
+        json({ id: "t", messages: [{ id: "in", labelIds: ["INBOX"] }, { id: "bare" }] }),
+      );
+    const { r } = reader(f);
+    expect(await r.threadMessageLabels("t")).toEqual([
+      { id: "in", labelIds: ["INBOX"] },
+      { id: "bare", labelIds: [] },
+    ]);
+    const url = new URL(String(f.mock.calls[1]![0]));
+    expect(url.searchParams.get("fields")).toBe("messages(id,labelIds)");
   });
 
   it("asks for metadata only unless a body is needed", async () => {
@@ -370,5 +420,103 @@ describe("message parsing", () => {
       { name: "Ruiz, Dana", email: "dana@example.com" },
       { email: "bob@x.com" },
     ]);
+  });
+});
+
+describe("a rotated refresh token (Check 47 P2)", () => {
+  it("is handed over once and used for the next refresh", async () => {
+    const rotated = vi.fn().mockResolvedValue(undefined);
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(json({ access_token: "at1", refresh_token: "rt-2" }))
+      .mockResolvedValueOnce(json({}, 401))
+      .mockResolvedValueOnce(json({ access_token: "at2", refresh_token: "rt-2" }))
+      .mockResolvedValueOnce(json({ emailAddress: "o@x.com", historyId: "5" }));
+    const r = createGmailReader({
+      refreshToken: "rt-1",
+      fetchImpl: f as unknown as typeof fetch,
+      onRefreshTokenRotated: rotated,
+    });
+    await r.getProfile();
+    expect(rotated).toHaveBeenCalledTimes(1);
+    expect(rotated).toHaveBeenCalledWith("rt-2");
+    expect(String(f.mock.calls[0]![1].body)).toContain("refresh_token=rt-1");
+    expect(String(f.mock.calls[2]![1].body)).toContain("refresh_token=rt-2");
+  });
+
+  it("a failure to store it is logged by name only and doesn't fail the call", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(json({ access_token: "at1", refresh_token: "rt-secret-2" }))
+      .mockResolvedValueOnce(json({ emailAddress: "o@x.com", historyId: "5" }));
+    const r = createGmailReader({
+      refreshToken: "rt-1",
+      fetchImpl: f as unknown as typeof fetch,
+      onRefreshTokenRotated: async () => {
+        throw new TypeError("db down rt-secret-2");
+      },
+    });
+    await expect(r.getProfile()).resolves.toMatchObject({ historyId: "5" });
+    expect(errors.mock.calls).toEqual([["refresh_token_store_failed", { name: "TypeError" }]]);
+    errors.mockRestore();
+  });
+});
+
+describe("Gmail's search words are built only in the Gmail client (Check 47 P4)", () => {
+  const listed = async (
+    opts: Parameters<ReturnType<typeof createGmailReader>["listMessages"]>[0],
+  ) => {
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(token())
+      .mockResolvedValueOnce(json({ messages: [] }));
+    await reader(f).r.listMessages(opts);
+    return new URL(String(f.mock.calls[1]![0])).searchParams.get("q");
+  };
+
+  it("newerThanDays, sentOnly, inbox and a fixed after:", async () => {
+    expect(await listed({ newerThanDays: 30 })).toBe("newer_than:30d");
+    expect(await listed({ newerThanDays: 365, sentOnly: true })).toBe("in:sent newer_than:365d");
+    const after = new Date("2026-10-01T00:00:00.900Z");
+    expect(await listed({ after, inbox: true })).toBe("in:inbox after:1790812800");
+    expect(await listed({ after, inbox: false })).toBe("-in:inbox after:1790812800");
+  });
+
+  it("GUARDRAIL: no Gmail search syntax or label string is written by hand outside src/mailbox/", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { sourceFiles, rel } = await import("../support/source-ast");
+    const outside = sourceFiles()
+      .map((f) => ({ f: rel(f), text: readFileSync(f, "utf8") }))
+      .filter((x) => !x.f.startsWith("src/mailbox/"));
+    const hits = (re: RegExp) => outside.filter((x) => re.test(x.text)).map((x) => x.f);
+    expect(hits(/newer_than:|in:sent|in:inbox/)).toEqual([]);
+    // The label names live in MAIL_LABELS (src/mailbox/connector.ts) only.
+    expect(
+      hits(/["'`](INBOX|SENT|DRAFT|TRASH|SPAM|CATEGORY_PROMOTIONS|CATEGORY_SOCIAL)["'`]/),
+    ).toEqual([]);
+  });
+});
+
+describe("Check 42 P4: send-as addresses", () => {
+  it("keeps the primary and verified aliases, addresses only, lowercased", async () => {
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(token())
+      .mockResolvedValueOnce(
+        json({
+          sendAs: [
+            { sendAsEmail: "Mike@Rossi.com", isPrimary: true },
+            { sendAsEmail: "office@rossi.com", verificationStatus: "accepted" },
+            { sendAsEmail: "info@rossi.com", verificationStatus: "pending" },
+            { sendAsEmail: "bad\r\nBcc: x@y.com", verificationStatus: "accepted" },
+          ],
+        }),
+      );
+    expect(await reader(f).r.listSendAs!()).toEqual(["mike@rossi.com", "office@rossi.com"]);
+    const url = String(f.mock.calls[1]![0]);
+    expect(url).toContain("/settings/sendAs?fields=");
+    // The mask keeps signatures and SMTP settings out of the response.
+    expect(decodeURIComponent(url)).toContain("sendAs(sendAsEmail,isPrimary,verificationStatus)");
   });
 });

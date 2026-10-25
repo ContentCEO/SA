@@ -17,6 +17,14 @@
 export const TERMS_VERSION = "2026-10-16";
 
 /**
+ * Check 27 P4: sha256 of docs/terms.md + "\n" + docs/privacy-policy.md, as the files are in the
+ * repo. tests/unit/legal-docs-hash.test.ts recomputes it, so a change to either document can't
+ * ship without a new TERMS_VERSION (one release, docs/LEGAL-RELEASE.md). The test prints the new
+ * value when it differs.
+ */
+export const LEGAL_DOCS_SHA256 = "09d4757bb442b75a5465542bb170dac0526c5c7b108005700d7f4b67e7a8570a";
+
+/**
  * Set by the sign-in button's server action when the box is ticked, read (and deleted) when
  * Google sends the person back, so the acceptance is recorded on their account. Short-lived,
  * httpOnly, SameSite=Lax, and only sent to Auth.js's own routes.

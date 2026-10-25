@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { BUSINESS_HOURS, LEAD_AT_RISK_HOURS } from "@/config/business-hours";
-import { businessMinutesBetween, inBusinessHours } from "@/server/business-hours-rules";
+import {
+  businessMinutesBetween,
+  hourLabel,
+  inBusinessHours,
+  workHoursOf,
+} from "@/server/business-hours-rules";
+import { workHoursInput } from "@/server/profile";
 
 const at = (s: string) => new Date(s);
 const NY = "America/New_York";
@@ -104,5 +110,85 @@ describe("inBusinessHours (owner's zone)", () => {
 
   it("Mon 7am in New York is 4am in Los Angeles", () => {
     expect(inBusinessHours(at("2026-10-12T11:00:00Z"), LA)).toBe(false);
+  });
+});
+
+describe("the owner's own working days (Check 15 P8)", () => {
+  const monFri6to15 = workHoursOf({ workDays: [5, 1, 2, 3, 4], workStartHour: 6, workEndHour: 15 });
+
+  it("reads the saved days and hours, or the default when they don't make sense", () => {
+    expect(monFri6to15).toEqual({ days: [1, 2, 3, 4, 5], startHour: 6, endHour: 15 });
+    expect(workHoursOf(null)).toEqual(BUSINESS_HOURS);
+    expect(workHoursOf({ workDays: [], workStartHour: 6, workEndHour: 15 })).toEqual(
+      BUSINESS_HOURS,
+    );
+    expect(workHoursOf({ workDays: [1], workStartHour: 15, workEndHour: 6 })).toEqual(
+      BUSINESS_HOURS,
+    );
+    expect(
+      workHoursOf({ workDays: [1, 2, 3, 4, 5, 6], workStartHour: 7, workEndHour: 18 }),
+    ).toEqual(BUSINESS_HOURS);
+  });
+
+  it("Mon–Fri 6–15: a 6am email counts from 6, Saturday counts nothing, 3pm closes", () => {
+    // Tue 6am → Tue 10am NY = 240 minutes (the default would count 180 from 7am).
+    expect(
+      businessMinutesBetween(
+        at("2026-10-06T10:00:00Z"),
+        at("2026-10-06T14:00:00Z"),
+        NY,
+        monFri6to15,
+      ),
+    ).toBe(240);
+    // Friday 2pm → Monday 9am: 60 (Fri) + 0 + 0 + 180 (Mon 6–9).
+    expect(
+      businessMinutesBetween(
+        at("2026-10-09T18:00:00Z"),
+        at("2026-10-12T13:00:00Z"),
+        NY,
+        monFri6to15,
+      ),
+    ).toBe(240);
+    expect(inBusinessHours(at("2026-10-10T14:00:00Z"), NY, monFri6to15)).toBe(false); // Sat 10am
+    expect(inBusinessHours(at("2026-10-06T10:30:00Z"), NY, monFri6to15)).toBe(true); // Tue 6:30
+    expect(inBusinessHours(at("2026-10-06T19:00:00Z"), NY, monFri6to15)).toBe(false); // Tue 3pm
+  });
+
+  it("names the hours for the selects", () => {
+    expect([0, 6, 12, 15, 24].map(hourLabel)).toEqual([
+      "midnight",
+      "6am",
+      "noon",
+      "3pm",
+      "midnight",
+    ]);
+  });
+});
+
+describe("workHoursInput (Check 15 P8)", () => {
+  it("at least one day, start before end, hours 0–24", () => {
+    expect(workHoursInput.parse({ days: ["5", "1", "1"], startHour: "6", endHour: "15" })).toEqual({
+      days: [1, 5],
+      startHour: 6,
+      endHour: 15,
+    });
+    const msg = (v: unknown) => workHoursInput.safeParse(v).error!.issues[0]!.message;
+    expect(msg({ days: [], startHour: "6", endHour: "15" })).toBe("Pick at least one day.");
+    expect(msg({ days: ["1"], startHour: "15", endHour: "6" })).toBe(
+      "Your day has to end after it starts.",
+    );
+    expect(msg({ days: ["1"], startHour: "7", endHour: "7" })).toBe(
+      "Your day has to end after it starts.",
+    );
+    expect(workHoursInput.safeParse({ days: ["8"], startHour: "6", endHour: "15" }).success).toBe(
+      false,
+    );
+    expect(workHoursInput.safeParse({ days: ["1"], startHour: "-1", endHour: "15" }).success).toBe(
+      false,
+    );
+    expect(workHoursInput.safeParse({ days: ["1"], startHour: "6", endHour: "25" }).success).toBe(
+      false,
+    );
+    expect(workHoursInput.parse({ days: ["7"], startHour: "0", endHour: "24" }).endHour).toBe(24);
   });
 });

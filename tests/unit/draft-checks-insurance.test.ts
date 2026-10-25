@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { setModelTransportForTests } from "@/ai/client";
 import { checkDraft, REGENERATE_ON } from "@/ai/draft-checks";
 import type { ModelDraft } from "@/ai/prompts/draft.v6";
-import { DRAFT_INSTRUCTIONS } from "@/ai/prompts/draft.v8";
+import { DRAFT_INSTRUCTIONS } from "@/ai/prompts/draft.v9";
 import { drafts, messages, threads, workspaces } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { guardrailReasons } from "@/server/autopilot";
@@ -84,6 +84,7 @@ describe("insurance-job promises (Check 40 P1)", () => {
           autopilotCounting: false,
           acceptsQuote: false,
           purpose: null,
+          visitTime: false,
         },
         ["customer_question"],
       ),

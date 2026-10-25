@@ -8,6 +8,7 @@ import {
   googleEndpoints,
   isLocalDatabaseUrl,
   isLoopbackHostname,
+  microsoftEndpoints,
 } from "@/config/e2e";
 
 /**
@@ -42,7 +43,38 @@ function expectInert(env: Env) {
   expect(googleEndpoints(env)).toEqual(REAL_GOOGLE);
   expect(anthropicClientOptions(env)).toEqual({});
   expect(e2eHookSecret(env)).toBeNull();
+  expect(microsoftEndpoints(env)).toEqual(REAL_MICROSOFT);
 }
+
+const REAL_MICROSOFT = {
+  graph: "https://graph.microsoft.com/v1.0",
+  token: "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+};
+
+describe("Plan #49: the Microsoft seam", () => {
+  it("is the real Graph and token endpoint off e2e mode, even with a fake base URL set", () => {
+    expect(microsoftEndpoints({})).toEqual(REAL_MICROSOFT);
+    expect(microsoftEndpoints()).toEqual(REAL_MICROSOFT);
+    expect(
+      microsoftEndpoints({ SA_E2E_MICROSOFT_BASE_URL: "http://127.0.0.1:3301/microsoft" }),
+    ).toEqual(REAL_MICROSOFT);
+  });
+  it("in e2e mode it is the local fake, and never the real Microsoft", () => {
+    expect(
+      microsoftEndpoints({
+        ...LOCAL,
+        SA_E2E_MICROSOFT_BASE_URL: "http://127.0.0.1:3301/microsoft/",
+      }),
+    ).toEqual({
+      graph: "http://127.0.0.1:3301/microsoft/graph/v1.0",
+      token: "http://127.0.0.1:3301/microsoft/token",
+    });
+    expect(() => microsoftEndpoints(LOCAL)).toThrow(/SA_E2E_MICROSOFT_BASE_URL/);
+    expect(() =>
+      microsoftEndpoints({ ...LOCAL, SA_E2E_MICROSOFT_BASE_URL: "https://graph.microsoft.com" }),
+    ).toThrow(/SA_E2E_MICROSOFT_BASE_URL/);
+  });
+});
 
 describe("e2eMode — every condition is required", () => {
   it("is on for the full local setup, even under `pnpm start` (NODE_ENV=production)", () => {
@@ -318,7 +350,7 @@ describe("boundary: who may read the e2e switch", () => {
     ]);
   });
 
-  it("only the four seams import @/config/e2e", () => {
+  it("only the listed seams import @/config/e2e", () => {
     const importers = files
       .filter((f) => /from\s+["']@\/config\/e2e["']|import\(\s*["']@\/config\/e2e["']/.test(f.text))
       .map((f) => f.path)
@@ -329,6 +361,11 @@ describe("boundary: who may read the e2e switch", () => {
         "src/app/api/test-hooks/run/route.ts",
         "src/mailbox/gmail/api.ts",
         "src/mailbox/gmail/connector.ts",
+        // Plan #49: Outlook's Graph and token endpoints (microsoftEndpoints), same rules.
+        "src/mailbox/outlook/connector.ts",
+        "src/mailbox/outlook/http.ts",
+        // Check 47 P3 CI fix: no real DNS lookup for the waitlist's mail host in e2e mode.
+        "src/server/mail-host.ts",
       ].sort(),
     );
     // Nothing reaches it by a relative path either.
@@ -344,6 +381,10 @@ describe("boundary: who may read the e2e switch", () => {
     expect(connector).toContain('"https://accounts.google.com/o/oauth2/v2/auth"');
     const e2e = files.find((f) => f.path === "src/config/e2e.ts")!.text;
     expect(e2e).not.toContain("accounts.google.com");
+    // Plan #49: Microsoft's sign-in page likewise.
+    const outlook = files.find((f) => f.path === "src/mailbox/outlook/connector.ts")!.text;
+    expect(outlook).toContain('"https://login.microsoftonline.com/common/oauth2/v2.0/authorize"');
+    expect(e2e).not.toContain("/oauth2/v2.0/authorize");
   });
 
   it("the one Anthropic client takes its options from the seam ({} off e2e mode)", () => {

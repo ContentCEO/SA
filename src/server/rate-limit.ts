@@ -11,10 +11,19 @@ import { rateLimits } from "@/db/schema";
 export const LIMITS = {
   /** Public waitlist form, per IP. */
   waitlist: { max: 10, windowSec: 60 * 60 },
+  /**
+   * Check 26 P8: both public forms, per email address (addressKey: an HMAC, never the address),
+   * so nobody can keep rewriting one person's request from many places.
+   */
+  formEmail: { max: 5, windowSec: 24 * 60 * 60 },
   /** Sending replies, per workspace. */
   send: { max: 60, windowSec: 10 * 60 },
-  /** The owner's "Draft a reply" (a model call), per workspace. */
-  draft: { max: 30, windowSec: 60 * 60 },
+  /**
+   * The owner's "Draft a reply" (a model call), per workspace. Check 40 P3: 90 an hour, so a
+   * storm-day owner tapping through a pile of new leads isn't stopped; only taps that reach the
+   * model count (createDraftForThread's `beforeModelCall`). The daily AI cap is the cost guard.
+   */
+  draft: { max: 90, windowSec: 60 * 60 },
   /** Quick tweaks and voice edits on drafts (a model call each), per workspace. */
   revise: { max: 40, windowSec: 60 * 60 },
   /** Re-learn voice (reads up to 200 sent emails + a model call), per workspace. */
@@ -36,6 +45,14 @@ export const LIMITS = {
   poll: { max: 300, windowSec: 10 * 60 },
   /** Owner taps that write to Gmail (save an edit, discard a draft), per workspace (M11 C8). */
   gmailWrite: { max: 120, windowSec: 10 * 60 },
+  /** Davi's "Send me a test email" on /admin (Check 18 P2). */
+  emailTest: { max: 5, windowSec: 60 * 60 },
+  /** Davi's "Email the sign-in link again" (Check 18 P4); the email itself is once a day per address. */
+  inviteAgain: { max: 30, windowSec: 60 * 60 },
+  /** Davi's waitlist catch-up tap (Check 18 P4). */
+  waitlistCatchup: { max: 10, windowSec: 60 * 60 },
+  /** One-click unsubscribe POSTs, per signed link (Check 18 P9). */
+  emailStop: { max: 20, windowSec: 60 * 60 },
 } as const;
 /** purgeRateLimits deletes windows older than 2 days, so no window may be longer than a day. */
 export const MAX_WINDOW_SEC = 24 * 60 * 60;

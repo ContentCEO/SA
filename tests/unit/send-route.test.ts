@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Database } from "@/db";
-import { drafts, messages, threads, workspaces } from "@/db/schema";
+import { drafts, mailboxes, messages, threads, workspaces } from "@/db/schema";
 import { ensureUserAndWorkspace } from "@/server/accounts";
 import { recordTermsAcceptance } from "@/server/terms";
 import { saveConnectedMailbox } from "@/server/mailboxes";
@@ -19,7 +19,7 @@ import { FakeWriter } from "../support/fake-writer";
 // The signed-in owner, without Auth.js: the route only reads `session.user.id`.
 const session = vi.hoisted(() => ({ userId: null as string | null }));
 vi.mock("@/auth", () => ({
-  auth: async () => (session.userId ? { user: { id: session.userId } } : null),
+  auth: async () => (session.userId ? { user: { id: session.userId, sv: 0 } } : null),
 }));
 // Every Gmail call the route could make lands here, so the test can prove none happened.
 const gmail = vi.hoisted(() => ({ writer: null as FakeWriter | null, built: 0 }));
@@ -156,6 +156,26 @@ describe("C5: the send API refuses anything but a same-origin request, without t
     expect(queued).toEqual([]);
   });
 
+  it("Check 31 P4: past LIMITS.send.max sends → 429 with Retry-After, and no Gmail call", async () => {
+    await status({ status: "active", setupPaidVia: "stripe" });
+    const { hitLimit, LIMITS } = await import("@/server/rate-limit");
+    for (let i = 0; i < LIMITS.send.max; i++)
+      expect((await hitLimit("send", workspaceId)).allowed).toBe(true);
+    gmail.built = 0;
+    const fetchSpy = vi.fn(async () => new Response(null, { status: 500 }));
+    vi.stubGlobal("fetch", fetchSpy);
+    const res = await send({ origin: `https://${HOST}` });
+    expect(res.status).toBe(429);
+    const retry = Number(res.headers.get("retry-after"));
+    expect(retry).toBeGreaterThanOrEqual(1);
+    expect(retry).toBeLessThanOrEqual(LIMITS.send.windowSec);
+    expect(gmail.built).toBe(0);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(queued).toEqual([]);
+    const [d] = await database.select().from(drafts).where(eq(drafts.id, draftId));
+    expect(d!.sendAfter).toBeNull();
+  });
+
   it("same origin, paid and active → 202 and the undo window starts (control case)", async () => {
     await status({ status: "active", setupPaidVia: "stripe" });
     const res = await send({ origin: `https://${HOST}` });
@@ -164,5 +184,18 @@ describe("C5: the send API refuses anything but a same-origin request, without t
     expect(queued).toHaveLength(1);
     // Nothing has gone to the customer yet: the undo window comes first.
     expect(gmail.writer!.sent).toEqual([]);
+  });
+
+  it("plan #47: an inbox paused on the plan → 403 mailbox_paused, with no Gmail call and nothing queued", async () => {
+    await status({ status: "active", setupPaidVia: "stripe" });
+    await database
+      .update(mailboxes)
+      .set({ planPausedAt: new Date() })
+      .where(eq(mailboxes.workspaceId, workspaceId));
+    const res = await send({ origin: `https://${HOST}` });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toMatchObject({ status: "mailbox_paused" });
+    expect(gmail.writer!.calls).toEqual([]);
+    expect(queued).toEqual([]);
   });
 });

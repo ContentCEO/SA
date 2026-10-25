@@ -1,8 +1,20 @@
 import { randomUUID } from "node:crypto";
+import type { Metadata } from "next";
+import { noticeText } from "@/lib/notice-text";
+import { DRAFT_LIMIT_ERROR, draftLimitText } from "@/server/draft-limit-rules";
 import Link from "next/link";
+import { auth } from "@/auth";
+import { getWorkspaceForSession } from "@/server/accounts";
+import { badgeCount } from "@/server/badge";
 import { Notice } from "@/components/app/notice";
 import { Headline } from "@/components/brand/headline";
-import { draftTag } from "@/config/categories";
+import { categoryLabels, draftTag, isCategory } from "@/config/categories";
+import { languageCardLine } from "@/ai/language";
+import { autopilotOnKinds } from "@/server/autopilot";
+import { autopilotWaitLine } from "@/server/autopilot-reasons";
+import { firstNameOf } from "@/lib/first-name";
+import { UpdatedAt } from "@/components/app/updated-at";
+import { updatedTime } from "@/lib/refresh-rules";
 import { findGaps } from "@/ai/gaps";
 import { confidenceLabel } from "@/config/drafting";
 import { gmailThreadLink } from "@/lib/gmail-link";
@@ -14,6 +26,7 @@ import {
   sentDraftSummary,
   type QueueItem,
 } from "@/server/drafts";
+import { accountLockReason } from "@/server/autopilot";
 import {
   canPracticeSend,
   canSend,
@@ -27,24 +40,34 @@ import { listMailboxes } from "@/server/mailboxes";
 import { getBusinessProfile } from "@/server/profile";
 import { priceMemoryFor } from "@/server/price-memory";
 import { requireOwner } from "@/server/session";
+import { senderNameFor } from "@/server/from-line";
+import { noSignatureLine } from "@/server/from-line-rules";
 import { MAILBOX_PAUSED_LINE } from "@/server/mailbox-plan-rules";
+import { ARCHIVED_LINE } from "@/server/sync";
+import { attachmentsForThreads } from "@/server/attachments";
+import { AttachmentLine } from "@/components/app/attachment-line";
+import { bouncedLine } from "@/server/auto-reply-rules";
 import { dismissChecklistAction } from "./actions";
 import { OnboardingChecklist } from "@/components/app/onboarding-checklist";
 import { checklistFor } from "@/server/onboarding";
 import { DraftCard } from "./draft-card";
 import { UndoSend } from "./undo-send";
+import { SentStrip } from "./sent-strip";
 import { LateSends } from "./late-sends";
 import { sendStoppedWhy } from "@/server/activity";
 import { OfflineQueue } from "./offline-queue";
 import { devicePrefs } from "@/lib/device-prefs";
 import { ScrollToThread } from "./scroll-to-thread";
 import { SNOOZE_LABELS, snoozeOptions, usableTimeZone } from "@/server/snooze-rules";
+import { waitingLine } from "@/server/followup-rules";
 import { batchCandidates } from "@/server/drafts";
 import { BATCH_CATEGORIES } from "@/server/batch-rules";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { firstLookFor } from "@/server/first-week";
 import { wroteLine } from "@/server/first-week-rules";
 import { NeedsYouCard } from "./needs-you-card";
+import { PermitCard, TownCaution } from "@/components/app/permit-card";
+import type { PermitFacts } from "@/server/permit-rules";
 import { leadCardsFor } from "@/server/lead-cards";
 import { notAnsweredRows } from "@/server/never-answered";
 import { NotAnsweredCard } from "./not-answered-card";
@@ -71,37 +94,93 @@ function nextLine(
   timeZone: string,
 ) {
   const name = firstName(sent.toName);
+  // Check 21 P2: they asked us to wait ("after the holidays").
+  const waiting = waitingLine(sent.waitingUntil, new Date(), timeZone);
+  if (waiting) return waiting;
   if (sent.nudgeOn) {
     const weekday = new Intl.DateTimeFormat("en-US", { weekday: "long", timeZone });
-    return `I'll nudge ${name ?? "them"} on ${weekday.format(sent.nudgeOn)} if there's no reply.`;
+    // Check 21 P3: a draft ready that morning, never a send.
+    return `A nudge for ${name ?? "them"} will be ready ${weekday.format(sent.nudgeOn)} morning if there's no reply.`;
   }
   if (sent.lastNudgeUsed) return "That was the last nudge. I won't chase this one again.";
-  return `I'll let you know when ${name ?? "they"} write${name ? "s" : ""} back.`;
+  // Check 9 P15: only what the code does — replies show up on the queue; alerts are opt-in.
+  return `When ${name ?? "they"} write${name ? "s" : ""} back, it shows up here.`;
 }
-const firstName = (name: string | null) => (name ? name.split(/[\s,]+/)[0] : null);
+// Check 14 P10: the same careful first name as Activity.
+const firstName = (name: string | null) => firstNameOf(name);
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 const gmailLink = (i: QueueItem) => gmailThreadLink(i);
 
+/**
+ * Check 32 P6: "Queue (3)" while anything waits — replies ready plus needs-you, the same count as
+ * the home-screen badge (a number only, never a name). Signed out or nothing waiting: "Queue".
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  const session = await auth();
+  // Check 26 P3: a sign-in ended by "Sign out everywhere" sees no count, only "Queue".
+  const workspace = await getWorkspaceForSession(session?.user);
+  const waiting = workspace ? await badgeCount(workspace).catch(() => 0) : 0;
+  return { title: waiting > 0 ? `Queue (${waiting})` : "Queue" };
+}
+
 export default async function QueuePage(props: PageProps<"/queue">) {
   const { workspace } = await requireOwner();
+  // An autopilot countdown only shows while autopilot is open to this account (the plan that
+  // counts may have dropped since it started; runAutopilotSend stands down on its own).
+  const autopilotOpen = accountLockReason(workspace) === null;
   const params = await props.searchParams;
-  const [queue, boxes, checklist] = await Promise.all([
-    listQueue(workspace.id),
-    listMailboxes(workspace.id),
-    checklistFor(workspace.id, { readOnly: isReadOnly(workspace) }),
-  ]);
+  const now = new Date();
+  const sending = canSend(workspace);
+  const readOnly = isReadOnly(workspace);
   // One id after a tap, several after "Send N replies" (plan #5).
   const sentIds = (Array.isArray(params.sent) ? params.sent : params.sent ? [params.sent] : [])
     .filter((s) => /^[0-9a-f-]{36}$/i.test(s))
     .slice(0, 50);
-  const summaries = (
-    await Promise.all(sentIds.map((d) => sentDraftSummary(workspace.id, d)))
-  ).filter((s) => s !== null);
+  const answeredDraft =
+    params.error === "answered" && typeof params.d === "string" && /^[0-9a-f-]{36}$/i.test(params.d)
+      ? params.d
+      : null;
+  // Check 29 P7: everything that doesn't need the queue starts at once (one wait) …
+  const [
+    queue,
+    boxes,
+    checklist,
+    profile,
+    fromName,
+    firstLook,
+    practiceUsed,
+    device,
+    summariesAll,
+    late,
+    answeredHref,
+    readyCount,
+    away,
+    autopilotOn,
+  ] = await Promise.all([
+    listQueue(workspace.id),
+    listMailboxes(workspace.id),
+    checklistFor(workspace.id, { readOnly }),
+    getBusinessProfile(workspace.id),
+    // Check 43 P3: the name the customer sees in the From line, shown on every card.
+    senderNameFor(workspace.id),
+    firstLookFor(workspace),
+    // Plan #40: practice sends only exist during the three days.
+    canPracticeSend(workspace, now) ? practiceSendsUsed(workspace.id) : null,
+    devicePrefs(),
+    Promise.all(sentIds.map((d) => sentDraftSummary(workspace.id, d))),
+    lateSends(workspace.id),
+    answeredDraft ? draftGmailLink(workspace.id, answeredDraft) : null,
+    sending && !readOnly
+      ? batchCandidates(workspace.id, BATCH_CATEGORIES).then((r) => r.length)
+      : 0,
+    awayState(workspace.id, now),
+    autopilotOnKinds(workspace, now),
+  ]);
+  const summaries = summariesAll.filter((s) => s !== null);
   // Check 9 P10: a tap that was stopped says so; a late one waits on top with Stop it.
   const stopped = summaries.filter((s) => s.stopped);
   const sentAll = summaries.filter((s) => !s.stopped && !s.late);
-  const late = await lateSends(workspace.id);
   const sent = sentAll.length === 1 ? sentAll[0]! : null;
   const sendingIds = sentAll.filter((s) => s.sendingAt).map((s) => s.draftId);
   const sendAt = sentAll
@@ -109,61 +188,95 @@ export default async function QueuePage(props: PageProps<"/queue">) {
     .filter((d): d is Date => d !== null)
     .sort((a, b) => b.getTime() - a.getTime())[0];
   const refused = Number(params.refused) || 0;
-  const doneMsg = typeof params.done === "string" ? done[params.done] : undefined;
-  const errorMsg = typeof params.error === "string" ? errors[params.error] : undefined;
-  const sending = canSend(workspace);
-  const timeZone = usableTimeZone(
-    (await getBusinessProfile(workspace.id))?.timeZone ?? "America/New_York",
-  );
+  const doneMsg = noticeText(done, params.done);
+  const timeZone = usableTimeZone(profile?.timeZone ?? "America/New_York");
+  // Check 43 P4: no signature → one muted line under the first draft (none on read-only).
+  const signatureLine = noSignatureLine(profile?.signature);
   const clock = new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", timeZone });
-  const readOnly = isReadOnly(workspace);
+  // Check 40 P3: the hourly Draft a reply limit, with the time they can ask again.
+  const draftLimitMsg =
+    params.error === DRAFT_LIMIT_ERROR ? draftLimitText(params.until, timeZone) : undefined;
+  const errorMsg = noticeText(errors, params.error) ?? draftLimitMsg;
   // Check 42 P1: "This was already answered from Gmail at 2:14pm. Nothing was sent."
   const answeredAt = params.error === "answered" ? Number(params.at) : NaN;
   const answered =
     params.error === "answered"
       ? {
           at: Number.isFinite(answeredAt) && answeredAt > 0 ? new Date(answeredAt) : null,
-          href:
-            typeof params.d === "string" && /^[0-9a-f-]{36}$/i.test(params.d)
-              ? await draftGmailLink(workspace.id, params.d)
-              : null,
+          href: answeredHref,
         }
       : null;
-  const firstLook = await firstLookFor(workspace);
   const empty = queue.needsYou.length === 0 && queue.drafts.length === 0;
-  const now = new Date();
-  // Plan #40: practice sends only exist during the three days.
-  const practiceLeft = canPracticeSend(workspace, now)
-    ? Math.max(0, PRACTICE_SEND_LIMIT - (await practiceSendsUsed(workspace.id)))
-    : null;
-  const device = await devicePrefs();
+  const practiceLeft =
+    practiceUsed === null ? null : Math.max(0, PRACTICE_SEND_LIMIT - practiceUsed);
   const remindOptions = (i: QueueItem) =>
     snoozeOptions(now, timeZone, i.emergency).map((o) => ({
       choice: o.choice,
       label: SNOOZE_LABELS[o.choice],
     }));
-  const readyCount =
-    sending && !readOnly ? (await batchCandidates(workspace.id, BATCH_CATEGORIES)).length : 0;
-  // Plan #15: the owner's own past prices for similar jobs, on quote-request drafts only.
-  // Shown here and tapped in by the owner — never sent to the drafter.
-  const priceMemory = await priceMemoryFor(
-    workspace.id,
-    queue.drafts.filter((i) => i.category === "quote_request").map((i) => i.threadId),
-    { timeZone, now },
-  );
 
-  // Ideas G7: private notes. Drafts are keyed on where the reply goes; needs-you items on the
-  // customer's newest email. Never in queue counts (those come from queueMembership).
+  // … and what does, together, once the queue is known (the second wait).
   const allThreadIds = [...queue.needsYou, ...queue.drafts].map((i) => i.threadId);
-  const [threadNotes, draftNotes, away] = await Promise.all([
-    notesForThreads(workspace.id, allThreadIds),
-    notesForAddresses(
-      workspace.id,
-      queue.drafts.map((i) => i.toAddress),
-    ),
-    awayState(workspace.id, now),
-  ]);
+  const [priceMemory, threadNotes, draftNotes, attachments, [notAnswered, leadCards]] =
+    await Promise.all([
+      // Plan #15: the owner's own past prices for similar jobs, on quote-request drafts only.
+      // Shown here and tapped in by the owner — never sent to the drafter.
+      priceMemoryFor(
+        workspace.id,
+        queue.drafts.filter((i) => i.category === "quote_request").map((i) => i.threadId),
+        { timeZone, now },
+      ),
+      // Ideas G7: private notes. Drafts are keyed on where the reply goes; needs-you items on the
+      // customer's newest email. Never in queue counts (those come from queueMembership).
+      notesForThreads(workspace.id, allThreadIds),
+      notesForAddresses(
+        workspace.id,
+        queue.drafts.map((i) => i.toAddress),
+      ),
+      // Check 40 P2: what the customer attached, by kind (the files stay in Gmail).
+      attachmentsForThreads(allThreadIds),
+      // Leads package: Call / Text, the emergency lane, lead-site and voicemail cards, the
+      // repeat-customer and outside-your-area lines — read in a fixed number of queries.
+      // B6: customers who have waited over a day with no card here (one row each, oldest first).
+      (async () => {
+        const rows = await notAnsweredRows(workspace.id, now, new Set(allThreadIds));
+        const cards = await leadCardsFor(
+          workspace.id,
+          [
+            ...queue.needsYou.map((i) => ({ ...i, needsYou: true })),
+            ...queue.drafts.map((i) => ({ ...i, needsYou: false })),
+            ...rows.map((r) => ({ ...r, leadChannel: null, needsYou: true })),
+          ],
+          { now, timeZone, businessName: workspace.businessName },
+        );
+        return [rows, cards] as const;
+      })(),
+    ]);
+  const attachmentFor = (i: QueueItem) => (
+    <AttachmentLine counts={attachments.get(i.threadId)} gmail={i} />
+  );
+  // Check 20 P7: a reply in a kind with autopilot on that waits says why (codes, never text).
+  const autopilotWait = (i: QueueItem) =>
+    !i.autoSendAt && i.category && isCategory(i.category) && autopilotOn.has(i.category)
+      ? autopilotWaitLine(categoryLabels[i.category], i.autopilotSkip)
+      : null;
   // A phone that keeps a copy of the queue (offline okays) never holds a note's text.
+  // Check 21 P5: "Also about your quote from Nov 2" — answer both in one go. Content-free link.
+  const alsoQuoteLine = (i: QueueItem) =>
+    i.alsoQuote ? (
+      <a
+        href={gmailThreadLink(i.alsoQuote)}
+        target="_blank"
+        rel="noreferrer"
+        className="inline-flex min-h-tap items-center text-sm font-semibold underline underline-offset-4"
+      >
+        {`Also about your quote from ${i.alsoQuote.quotedAt.toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+          timeZone,
+        })}`}
+      </a>
+    ) : null;
   const noteFor = (i: QueueItem) => (
     <NoteLine
       note={
@@ -176,26 +289,31 @@ export default async function QueuePage(props: PageProps<"/queue">) {
     />
   );
 
-  // Leads package: Call / Text, the emergency lane, lead-site and voicemail cards, the
-  // repeat-customer and outside-your-area lines — read in a fixed number of queries.
-  // B6: customers who have waited over a day with no card here (one row each, oldest first).
-  const notAnswered = await notAnsweredRows(
-    workspace.id,
-    now,
-    new Set([...queue.needsYou, ...queue.drafts].map((i) => i.threadId)),
-  );
-  const leadCards = await leadCardsFor(
-    workspace.id,
-    [
-      ...queue.needsYou.map((i) => ({ ...i, needsYou: true })),
-      ...queue.drafts.map((i) => ({ ...i, needsYou: false })),
-      ...notAnswered.map((r) => ({ ...r, leadChannel: null, needsYou: true })),
-    ],
-    { now, timeZone, businessName: workspace.businessName },
-  );
-  // The lane comes from the queue's own membership, like the counts (B5).
-  const lane = queue.needsYou.filter((i) => i.lane);
-  const needsYou = queue.needsYou.filter((i) => !i.lane);
+  // Check 9 P6: every emergency, with a draft or not, comes first under "Right now" (the lane
+  // included, B5). The order comes from the queue's own membership, like the counts.
+  const rightNow = queue.now;
+  const urgentIds = new Set(rightNow.map((i) => i.threadId));
+  const needsYou = queue.needsYou.filter((i) => !urgentIds.has(i.threadId));
+  const drafts = queue.drafts.filter((i) => !urgentIds.has(i.threadId));
+  // Check 9 P5: the cards in page order. A send, discard or snooze lands on the next one (the
+  // one before when it was the last), and the notice for a tap sits on the card it landed on.
+  const cardOrder = [...rightNow, ...needsYou, ...drafts].map((i) => i.threadId);
+  const nextThreadId = (threadId: string) => {
+    const at = cardOrder.indexOf(threadId);
+    return cardOrder[at + 1] ?? cardOrder[at - 1] ?? null;
+  };
+  const landedOn =
+    typeof params.t === "string" && cardOrder.includes(params.t.toLowerCase())
+      ? params.t.toLowerCase()
+      : null;
+  const tapNotice =
+    doneMsg || errorMsg ? (
+      <>
+        {doneMsg ? <Notice>{doneMsg}</Notice> : null}
+        {errorMsg ? <Notice strong>{errorMsg}</Notice> : null}
+      </>
+    ) : null;
+  const noticeFor = (threadId: string) => (landedOn === threadId ? tapNotice : null);
   const needsYouProps = (i: QueueItem) => ({
     i,
     lead: leadCards.get(i.threadId),
@@ -206,8 +324,16 @@ export default async function QueuePage(props: PageProps<"/queue">) {
     remindOptions: remindOptions(i),
     gmailHref: gmailLink(i),
     timeZone,
-    note: noteFor(i),
+    note: (
+      <>
+        {alsoQuoteLine(i)}
+        {noteFor(i)}
+        {attachmentFor(i)}
+      </>
+    ),
     resort: <ResortSheet threadId={i.threadId} current={i.category} back="queue" />,
+    nextThreadId: nextThreadId(i.threadId),
+    notice: noticeFor(i.threadId),
   });
   // Check 43 P7: "Written Friday. It says “tomorrow”, which meant Saturday. Check the timing."
   const timingNoteFor = (i: QueueItem) => {
@@ -219,26 +345,113 @@ export default async function QueuePage(props: PageProps<"/queue">) {
     return [
       lc?.repeat,
       lc?.outsideTown ? `${lc.outsideTown} isn't one of your towns.` : null,
+      i.archivedInGmail ? ARCHIVED_LINE : null,
+      bouncedLine(i.extracted),
     ].filter((l): l is string => !!l);
   };
+
+  // Check 9 P14: the one-time swipe tip sits on the first draft card on the page.
+  const firstDraftId = [...rightNow, ...drafts].find((i) => i.draftId)?.draftId ?? null;
+  const draftCard = (i: QueueItem) => (
+    <DraftCard
+      // Remount when the text changes (e.g. edited in Gmail) so filled gaps reset to it.
+      key={`${i.draftId}:${i.body}`}
+      draftId={i.draftId!}
+      nextThreadId={nextThreadId(i.threadId)}
+      notice={noticeFor(i.threadId)}
+      customer={who(i)}
+      customerKey={i.customerKey}
+      toAddress={i.toAddress ?? ""}
+      fromName={fromName}
+      subject={i.subject}
+      noSignatureLine={i.draftId === firstDraftId && !readOnly ? signatureLine : null}
+      fromAddress={
+        i.fromAddress && i.fromAddress !== i.mailboxEmail.toLowerCase() ? i.fromAddress : null
+      }
+      toFromReplyTo={i.replyRedirected && i.toAddress === i.customerAddress}
+      tag={`${i.backFromSnooze ? "Back from snooze · " : ""}${tag(i)}`}
+      wrote={wroteLine(i.customerWroteAt, now)}
+      leadLines={draftLeadLines(i)}
+      threadId={i.threadId}
+      leftHanded={device.leftHanded}
+      swipeTip={i.draftId === firstDraftId}
+      nudge={
+        i.kind !== "followup"
+          ? null
+          : i.category === "quote_request"
+            ? "quote"
+            : i.category === "invoice_payment"
+              ? "invoice"
+              : "other"
+      }
+      offlineEnabled={device.offline}
+      remindOptions={remindOptions(i)}
+      summary={i.summary}
+      reason={i.reason ?? ""}
+      body={i.body ?? ""}
+      seenHash={bodyHash(i.body ?? "")}
+      timingNote={timingNoteFor(i)}
+      languageLine={languageCardLine(i.customerLanguage, i.replyLanguage)}
+      autopilotWait={autopilotWait(i)}
+      flags={i.flags}
+      label={confidenceLabel({
+        confidencePct: i.confidence,
+        flags: i.flags.length,
+        gaps: findGaps(i.body ?? "").length,
+      })}
+      usedFacts={i.usedFacts}
+      openingLine={openingLine(i.opening, i.body)}
+      otherWays={offersOtherWays({
+        opening: i.opening,
+        revisionsLeft: i.revisionsLeft,
+        // A plan-paused Gmail address: no rewrites either (reviseDraft refuses it too).
+        readOnly: readOnly || i.mailboxPaused,
+      })}
+      revisionsLeft={i.revisionsLeft}
+      needsOwnerReason={i.needsOwnerReason}
+      inRightNow={urgentIds.has(i.threadId)}
+      canSend={sending && !i.mailboxPaused}
+      readOnly={readOnly || i.mailboxPaused}
+      autoSendAt={i.autoSendAt && autopilotOpen ? i.autoSendAt.toISOString() : null}
+      autoSendClock={i.autoSendAt && autopilotOpen ? clock.format(i.autoSendAt) : null}
+      sendingOffLabel={i.mailboxPaused ? MAILBOX_PAUSED_LINE : sendingOffLabel(workspace)}
+      sendingOffDetail={
+        i.mailboxPaused
+          ? "Your plan covers fewer Gmail addresses than you've connected. Pick which one is on in Settings → Your Gmail."
+          : sendingBlockedReason(workspace)
+      }
+      practiceLeft={i.mailboxPaused ? null : practiceLeft}
+      priceMemory={priceMemory.get(i.threadId)}
+      permitCard={
+        <>
+          <TownCaution extracted={i.extracted} />
+          <PermitCard permit={(i.extracted as { permit?: PermitFacts } | null)?.permit} />
+        </>
+      }
+      noteLine={
+        <>
+          {alsoQuoteLine(i)}
+          {noteFor(i)}
+          {attachmentFor(i)}
+        </>
+      }
+      moreActions={<ResortSheet threadId={i.threadId} current={i.category} hasReply back="queue" />}
+    />
+  );
 
   return (
     <>
       {sentAll.length ? (
-        <section
-          aria-live="polite"
-          className="sa-inverted flex animate-in flex-col gap-3 rounded-xl p-6 duration-500 zoom-in-95 fade-in"
+        <SentStrip
+          serif={
+            sentAll.length > 1
+              ? `${sentAll.length} replies ${sendingIds.length ? "on their way" : "sent"},`
+              : sendingIds.length
+                ? "reply on its way,"
+                : "reply sent,"
+          }
+          heavy="squared away."
         >
-          <p className="flex flex-col">
-            <span className="sa-headline-serif text-3xl">
-              {sentAll.length > 1
-                ? `${sentAll.length} replies ${sendingIds.length ? "on their way" : "sent"},`
-                : sendingIds.length
-                  ? "reply on its way,"
-                  : "reply sent,"}
-            </span>{" "}
-            <span className="sa-headline-heavy text-4xl">squared away.</span>
-          </p>
           {sent ? <p className="text-ash">{nextLine(sent, timeZone)}</p> : null}
           {sent && !sent.sendingAt ? (
             <Link
@@ -257,10 +470,12 @@ export default async function QueuePage(props: PageProps<"/queue">) {
           {sendingIds.length && sendAt ? (
             <UndoSend key={sendingIds.join()} draftIds={sendingIds} sendAt={sendAt.toISOString()} />
           ) : null}
-        </section>
+        </SentStrip>
       ) : (
         <Headline serif="waiting on you," heavy="the queue." />
       )}
+      {/* Check 8 P3: how old this list is (and, on the saved copy with no signal, says so). */}
+      <UpdatedAt time={updatedTime(now, timeZone)} what="queue" />
 
       {stopped.map((s) => (
         <Notice key={s.draftId} strong>
@@ -285,8 +500,8 @@ export default async function QueuePage(props: PageProps<"/queue">) {
           </Button>
         </form>
       ) : null}
-      {doneMsg ? <Notice>{doneMsg}</Notice> : null}
-      {errorMsg ? <Notice strong>{errorMsg}</Notice> : null}
+      {/* On the card the tap landed on when it's on the page (Check 9 P5), else up here. */}
+      {landedOn ? null : tapNotice}
       {params.error === "autopilot_sent" ? (
         <Notice strong>
           Too late, autopilot already sent it. See it on Activity.
@@ -353,14 +568,14 @@ export default async function QueuePage(props: PageProps<"/queue">) {
         <p className="text-2xl font-black">Nothing waiting on you.</p>
       ) : null}
 
-      {lane.length ? (
-        <section aria-labelledby="emergency" className="flex flex-col gap-3">
-          <h2 id="emergency" className="text-xl font-black">
-            Emergency
+      {rightNow.length ? (
+        <section aria-labelledby="right-now" className="flex flex-col gap-3">
+          <h2 id="right-now" className="text-xl font-black">
+            Right now
           </h2>
-          {lane.map((i) => (
-            <NeedsYouCard key={i.threadId} {...needsYouProps(i)} />
-          ))}
+          {rightNow.map((i) =>
+            i.draftId ? draftCard(i) : <NeedsYouCard key={i.threadId} {...needsYouProps(i)} />,
+          )}
         </section>
       ) : null}
 
@@ -396,7 +611,7 @@ export default async function QueuePage(props: PageProps<"/queue">) {
       {/* After what needs them now: the first week's look back (round 2, FW D1/D2). */}
       <FirstLookCard look={firstLook} readOnly={readOnly} />
 
-      {queue.drafts.length ? (
+      {drafts.length ? (
         <section aria-labelledby="drafts" className="flex flex-col gap-3">
           <h2 id="drafts" className="text-xl font-black">
             Replies ready for you
@@ -409,62 +624,11 @@ export default async function QueuePage(props: PageProps<"/queue">) {
               Review all {readyCount} ready
             </Link>
           ) : null}
-          {queue.drafts.map((i) => (
-            <DraftCard
-              // Remount when the text changes (e.g. edited in Gmail) so filled gaps reset to it.
-              key={`${i.draftId}:${i.body}`}
-              draftId={i.draftId!}
-              customer={who(i)}
-              toAddress={i.toAddress ?? ""}
-              toFromReplyTo={i.replyRedirected && i.toAddress === i.customerAddress}
-              tag={`${i.backFromSnooze ? "Back from snooze · " : ""}${tag(i)}`}
-              wrote={wroteLine(i.customerWroteAt, now)}
-              leadLines={draftLeadLines(i)}
-              threadId={i.threadId}
-              leftHanded={device.leftHanded}
-              offlineEnabled={device.offline}
-              remindOptions={remindOptions(i)}
-              summary={i.summary}
-              reason={i.reason ?? ""}
-              body={i.body ?? ""}
-              seenHash={bodyHash(i.body ?? "")}
-              timingNote={timingNoteFor(i)}
-              flags={i.flags}
-              label={confidenceLabel({
-                confidencePct: i.confidence,
-                flags: i.flags.length,
-                gaps: findGaps(i.body ?? "").length,
-              })}
-              usedFacts={i.usedFacts}
-              openingLine={openingLine(i.opening, i.body)}
-              otherWays={offersOtherWays({
-                opening: i.opening,
-                revisionsLeft: i.revisionsLeft,
-                // A plan-paused Gmail address: no rewrites either (reviseDraft refuses it too).
-                readOnly: readOnly || i.mailboxPaused,
-              })}
-              revisionsLeft={i.revisionsLeft}
-              needsOwnerReason={i.needsOwnerReason}
-              canSend={sending && !i.mailboxPaused}
-              readOnly={readOnly || i.mailboxPaused}
-              autoSendAt={i.autoSendAt ? i.autoSendAt.toISOString() : null}
-              autoSendClock={i.autoSendAt ? clock.format(i.autoSendAt) : null}
-              sendingOffLabel={i.mailboxPaused ? MAILBOX_PAUSED_LINE : sendingOffLabel(workspace)}
-              sendingOffDetail={
-                i.mailboxPaused
-                  ? "Your plan covers fewer Gmail addresses than you've connected. Pick which one is on in Settings → Your Gmail."
-                  : sendingBlockedReason(workspace)
-              }
-              practiceLeft={i.mailboxPaused ? null : practiceLeft}
-              priceMemory={priceMemory.get(i.threadId)}
-              noteLine={noteFor(i)}
-              moreActions={
-                <ResortSheet threadId={i.threadId} current={i.category} hasReply back="queue" />
-              }
-            />
-          ))}
+          {drafts.map(draftCard)}
         </section>
       ) : null}
+      {/* Room under the last card so the fixed "squared away." strip never covers it. */}
+      {sentAll.length ? <div aria-hidden className="h-56 shrink-0" /> : null}
     </>
   );
 }

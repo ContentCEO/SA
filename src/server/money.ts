@@ -1,22 +1,61 @@
 import "server-only";
 import { and, desc, eq, gte, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { activityLog, businessProfiles, mailboxes, threads, workspaces } from "@/db/schema";
-import { expirePendingNudge, flagPendingNudge, unflagPendingNudge, type DraftDeps } from "./drafts";
-import { effectiveStatus, jobsAllowed, ReadOnlyError } from "./lifecycle";
-import { customerAddressSql, customerNameSql } from "./thread-sql";
+import { prepareBody } from "@/ai/classify";
 import {
+  amountOnlyNeedsOwner,
+  FOLLOWUP_MAX_AGE_DAYS,
+  needsOwnerBlocksNudge,
+} from "./followup-rules";
+import {
+  activityLog,
+  businessProfiles,
+  mailboxes,
+  messages,
+  threads,
+  workspaces,
+} from "@/db/schema";
+import {
+  createDraftForThread,
+  expirePendingNudge,
+  flagPendingNudge,
+  FOLLOWUP_CATEGORIES,
+  MAX_FOLLOWUPS,
+  unflagPendingNudge,
+  type CreateOutcome,
+  type DraftDeps,
+} from "./drafts";
+import { effectiveStatus, jobsAllowed, ReadOnlyError } from "./lifecycle";
+import { readOwnerAmount } from "./quote-rules";
+import {
+  customerAddressSql,
+  customerKeySql,
+  customerNameSql,
+  lastInSql,
+  lastOutSql,
+  notDraftMessage,
+  notDraftSql,
+  sideEmailSql,
+  senderHasSupplierThreadSql,
+  senderMarkedNotOwedSql,
+} from "./thread-sql";
+import {
+  balanceDollars,
+  billOwedByOwner,
   dueLabel,
   invoiceOf,
+  isInvoiceThread,
   isOwed,
   isReceiptSender,
   NOT_OWED_NOTE,
   owedCents,
   PAID_GUESS_FLAG,
   PAID_NOTE,
+  paymentPromiseLine,
   promoteEarlierOpen,
   sortOwed,
   toCents,
+  type ChaseFacts,
   type InvoiceFacts,
 } from "./money-rules";
 
@@ -26,17 +65,46 @@ export type MoneyRow = {
   mailboxEmail: string;
   customerName: string | null;
   customerAddress: string | null;
-  /** Null when the email never said how much (a paid / hidden row, or one the owner put back). */
+  /** Check 13 P9: the customer page key (an opaque message id), or null when there's no page. */
+  customerKey: string | null;
+  /**
+   * The full amount billed; null when no email said how much ("Amount not stated"; never in
+   * the total). Check 12 P2: what's still owed is `owedCents`.
+   */
   amountCents: number | null;
+  /** Check 12 P2: what's left to pay on the current invoice (amount minus what was paid). */
+  owedCents: number | null;
+  /** Check 12 P2: paid or credited so far; 0 when nothing was. */
+  paidSoFarCents: number;
+  /** Check 12 P3: "They say it's on the way (Oct 16)…" / "They said they'd pay Friday.", or null. */
+  promiseLine: string | null;
+  /** Check 12 P3: how our paid guess was made ('reply' | 'receipt'), from the activity row. */
+  paidVia: string | null;
+  /** Check 12 P5: the amount was read from the owner's own invoice email ("From your email"). */
+  amountFromYourEmail: boolean;
   invoiceNumber: string | null;
   /** Earlier invoices on the thread still owed when this one arrived (counted in the total). */
   earlierOpen: { invoiceNumber: string | null; amountCents: number }[];
-  due: { daysPastDue: number | null; text: string };
+  /** Check 12 P6: `day` = "Due Oct 31" / "Was due Oct 10" in the owner's zone, when known. */
+  due: { daysPastDue: number | null; text: string; day?: string | null };
   /** Follow-up nudges sent on the thread (threads.followup_count), out of two. */
   nudgesUsed: number;
+  /** Check 12 P1: the facts behind the card's one chasing line (`chaseLine`). */
+  chase: ChaseFacts;
   paidAt: Date | null;
   paidSource: "owner" | "auto" | "not_owed" | null;
   lastMessageAt: Date | null;
+  /** Check 12 P8: a reply already waiting in the Queue on this thread ("See it"), or null. */
+  pendingDraftId: string | null;
+  /** Check 12 P8: the customer wrote last (so a reply, not a reminder, is what's due). */
+  customerWroteLast: boolean;
+  /**
+   * Check 12 P8: "Draft a reminder" can work: the owner wrote last, nothing is waiting, a nudge
+   * is left (of two, ever) and the thread is one nudges are written for (an invoice thread that
+   * doesn't need the owner, or needs them only for its size, Check 12 P1). The drafter re-checks
+   * all of it.
+   */
+  canDraftReminder: boolean;
 };
 
 const DAY_MS = 86_400_000;
@@ -67,13 +135,10 @@ async function moneyThreads(
   const unmarkedOwed = and(
     isNull(threads.invoicePaidAt),
     isNull(threads.invoicePaidSource),
-    // SQL twin of `holdsOwedInvoice` (a superset): the current invoice is owed with an
-    // amount, or an earlier one on the thread is still open, amount or not on the current.
+    // SQL twin of `holdsOwedInvoice` (a superset): the current invoice is owed (Check 12
+    // P5: amount or not), or an earlier one on the thread is still open.
     or(
-      and(
-        sql`${threads.extracted}->'invoice'->>'status' in ('unpaid', 'partly_paid')`,
-        sql`${threads.extracted}->'invoice'->>'amount' is not null`,
-      ),
+      sql`${threads.extracted}->'invoice'->>'status' in ('unpaid', 'partly_paid', 'said_sent')`,
       sql`${threads.extracted}->'invoice'->'earlier_open' is not null`,
     ),
   );
@@ -99,13 +164,31 @@ async function moneyThreads(
       paidSource: threads.invoicePaidSource,
       followupCount: threads.followupCount,
       lastMessageAt: threads.lastMessageAt,
+      category: threads.category,
+      needsOwner: threads.needsOwner,
+      // Check 12 P8: the Queue card on this thread, and who wrote last (the shared rule).
+      pendingDraftId: sql<
+        string | null
+      >`(select d.id from drafts d where d.thread_id = ${threads.id} and d.status = 'pending' order by d.created_at desc limit 1)`,
+      needsOwnerManual: threads.needsOwnerManual,
+      complainedAt: threads.complainedAt,
+      // Check 12 P3: how our paid guess was made (content-free: 'reply' | 'receipt').
+      paidVia: sql<
+        string | null
+      >`(select a.detail->>'via' from activity_log a where a.thread_id = ${threads.id} and a.action = 'invoice_marked_paid' order by a.created_at desc limit 1)`,
+      lastIn: lastInSql(),
+      lastOut: lastOutSql(),
       // As a reply addresses them (a form's Reply-To, else From); the sender is for the
       // receipt check (a receipt's Reply-To is the merchant).
       customerName: customerNameSql(),
       customerAddress: customerAddressSql(),
+      customerKey: customerKeySql(),
       senderAddress: sql<
         string | null
       >`(select lower(m.from_address) from messages m where m.thread_id = ${threads.id} and m.direction = 'in' order by m.sent_at desc limit 1)`,
+      // Check 12 P4: facts for `billOwedByOwner` (yes/no only; no address leaves SQL).
+      senderHasSupplierThread: sql<boolean>`${senderHasSupplierThreadSql()}`,
+      senderMarkedNotOwed: sql<boolean>`${senderMarkedNotOwedSql()}`,
     })
     .from(threads)
     .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
@@ -128,28 +211,52 @@ async function moneyThreads(
     .orderBy(desc(threads.lastMessageAt))
     // A defensive cap only: after the filter above, a 1–15 person shop has far fewer.
     .limit(2000);
-  return rows
-    .filter((r) => !isReceiptSender(r.senderAddress) && !isReceiptSender(r.customerAddress))
-    .map((r) => {
-      const { senderAddress, ...row } = r;
-      void senderAddress;
-      return { ...row, invoice: invoiceOf(row.extracted) };
-    });
+  return (
+    rows
+      .filter((r) => !isReceiptSender(r.senderAddress) && !isReceiptSender(r.customerAddress))
+      // Check 12 P4: a supplier's or subcontractor's bill is money the owner owes, not owed to
+      // them — even when the sorter couldn't tell which way it went.
+      .filter(
+        (r) =>
+          !billOwedByOwner({
+            direction: (r.extracted as { bill_direction?: unknown } | null)?.bill_direction,
+            ownerMarked: r.paidSource === "owner",
+            senderHasSupplierThread: r.senderHasSupplierThread === true,
+            senderMarkedNotOwed: r.senderMarkedNotOwed === true,
+          }),
+      )
+      .map((r) => {
+        const { senderAddress, senderHasSupplierThread, senderMarkedNotOwed, ...row } = r;
+        void senderAddress;
+        void senderHasSupplierThread;
+        void senderMarkedNotOwed;
+        return { ...row, invoice: invoiceOf(row.extracted) };
+      })
+  );
 }
 
 function toRow(
   r: Awaited<ReturnType<typeof moneyThreads>>[number],
   now: Date,
   timeZone: string,
+  followupsOn = true,
 ): MoneyRow {
   const invoice: InvoiceFacts | null = r.invoice;
+  const lastIn = asDate(r.lastIn);
+  const lastOut = asDate(r.lastOut);
   return {
     threadId: r.threadId,
     gmailThreadId: r.gmailThreadId,
     mailboxEmail: r.mailboxEmail,
     customerName: r.customerName,
     customerAddress: r.customerAddress,
+    customerKey: r.customerKey,
     amountCents: invoice?.amount ? toCents(invoice.amount) : null,
+    owedCents: invoice?.amount ? toCents(balanceDollars(invoice) ?? 0) : null,
+    paidSoFarCents: toCents(invoice?.paid ?? 0),
+    promiseLine: paymentPromiseLine(invoice, timeZone),
+    paidVia: r.paidVia ?? null,
+    amountFromYourEmail: !!invoice?.amount && invoice.amount_source === "your_email",
     invoiceNumber: invoice?.invoice_number ?? null,
     earlierOpen: (invoice?.earlier_open ?? []).map((e) => ({
       invoiceNumber: e.invoice_number,
@@ -158,10 +265,74 @@ function toRow(
     // A due date with no year is read around when the email was written, not today.
     due: dueLabel(invoice?.due_date ?? null, now, timeZone, asDate(r.lastMessageAt)),
     nudgesUsed: r.followupCount,
+    chase: {
+      followupsOn,
+      nudgesUsed: Math.min(r.followupCount, MAX_FOLLOWUPS),
+      needsYou: r.needsOwnerManual
+        ? "manual"
+        : r.needsOwner && !amountOnlyNeedsOwner(r)
+          ? "other"
+          : null,
+      waitingOnOwner: !!lastIn && (!lastOut || lastIn.getTime() > lastOut.getTime()),
+      quietTooLong: !!lastOut && now.getTime() - lastOut.getTime() > FOLLOWUP_MAX_AGE_DAYS * DAY_MS,
+    },
     paidAt: asDate(r.paidAt),
     paidSource: r.paidSource ?? null,
     lastMessageAt: asDate(r.lastMessageAt),
+    pendingDraftId: r.pendingDraftId ?? null,
+    customerWroteLast: customerWroteLast(r),
+    canDraftReminder:
+      !r.pendingDraftId &&
+      !customerWroteLast(r) &&
+      r.lastOut != null &&
+      r.followupCount < MAX_FOLLOWUPS &&
+      // Check 12 P1: the same "needs you" rule as the follow-up scan (a big invoice that needs
+      // you only for its size is still chased, so it can be reminded too).
+      !needsOwnerBlocksNudge(r) &&
+      ((FOLLOWUP_CATEGORIES as readonly string[]).includes(r.category ?? "") ||
+        isInvoiceThread({ category: r.category, extracted: r.extracted })),
   };
+}
+
+function customerWroteLast(r: { lastIn: unknown; lastOut: unknown }): boolean {
+  const lastIn = asDate(r.lastIn);
+  const lastOut = asDate(r.lastOut);
+  return lastIn != null && (lastOut == null || lastIn > lastOut);
+}
+
+/**
+ * Check 12 P8: "Draft a reminder" on a Money owed card — the owner's tap, so it runs now. It
+ * only drafts: the reminder lands in the Queue like every draft and nothing sends without
+ * Send reply. Written by the follow-up drafter (a reminder is a nudge, and counts toward the
+ * two per thread, ever), which re-checks everything: paid or not owed, a bill the owner owes,
+ * a decided quote, needs-you, the cap, a draft already waiting, away mode, a lost or paused
+ * Gmail, read-only. Scoped to the owner's workspace and to a row Money owed lists as owed.
+ */
+export async function draftInvoiceReminder(
+  workspaceId: string,
+  threadId: string,
+  now: Date = new Date(),
+  deps: DraftDeps = {},
+): Promise<
+  | "created"
+  | "not_owed"
+  | "reconnect_needed"
+  | Extract<CreateOutcome, { status: "skipped" }>["reason"]
+> {
+  const t = await ownedThread(workspaceId, threadId);
+  if (!t) return "not_found";
+  if (!jobsAllowed(t.workspace, now)) throw new ReadOnlyError(effectiveStatus(t.workspace, now));
+  const open = await openInvoices(workspaceId, "", now);
+  if (!open.some((o) => o.threadId === threadId)) return "not_owed";
+  const r = await createDraftForThread(threadId, {
+    ...deps,
+    trigger: "followup",
+    now: () => now,
+    aiMode: deps.aiMode ?? "interactive",
+  });
+  if (r.status === "created") return "created";
+  if (r.status === "reconnect_needed") return "reconnect_needed";
+  return r.reason;
 }
 
 /**
@@ -208,17 +379,23 @@ export async function listMoney(
   hidden: MoneyRow[];
   totalOwedCents: number;
 }> {
+  // Check 12 P5: read amounts from the owner's own invoice emails first.
+  await captureInvoiceAmounts(workspaceId);
   const [profile] = await db()
-    .select({ timeZone: businessProfiles.timeZone })
+    .select({
+      timeZone: businessProfiles.timeZone,
+      followupsOn: businessProfiles.followupsEnabled,
+    })
     .from(businessProfiles)
     .where(eq(businessProfiles.workspaceId, workspaceId));
   const tz = profile?.timeZone ?? "America/New_York";
+  const followupsOn = profile?.followupsOn ?? true;
   const rows = await moneyThreads(workspaceId, now);
 
   const owedRows = rows.filter((r) =>
     isOwed({ invoice: r.invoice, paidAt: asDate(r.paidAt), paidSource: r.paidSource }),
   );
-  const owed = sortOwed(owedRows.map((r) => toRow(r, now, tz)));
+  const owed = sortOwed(owedRows.map((r) => toRow(r, now, tz, followupsOn)));
   const paidRecently = rows
     .filter(
       (r) =>
@@ -235,6 +412,96 @@ export async function listMoney(
     hidden,
     totalOwedCents: owedRows.reduce((t, r) => t + owedCents(r.invoice), 0),
   };
+}
+
+/**
+ * Check 12 P5: an owed invoice whose customer email never said how much ("Got your invoice,
+ * I'll pay Friday") takes its amount from the owner's own newest email on the thread — the
+ * invoice they sent — read like a quote (`readOwnerAmount`: quoted text, signatures, deposits
+ * and other non-price figures left out). Never from an inbound email, never from a purpose
+ * note the app sent, an unsent draft or a forward to the crew, and never on a thread holding
+ * several invoices (`earlier_open`: that email may be about another one). Stored as
+ * `extracted.invoice.amount` with `amount_source: "your_email"`, only while the row is still
+ * unmarked and still has no amount. Runs on view (one newest-first page) and daily before the
+ * purge (every page, by id). Logs nothing; returns a count.
+ */
+export async function captureInvoiceAmounts(
+  workspaceId?: string,
+  opts: { pageSize?: number } = {},
+): Promise<number> {
+  const pageSize = opts.pageSize ?? 500;
+  let captured = 0;
+  let after: string | null = null;
+  for (;;) {
+    const page = await db()
+      .select({ id: threads.id })
+      .from(threads)
+      .innerJoin(mailboxes, eq(mailboxes.id, threads.mailboxId))
+      .where(
+        and(
+          workspaceId ? eq(mailboxes.workspaceId, workspaceId) : undefined,
+          or(
+            eq(threads.category, "invoice_payment"),
+            sql`${threads.extracted}->>'invoice_thread' = 'true'`,
+          ),
+          isNull(threads.invoicePaidAt),
+          isNull(threads.invoicePaidSource),
+          sql`${threads.category} is distinct from 'supplier_vendor'`,
+          sql`${threads.extracted}->'invoice'->>'status' in ('unpaid', 'partly_paid', 'said_sent')`,
+          sql`${threads.extracted}->'invoice'->>'amount' is null`,
+          // Several invoices on the thread: the owner's newest email may be about an earlier
+          // one ("#41, $500" before the customer's "got #42"), so nothing is guessed.
+          sql`${threads.extracted}->'invoice'->'earlier_open' is null`,
+          sql`exists (select 1 from messages o where o.thread_id = ${threads.id} and o.direction = 'out' and ${notDraftSql("o")} and o.body_text is not null)`,
+          after ? sql`${threads.id} > ${after}::uuid` : undefined,
+        ),
+      )
+      .orderBy(...(workspaceId ? [desc(threads.lastMessageAt)] : [threads.id]))
+      .limit(pageSize);
+    if (page.length) {
+      const newest = await db()
+        .selectDistinctOn([messages.threadId], {
+          threadId: messages.threadId,
+          body: messages.bodyText,
+        })
+        .from(messages)
+        .where(
+          and(
+            inArray(
+              messages.threadId,
+              page.map((p) => p.id),
+            ),
+            eq(messages.direction, "out"),
+            notDraftMessage(),
+            sql`not exists (select 1 from drafts d where d.thread_id = ${messages.threadId} and d.purpose is not null and d.sent_gmail_message_id = ${messages.gmailMessageId})`,
+            sql`not ${sideEmailSql("messages")}`,
+          ),
+        )
+        .orderBy(messages.threadId, desc(messages.sentAt));
+      for (const m of newest) {
+        const read = m.body ? readOwnerAmount(prepareBody(m.body)) : null;
+        if (!read) continue;
+        const dollars = read.cents / 100;
+        const set = await db()
+          .update(threads)
+          .set({
+            extracted: sql`jsonb_set(${threads.extracted}, '{invoice}', (${threads.extracted}->'invoice') || ${JSON.stringify({ amount: dollars, amount_source: "your_email" })}::jsonb)`,
+          })
+          .where(
+            and(
+              eq(threads.id, m.threadId),
+              isNull(threads.invoicePaidSource),
+              sql`${threads.extracted}->'invoice'->>'amount' is null`,
+            ),
+          )
+          .returning({ id: threads.id });
+        captured += set.length;
+      }
+    }
+    if (workspaceId || page.length < pageSize) break;
+    after = page[page.length - 1]!.id;
+  }
+  return captured;
 }
 
 /** Open invoices a payment receipt could be for (never the receipt's own thread). */

@@ -1,4 +1,7 @@
 import Link from "next/link";
+import { outlookOffered } from "@/config/outlook";
+import type { Trade } from "@/config/trades";
+import { noticeText } from "@/lib/notice-text";
 import { describeSource } from "@/server/source-rules";
 import type { Metadata } from "next";
 import { Notice } from "@/components/app/notice";
@@ -9,42 +12,90 @@ import { tradeEnum } from "@/db/schema";
 import { relativeTime } from "@/lib/relative-time";
 import {
   ADMIN_PAGE_SIZE,
+  accountsNeedingYou,
   adminOverview,
+  countInvites,
   countWorkspaces,
+  pageNumber,
   listInvites,
   systemHealth,
   type AdminRow,
 } from "@/server/admin";
 import { requireAdmin } from "@/server/session";
-import { mailboxesLine, mailboxesStuck, systemTroubleLines } from "@/server/admin-mailbox-rules";
+import {
+  mailboxesLine,
+  mailboxesStuck,
+  supportEmailWarning,
+  systemTroubleLines,
+} from "@/server/admin-mailbox-rules";
 import { modelDownLine, stoppedHeading } from "@/server/model-alert-rules";
 import { modelsDownToday } from "@/server/model-alerts";
 import { isAdminEmail } from "@/server/admin";
 import { ADMIN_MOVES, canMakeMove, type AdminMove } from "@/server/lifecycle";
 import {
+  cardNotice,
+  statusLabel,
+  needsYou,
+  NOTHING_NEEDS_YOU,
+  ORPHAN_PLAN_LINE,
+  PAUSE_EXPLAIN,
+  PLAN_SET_BY_STRIPE_LINE,
+  pauseExplanation,
+  STILL_BILLED_LINE,
+  TWO_PLANS_LINE,
+} from "@/server/admin-rules";
+import {
   adminMoveAction,
   checkTestPaymentsAction,
+  clearStripeOrphansAction,
   connectStripeAction,
   inviteAction,
   inviteFromWaitlistAction,
+  emailInviteAgainAction,
+  catchUpWaitlistEmailsAction,
+  removeInviteAction,
   testUserAddedAction,
   resetTestPaymentsAction,
+  sendTestEmailAction,
   setPlanAction,
   tickLaunchAction,
 } from "./actions";
 import { LaunchReady } from "./launch-ready";
+import { EmailHealthBox } from "./email-health";
+import { emailHealthBox } from "@/server/email-health";
+import {
+  catchUpResultText,
+  TEST_EMAIL_DONE,
+  testEmailErrorText,
+} from "@/server/email-health-rules";
+import { countWaitlistNeverConfirmed } from "@/server/waitlist-emails";
+import {
+  INVITE_NOT_GOOGLE_CONFIRM,
+  mailHostLine,
+  needsInviteConfirm,
+} from "@/server/mail-host-rules";
 import { launchChecks } from "@/server/launch-ready";
 import { loadLaunchFacts } from "@/server/launch-ticks";
 import { PendingButton } from "@/components/app/pending-button";
 import {
+  portalStatus,
   salesTaxStatus,
   stripeConfigured,
   stripeConnectedAt,
   stripeMode,
+  stripeOrphans,
+  stripeWaitingWorkspaces,
   termsBoxOffSince,
 } from "@/server/billing";
 import { SALES_TAX_LINES, SALES_TAX_ON_NOTE, TERMS_BOX_OFF_LINE } from "@/server/billing-rules";
 import { stripeReasonText } from "@/server/stripe-error-rules";
+import {
+  CHECKOUT_REVIEW_LINE,
+  PAID_WAITING_LINE,
+  stripeWaitingLine,
+} from "@/server/billing-notice-rules";
+import { moneyLines, openDisputesLine } from "@/server/stripe-money-rules";
+import { openDisputeCount } from "@/server/stripe-money";
 import { lastTestPaymentsResult } from "@/server/test-payments";
 import {
   PAST_DUE_RESET_NOTE,
@@ -53,8 +104,16 @@ import {
   testPaymentsResetNotice,
 } from "@/server/test-payment-rules";
 import { listWaitlist } from "@/server/waitlist";
-import { referralsVisible } from "@/server/referral-rules";
-import { describeWaitlistEntry, formatStamp } from "@/server/growth-note";
+import {
+  PORTAL_LOGIN_PAGE_LINE,
+  PORTAL_DOWNGRADES_NOW_LINE,
+  PORTAL_SCHEDULES_DOWNGRADES_LINE,
+  PORTAL_UNKNOWN_LINE,
+  referralsVisible,
+} from "@/server/referral-rules";
+import { describeWaitlistEntry, formatStamp, localStamp } from "@/server/growth-note";
+import { growthHeardFromLabel } from "@/config/growth";
+import { isTimeZone } from "@/server/time-zone-rules";
 import { growthCopy } from "@/components/marketing/growth/growth-copy";
 import { phoneHref } from "@/lib/phone-href";
 import { pricing } from "@/config/pricing";
@@ -67,17 +126,6 @@ import {
 } from "./growth-admin";
 
 export const metadata: Metadata = { title: "Admin", robots: { index: false } };
-
-const statusLabel: Record<AdminRow["status"], string> = {
-  invited: "Invited",
-  evaluating: "Evaluating",
-  evaluation_expired: "Evaluation over",
-  setup_paid: "Setup paid",
-  active: "Active",
-  past_due: "Past due",
-  canceled: "Canceled",
-  paused: "Paused",
-};
 
 const moves: Record<AdminMove, { label: string; explain: string; confirm: string }> = {
   extend_evaluation: {
@@ -98,13 +146,19 @@ const moves: Record<AdminMove, { label: string; explain: string; confirm: string
   },
   pause: {
     label: "Pause account",
-    explain: "Stops reading, drafting and sending. Nothing is deleted.",
+    explain: PAUSE_EXPLAIN,
     confirm: "Yes, pause",
   },
   resume: {
     label: "Resume account",
     explain: "Puts them back where they were before the pause.",
     confirm: "Yes, resume",
+  },
+  sign_out_everywhere: {
+    label: "Sign them out everywhere",
+    explain:
+      "Ends every sign-in on this account, on every phone and computer (for a lost phone). They sign in again with Google. Nothing else changes.",
+    confirm: "Yes, sign them out everywhere",
   },
 };
 
@@ -114,18 +168,23 @@ const done: Record<string, string> = {
   mark_setup_call_done: "Marked active.",
   pause: "Account paused.",
   resume: "Account resumed.",
+  sign_out_everywhere: "Signed them out everywhere.",
   plan: "Plan saved.",
   launch_ticked: "Marked done.",
   stripe_test:
     "Stripe connected in TEST mode: prices, billing portal and payment notifications are set up. Use card 4242 4242 4242 4242 to try it.",
   stripe_live: "Stripe connected in LIVE mode. Real cards will be charged.",
   stripe_test_check: "Test payments checked.",
+  stripe_orphans_cleared: "Cleared. It comes back if Stripe sends another one.",
   invited:
     "Invited. They can sign in now. The invite email didn't go out (email isn't set up, or it failed), so tell them yourself. Add them as a Google test user too.",
   invited_emailed:
     "Invited, and emailed them the sign-in link. Add them as a Google test user too (see the list under Invite an owner).",
   test_user: "Marked as a Google test user.",
   already_invited: "That address was already invited.",
+  invite_removed: "Invite taken back. That address can't sign in now.",
+  invite_emailed_today: "Already emailed them the sign-in link today. Try again tomorrow.",
+  invite_gone: "That invite was already gone.",
 };
 /** Where Google Cloud lists an app's test users (Google Auth Platform → Audience). */
 const GOOGLE_AUDIENCE_URL = "https://console.cloud.google.com/auth/audience";
@@ -134,9 +193,17 @@ const errors: Record<string, string> = {
   stripe: "Couldn't connect Stripe.",
   stripe_test_mode: TEST_PAYMENTS_TEST_MODE,
   stripe_test_payments: "Couldn't check test payments. Try again in a minute.",
+  plan_stripe:
+    "That account pays through Stripe, so its plan follows the subscription. Change it in Stripe.",
   move: "That change isn't allowed from the account's current status. Refresh and look again.",
   invite: "That doesn't look like an email address.",
+  invite_used: "They've already signed in, so that invite can't be taken back.",
+  invite_again_limit: "That's a lot of invite emails for one hour. Try again later.",
+  waitlist_catchup_limit: "That's a lot of catch-up taps for one hour. Try again later.",
+  email_not_set_up: "Email isn't set up, so nothing went out.",
   growth_only: growthCopy.admin.growthOnlyError,
+  invite_needs_confirm:
+    "That address isn't on Gmail, so they can't connect yet. Open Invite on their card and tap Invite anyway.",
   unknown: "That didn't work. Refresh and try again.",
 };
 
@@ -148,9 +215,19 @@ const et = new Intl.DateTimeFormat("en-US", {
   minute: "2-digit",
   timeZoneName: "short",
 });
+const inviteDay = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York",
+  month: "short",
+  day: "numeric",
+});
 const dollars = (cents: number) => `$${(cents / 100).toFixed(2)}`;
 
 const ga = growthCopy.admin;
+/** Check 45 P5: the caller's clock ("6:12am"), from the zone their browser gave. */
+const theirTime = (now: Date, timeZone: string) =>
+  new Intl.DateTimeFormat("en-US", { timeZone, hour: "numeric", minute: "2-digit" })
+    .format(now)
+    .replace(/\s?(AM|PM)$/, (_, m: string) => m.toLowerCase());
 const CALLABLE = /^\d{3}-\d{3}-\d{4}$/;
 
 /**
@@ -207,26 +284,39 @@ function WaitlistEntry({
       <span className="break-all">{w.email}</span>
       <span className="text-sm">
         {(facts.app
-          ? [
-              w.trade ? tradeLabel[w.trade] : null,
-              w.teamSize ? `${w.teamSize} people` : null,
-              w.phone,
-            ]
-          : [w.trade ? tradeLabel[w.trade] : null]
+          ? [tradeWords(w), w.teamSize ? `${w.teamSize} people` : null, w.phone]
+          : [tradeWords(w)]
         )
           .filter(Boolean)
           .join(" · ")}
       </span>
       {facts.appNote ? <p className="text-muted-foreground">“{facts.appNote}”</p> : null}
+      {facts.appFlagged || request?.trapFilled ? (
+        <span className="font-semibold">{ga.trapFlag}</span>
+      ) : null}
       {describeSource(w) ? <span className="text-sm">Came from: {describeSource(w)}</span> : null}
-      {referrals && facts.app && w.referralCode ? (
+      {/* Check 47 P3: only Google addresses can connect today. */}
+      {facts.app && mailHostLine(w.mailHost) ? (
+        <span className="text-sm font-semibold">{mailHostLine(w.mailHost)}</span>
+      ) : null}
+      {/* Plan #47: an app sign-up's code, or (since 2026-10-16) a Growth request's, which is
+          settled when Davi makes them a Growth client. */}
+      {referrals && w.referralCode ? (
         <span className="text-sm font-semibold">Came from a referral link</span>
       ) : null}
       {request ? (
-        <div className="flex flex-col gap-1 border-t border-stone pt-2">
+        <div className="flex flex-col gap-2 border-t border-stone pt-2">
           <span className="font-semibold">{ga.wants(request.services)}</span>
           <span className="text-sm">{ga.asked(formatStamp(request.at))}</span>
           {callLink(request.phone)}
+          {request.state ? <span>{ga.worksIn(request.state)}</span> : null}
+          {request.timeZone && isTimeZone(request.timeZone) ? (
+            <span>{ga.theirTime(theirTime(now, request.timeZone))}</span>
+          ) : null}
+          {request.heardFrom ? (
+            <span>{ga.heard(growthHeardFromLabel(request.heardFrom))}</span>
+          ) : null}
+          {request.sentBy ? <span>{ga.sentBy(request.sentBy)}</span> : null}
           {request.nameGiven ? <span>{ga.nameGiven(request.nameGiven)}</span> : null}
           {request.tradeGiven ? <span>{ga.tradeGiven(request.tradeGiven)}</span> : null}
           {request.note ? <p className="text-muted-foreground">“{request.note}”</p> : null}
@@ -243,7 +333,7 @@ function WaitlistEntry({
         </div>
       ) : null}
       {!facts.app ? (
-        <span className="font-semibold">{ga.growthOnly}</span>
+        <span className="font-semibold">{ga.growthOnlyLine(w.inviteState)}</span>
       ) : w.inviteState === "invited" ? (
         <span className="font-semibold">
           Invited {relativeTime(w.inviteAt ?? w.invitedAt ?? w.createdAt, now)}
@@ -260,14 +350,45 @@ function WaitlistEntry({
             </span>
           ) : null}
           <input type="hidden" name="email" value={w.email} />
-          <Button type="submit" className="w-full">
-            {w.inviteState === "invite_gone"
-              ? `Invite ${w.name.split(" ")[0]} again`
-              : `Invite ${w.name.split(" ")[0]}`}
-          </Button>
+          {needsInviteConfirm(w.mailHost, outlookOffered()) ? (
+            // Check 47 P3: an extra tap for an address that isn't on Gmail.
+            <details className="rounded-lg border">
+              <summary className="flex min-h-tap cursor-pointer items-center px-4 font-semibold">
+                {w.inviteState === "invite_gone"
+                  ? `Invite ${w.name.split(" ")[0]} again`
+                  : `Invite ${w.name.split(" ")[0]}`}
+              </summary>
+              <div className="flex flex-col gap-2 px-4 pb-4">
+                <p>{INVITE_NOT_GOOGLE_CONFIRM}</p>
+                <input type="hidden" name="confirm" value="1" />
+                <Button type="submit" className="w-full">
+                  Invite anyway
+                </Button>
+                <KeepOnList />
+              </div>
+            </details>
+          ) : (
+            <Button type="submit" className="w-full">
+              {w.inviteState === "invite_gone"
+                ? `Invite ${w.name.split(" ")[0]} again`
+                : `Invite ${w.name.split(" ")[0]}`}
+            </Button>
+          )}
         </form>
       )}
     </li>
+  );
+}
+
+/** "Keep on the list": closes the confirm step without inviting (a link back to the list). */
+function KeepOnList() {
+  return (
+    <a
+      href="/admin#waitlist"
+      className="inline-flex min-h-tap items-center justify-center font-semibold underline underline-offset-4"
+    >
+      Keep on the list
+    </a>
   );
 }
 
@@ -326,7 +447,16 @@ function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-function WorkspaceCard({ w, now }: { w: AdminRow; now: Date }) {
+function WorkspaceCard({
+  w,
+  now,
+  notice,
+}: {
+  w: AdminRow;
+  now: Date;
+  /** Check 16 P6: the notice for a move Davi just made on this card. */
+  notice?: { text: string; strong: boolean } | null;
+}) {
   const own = isAdminEmail(w.ownerEmail);
   const allowed = (Object.keys(ADMIN_MOVES) as AdminMove[]).filter(
     (m) =>
@@ -338,15 +468,48 @@ function WorkspaceCard({ w, now }: { w: AdminRow; now: Date }) {
   const stuck = mailboxesStuck(w.mailboxes);
   return (
     <article
+      id={`acct-${w.workspaceId}`}
       aria-label={w.ownerEmail}
       className="flex flex-col gap-3 rounded-xl border bg-card p-4"
     >
       {stuck ? (
         <p className="sa-inverted self-start rounded-md px-2 py-1 text-sm font-black">Stuck</p>
       ) : null}
+      {w.waitingOnStripe ? (
+        <p className="sa-inverted self-start rounded-md px-2 py-1 font-black">
+          {PAID_WAITING_LINE}
+        </p>
+      ) : null}
+      {w.checkoutNeedsReview ? (
+        <p className="sa-inverted self-start rounded-md px-2 py-1 font-black">
+          {CHECKOUT_REVIEW_LINE}
+        </p>
+      ) : null}
+      {moneyLines(w.moneyEvents).map((l, i) => (
+        <p
+          key={i}
+          className={
+            l.strong ? "sa-inverted self-start rounded-md px-2 py-1 font-black" : "font-semibold"
+          }
+        >
+          {l.text}
+        </p>
+      ))}
+      {w.twoLivePlans ? (
+        <p className="sa-inverted self-start rounded-md px-2 py-1 font-black">{TWO_PLANS_LINE}</p>
+      ) : null}
+      {w.status === "paused" && w.hasSubscription ? (
+        <p className="font-black">{STILL_BILLED_LINE}</p>
+      ) : null}
       <header className="flex flex-wrap items-baseline justify-between gap-2">
         <div className="flex min-w-0 flex-col">
-          <span className="truncate text-lg font-black">{w.businessName || w.ownerEmail}</span>
+          {/* Check 16 P8: the support page for this account (content-free). */}
+          <Link
+            href={`/admin/accounts/${w.workspaceId}`}
+            className="inline-flex min-h-tap items-center truncate text-lg font-black underline underline-offset-4"
+          >
+            {w.businessName || w.ownerEmail}
+          </Link>
           {w.businessName ? <span className="truncate text-sm">{w.ownerEmail}</span> : null}
         </div>
         <span
@@ -359,9 +522,10 @@ function WorkspaceCard({ w, now }: { w: AdminRow; now: Date }) {
           {statusLabel[w.status]}
         </span>
       </header>
+      {notice ? <Notice strong={notice.strong}>{notice.text}</Notice> : null}
       <dl className="grid grid-cols-2 gap-x-4 gap-y-2">
         <Stat label="Trade" value={isTrade(w.trade) ? tradeLabel[w.trade] : "—"} />
-        <Stat label="Plan" value={w.plan ?? "None yet"} />
+        <Stat label="Plan" value={w.planLabel} />
         <Stat
           label="Setup paid"
           value={
@@ -405,43 +569,46 @@ function WorkspaceCard({ w, now }: { w: AdminRow; now: Date }) {
         <Stat label="AI calls today" value={w.ai.callsToday} />
         <Stat label="AI cost this month" value={`${dollars(w.ai.costCentsThisMonth)} (est.)`} />
         {w.referredByName ? <Stat label="Referred by" value={w.referredByName} /> : null}
-        {w.referralCredits.waiting || w.referralCredits.failed ? (
+        {w.freeMonths.length ? (
           <Stat
-            label="Referral credit"
-            value={[
-              w.referralCredits.waiting ? `${w.referralCredits.waiting} waiting` : null,
-              w.referralCredits.failed
-                ? `${w.referralCredits.failed} refused by Stripe${w.referralCredits.lastErrorCode ? ` (${w.referralCredits.lastErrorCode})` : ""}`
-                : null,
-            ]
-              .filter(Boolean)
-              .join(", ")}
+            label="Free months"
+            value={
+              <ul className="flex flex-col">
+                {w.freeMonths.map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+            }
           />
         ) : null}
       </dl>
-      <form action={setPlanAction} className="flex gap-2">
-        <input type="hidden" name="workspaceId" value={w.workspaceId} />
-        <label className="flex flex-1 flex-col gap-1">
-          <span className="sr-only">Plan</span>
-          <select
-            name="plan"
-            aria-label="Plan"
-            defaultValue={w.plan ?? ""}
-            className="min-h-tap w-full rounded-lg border border-input bg-paper px-3 text-base"
-          >
-            <option value="">No plan yet</option>
-            {Object.entries(pricing.plans).map(([id, p]) => (
-              <option key={id} value={id}>
-                {p.name}
-                {p.autopilot ? " (autopilot)" : ""}
-              </option>
-            ))}
-          </select>
-        </label>
-        <Button type="submit" variant="outline">
-          Save plan
-        </Button>
-      </form>
+      {w.hasSubscription ? (
+        <p className="text-sm">{PLAN_SET_BY_STRIPE_LINE}</p>
+      ) : (
+        <form action={setPlanAction} className="flex gap-2">
+          <input type="hidden" name="workspaceId" value={w.workspaceId} />
+          <label className="flex flex-1 flex-col gap-1">
+            <span className="sr-only">Plan</span>
+            <select
+              name="plan"
+              aria-label="Plan"
+              defaultValue={w.plan ?? ""}
+              className="min-h-tap w-full rounded-lg border border-input bg-paper px-3 text-base"
+            >
+              <option value="">No plan yet</option>
+              {Object.entries(pricing.plans).map(([id, p]) => (
+                <option key={id} value={id}>
+                  {p.name}
+                  {p.autopilot ? " (autopilot)" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+          <Button type="submit" variant="outline">
+            Save plan
+          </Button>
+        </form>
+      )}
       {allowed.length ? (
         <div className="flex flex-col gap-2">
           {allowed.map((m) => (
@@ -452,7 +619,7 @@ function WorkspaceCard({ w, now }: { w: AdminRow; now: Date }) {
               <form action={adminMoveAction} className="flex flex-col gap-2 px-4 pb-4">
                 <input type="hidden" name="workspaceId" value={w.workspaceId} />
                 <input type="hidden" name="move" value={m} />
-                <p>{moves[m].explain}</p>
+                <p>{m === "pause" ? pauseExplanation(w.hasSubscription) : moves[m].explain}</p>
                 <Button type="submit" className="w-full">
                   {moves[m].confirm}
                 </Button>
@@ -465,11 +632,35 @@ function WorkspaceCard({ w, now }: { w: AdminRow; now: Date }) {
   );
 }
 
+/** Check 41 P4: "Something else: pest control" when they typed which trade (they typed it). */
+function tradeWords(w: { trade: Trade | null; tradeOther?: string | null }): string | null {
+  if (!w.trade) return null;
+  return w.trade === "other" && w.tradeOther
+    ? `${tradeLabel.other}: ${w.tradeOther}`
+    : tradeLabel[w.trade];
+}
+
 export default async function AdminPage(props: PageProps<"/admin">) {
   await requireAdmin();
   const params = await props.searchParams;
   const now = new Date();
   const referrals = referralsVisible();
+  // Check 16 P5: find a shop and page through every account (and invite). q is never logged.
+  const q = typeof params.q === "string" ? params.q.trim().slice(0, 200) : "";
+  const page = pageNumber(params.page);
+  const invitePage = pageNumber(params.ipage);
+  const hrefWith = (over: Record<string, string | number | null>) => {
+    const sp = new URLSearchParams();
+    const merged: Record<string, string | number | null> = {
+      q: q || null,
+      page: page > 1 ? page : null,
+      ipage: invitePage > 1 ? invitePage : null,
+      ...over,
+    };
+    for (const [k, v] of Object.entries(merged)) if (v !== null && v !== "") sp.set(k, String(v));
+    const qs = sp.toString();
+    return qs ? `/admin?${qs}` : "/admin";
+  };
   // Test payments can only be told apart with the live key. The counts come from the last check
   // (database only): a plain page load asks Stripe nothing new.
   const live = stripeConfigured() && stripeMode() === "live";
@@ -483,13 +674,21 @@ export default async function AdminPage(props: PageProps<"/admin">) {
     salesTax,
     testPayments,
     termsBoxOff,
+    portal,
     growthClientCount,
     modelsDown,
     launchFacts,
+    orphans,
+    openDisputes,
+    waitingStripe,
+    accountCounts,
+    inviteTotal,
+    emailBox,
+    neverConfirmed,
   ] = await Promise.all([
-    adminOverview(now),
-    countWorkspaces(),
-    listInvites(),
+    adminOverview(now, { q, page }),
+    countWorkspaces(q),
+    listInvites({ page: invitePage }),
     listWaitlist(),
     stripeConnectedAt(),
     systemHealth(now),
@@ -497,42 +696,126 @@ export default async function AdminPage(props: PageProps<"/admin">) {
     live ? lastTestPaymentsResult() : null,
     // Database only: set by the last checkout that had to go without the terms box.
     termsBoxOffSince(),
+    // Plan #47: free months wait while Stripe's page schedules downgrades (short timeout).
+    portalStatus(),
     countGrowthClients(),
     modelsDownToday(now),
     loadLaunchFacts(),
+    stripeOrphans(),
+    openDisputeCount(),
+    stripeWaitingWorkspaces(),
+    accountsNeedingYou(now),
+    countInvites(),
+    // Check 18 P2: the sender's state (env) and the week's refusal count (a tally, no addresses).
+    emailHealthBox(now),
+    // Check 18 P4: how many sign-ups never got "You're on the list" (a count).
+    countWaitlistNeverConfirmed(),
   ]);
   const growthStates = await growthStateForEmails(waiting.map((w) => w.email));
+  // Check 16 P3: Growth requests from the last 7 days (no "called" mark exists yet: Check 16 P4).
+  const weekAgo = localStamp(new Date(now.getTime() - 7 * 86_400_000));
+  const needs = needsYou({
+    growthCalls: waiting.filter((w) => {
+      const at = describeWaitlistEntry(w).growth[0]?.at;
+      return Boolean(at && at >= weekAgo);
+    }).length,
+    newSignups: waiting.filter(
+      (w) => describeWaitlistEntry(w).app && w.inviteState === "not_invited",
+    ).length,
+    stuckInboxes: system.staleMailboxes + system.stuckFirstReads,
+    ...accountCounts,
+  });
   const today = adminToday(now);
   // Waitlist Growth notices show in the waitlist section (the page scrolls there).
   const code = (v: unknown, prefix: string) =>
     typeof v === "string" && v.startsWith(prefix) ? v : undefined;
-  const waitlistDone = WAITLIST_GROWTH_DONE[code(params.done, "wl_") ?? ""];
-  const waitlistError = WAITLIST_GROWTH_ERRORS[code(params.error, "wl_") ?? ""];
+  const waitlistDone =
+    params.done === "waitlist_catchup"
+      ? catchUpResultText(params.sent, params.failed, params.left)
+      : noticeText(WAITLIST_GROWTH_DONE, code(params.done, "wl_"));
+  const waitlistError =
+    params.error === "waitlist_catchup_limit" ||
+    params.error === "email_not_set_up" ||
+    params.error === "invite_needs_confirm"
+      ? noticeText(errors, params.error)
+      : noticeText(WAITLIST_GROWTH_ERRORS, code(params.error, "wl_"));
   // Payment messages show inside the Payments section (the page scrolls there), not at the top.
   const isStripe = (k: unknown) => typeof k === "string" && k.startsWith("stripe");
+  // Check 18 P2: the test email's result shows in the Email box.
+  const isEmailTest = (k: unknown) => typeof k === "string" && k.startsWith("email_test");
+  const emailDone = noticeText(TEST_EMAIL_DONE, isEmailTest(params.done) ? params.done : undefined);
+  const emailError = testEmailErrorText(params.error, params.status);
+  // Check 16 P6: a move's notice shows inside the card it changed, naming it (not at the top).
+  const onCard = cardNotice(params, rows, pricing.plans);
   const doneMsg =
-    typeof params.done === "string" && !isStripe(params.done) ? done[params.done] : undefined;
+    !onCard &&
+    !isStripe(params.done) &&
+    !isEmailTest(params.done) &&
+    params.done !== "waitlist_catchup"
+      ? noticeText(done, params.done)
+      : undefined;
   const errorMsg =
-    typeof params.error === "string" && !isStripe(params.error) ? errors[params.error] : undefined;
+    !onCard &&
+    !isStripe(params.error) &&
+    !isEmailTest(params.error) &&
+    params.error !== "waitlist_catchup_limit" &&
+    params.error !== "email_not_set_up" &&
+    params.error !== "invite_needs_confirm"
+      ? noticeText(errors, params.error)
+      : undefined;
   const stripeDone =
     params.done === "stripe_test_reset"
       ? testPayments && testPayments.reset !== null
         ? testPaymentsResetNotice({ reset: testPayments.reset, unchecked: testPayments.unchecked })
         : undefined
       : isStripe(params.done)
-        ? done[params.done as string]
+        ? noticeText(done, params.done)
         : undefined;
-  const stripeError = isStripe(params.error) ? errors[params.error as string] : undefined;
+  const stripeError = isStripe(params.error) ? noticeText(errors, params.error) : undefined;
   // Only a fixed code travels in the URL (M11 C10); anything else shows nothing.
   const stripeReason = stripeReasonText(params.reason);
   // Check 16 P1: one stuck inbox inverts the box, even when the others are fine.
   const troubleLines = systemTroubleLines(system);
   // Check 48 P3: a model Anthropic said was missing today. Model names and times only.
-  const systemInverted = system.jobsLookStopped || troubleLines.length > 0 || modelsDown.length > 0;
+  // Check 27 P2: no SUPPORT_EMAIL → the legal pages offer a text link, not an email; say so here.
+  const supportWarning = supportEmailWarning({
+    SUPPORT_EMAIL: process.env.SUPPORT_EMAIL,
+    VERCEL_ENV: process.env.VERCEL_ENV,
+  });
+  const systemInverted =
+    system.jobsLookStopped ||
+    troubleLines.length > 0 ||
+    modelsDown.length > 0 ||
+    (supportWarning?.inverts ?? false);
 
   return (
     <>
       <Headline serif="behind the counter," heavy="admin." />
+      {/* Check 16 P3: what needs Davi, first thing on a phone. Counts only, never names. */}
+      <section
+        aria-labelledby="needs-you"
+        className="flex flex-col gap-1 rounded-xl border-2 border-charcoal p-4"
+      >
+        <h2 id="needs-you" className="text-lg font-black">
+          Needs you
+        </h2>
+        {needs.length === 0 ? (
+          <p>{NOTHING_NEEDS_YOU}</p>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {needs.map((l) => (
+              <li key={l.key}>
+                <a
+                  href={l.href}
+                  className="flex min-h-tap items-center font-semibold underline underline-offset-4"
+                >
+                  {l.text}
+                </a>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
       <Link
         href="/admin/costs"
         className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
@@ -580,6 +863,10 @@ export default async function AdminPage(props: PageProps<"/admin">) {
             {line}
           </p>
         ))}
+        {supportWarning ? <p className="font-semibold">{supportWarning.line}</p> : null}
+        <p>
+          Background work this month: {system.jobExecutionsThisMonth.toLocaleString("en-US")} steps.
+        </p>
         {system.jobsLookStopped ? (
           <p>
             Mail is normally checked every 5 minutes. Open the Inngest dashboard (Vercel → sa →
@@ -588,19 +875,140 @@ export default async function AdminPage(props: PageProps<"/admin">) {
         ) : null}
       </section>
 
+      <EmailHealthBox
+        health={emailBox.health}
+        refused={emailBox.refused}
+        done={emailDone}
+        error={emailError}
+        sendTestAction={sendTestEmailAction}
+      />
+
       <LaunchReady rows={launchChecks(process.env, launchFacts)} tickAction={tickLaunchAction} />
+
+      <section id="waitlist" aria-labelledby="waitlist-heading" className="flex flex-col gap-3">
+        <h2 id="waitlist-heading" className="text-xl font-black">
+          {ga.heading(waiting.length)}
+        </h2>
+        {/* Check 47 P3: Outlook demand, a count. */}
+        <p className="text-sm">
+          On Outlook: {waiting.filter((w) => w.mailHost === "microsoft").length}
+        </p>
+        {waitlistDone ? <Notice>{waitlistDone}</Notice> : null}
+        {waitlistError ? <Notice strong>{waitlistError}</Notice> : null}
+        {/* Check 18 P4: once the sender is real, catch up the confirmations that never went out. */}
+        {neverConfirmed > 0 && emailBox.health.state === "real" ? (
+          <form action={catchUpWaitlistEmailsAction} className="flex flex-col gap-1">
+            <PendingButton pending="Sending, one a second…" variant="outline" className="w-full">
+              Send the list email to people who never got it ({neverConfirmed})
+            </PendingButton>
+            <p className="text-sm text-muted-foreground">
+              Oldest first, a few at a time. Nobody gets it twice.
+            </p>
+          </form>
+        ) : null}
+        {waiting.length === 0 ? (
+          <p>{ga.empty}</p>
+        ) : (
+          <ul className="flex flex-col gap-3">
+            {waiting.map((w) => (
+              <WaitlistEntry
+                key={w.email}
+                w={w}
+                now={now}
+                referrals={referrals}
+                growth={growthStates.get(w.email.toLowerCase())}
+                today={today}
+              />
+            ))}
+          </ul>
+        )}
+      </section>
 
       <section aria-labelledby="accounts" className="flex flex-col gap-3">
         <h2 id="accounts" className="text-xl font-black">
           Accounts ({total})
         </h2>
-        {total > rows.length ? (
-          <p className="text-muted-foreground">Showing the newest {ADMIN_PAGE_SIZE}.</p>
+        <form method="get" action="/admin" role="search" className="flex flex-col gap-2">
+          <label className="flex flex-col gap-1.5">
+            <span className="font-semibold">Find a shop (name or email)</span>
+            <input
+              name="q"
+              type="search"
+              defaultValue={q}
+              maxLength={200}
+              autoComplete="off"
+              className="min-h-tap rounded-lg border border-input bg-paper px-3 text-base"
+            />
+          </label>
+          <div className="flex items-center gap-4">
+            <Button type="submit" variant="outline">
+              Find
+            </Button>
+            {q ? (
+              <Link
+                href="/admin#accounts"
+                className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
+              >
+                Clear
+              </Link>
+            ) : null}
+          </div>
+        </form>
+        {rows.length === 0 ? (
+          <p>{q ? "No shop matches that." : "No one has signed in yet."}</p>
         ) : null}
-        {rows.length === 0 ? <p>No one has signed in yet.</p> : null}
-        {rows.map((w) => (
-          <WorkspaceCard key={w.workspaceId} w={w} now={now} />
-        ))}
+        {rows.map((w) =>
+          isAdminEmail(w.ownerEmail) ? (
+            // Check 16 P3: Davi's own test account folds to one line; its moves still work.
+            <details
+              key={w.workspaceId}
+              className="rounded-xl border"
+              open={onCard?.workspaceId === w.workspaceId}
+            >
+              <summary className="flex min-h-tap cursor-pointer items-center px-4 font-semibold">
+                Your test account: {w.businessName || w.ownerEmail} · {statusLabel[w.status]}
+              </summary>
+              <div className="p-2">
+                <WorkspaceCard
+                  w={w}
+                  now={now}
+                  notice={onCard?.workspaceId === w.workspaceId ? onCard : null}
+                />
+              </div>
+            </details>
+          ) : (
+            <WorkspaceCard
+              key={w.workspaceId}
+              w={w}
+              now={now}
+              notice={onCard?.workspaceId === w.workspaceId ? onCard : null}
+            />
+          ),
+        )}
+        {total > ADMIN_PAGE_SIZE ? (
+          <nav aria-label="More accounts" className="flex flex-col gap-1">
+            <p className="text-muted-foreground">
+              Showing {Math.min((page - 1) * ADMIN_PAGE_SIZE + 1, total)} to{" "}
+              {Math.min(page * ADMIN_PAGE_SIZE, total)} of {total}.
+            </p>
+            {page * ADMIN_PAGE_SIZE < total ? (
+              <Link
+                href={`${hrefWith({ page: page + 1 })}#accounts`}
+                className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
+              >
+                Show older accounts
+              </Link>
+            ) : null}
+            {page > 1 ? (
+              <Link
+                href={`${hrefWith({ page: page - 1 > 1 ? page - 1 : null })}#accounts`}
+                className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
+              >
+                Show newer accounts
+              </Link>
+            ) : null}
+          </nav>
+        ) : null}
       </section>
 
       <section id="stripe" aria-labelledby="stripe-heading" className="flex flex-col gap-3">
@@ -614,6 +1022,30 @@ export default async function AdminPage(props: PageProps<"/admin">) {
             {stripeReason ? ` ${stripeReason}` : null}
           </Notice>
         ) : null}
+        {waitingStripe.size > 0 ? (
+          <p className="sa-inverted rounded-xl p-4 font-black">
+            {stripeWaitingLine(waitingStripe.size)}
+          </p>
+        ) : null}
+        {openDisputesLine(openDisputes) ? (
+          <p className="sa-inverted rounded-xl p-4 font-black">{openDisputesLine(openDisputes)}</p>
+        ) : null}
+        {orphans && orphans.count > 0 ? (
+          <form
+            action={clearStripeOrphansAction}
+            className="sa-inverted flex flex-col gap-2 rounded-xl p-4"
+          >
+            <p className="font-black">{ORPHAN_PLAN_LINE}</p>
+            <p>
+              {orphans.count === 1 ? "Once" : `${orphans.count} times`}, last{" "}
+              {et.format(orphans.at)}. Look in Stripe → Customers for a plan whose account was
+              deleted or never matched.
+            </p>
+            <Button type="submit" variant="outline" className="w-full">
+              I checked Stripe
+            </Button>
+          </form>
+        ) : null}
         {stripeConfigured() ? (
           <>
             <form action={connectStripeAction} className="flex flex-col gap-2">
@@ -622,6 +1054,16 @@ export default async function AdminPage(props: PageProps<"/admin">) {
               </p>
               {salesTax ? <p>{SALES_TAX_LINES[salesTax]}</p> : null}
               {salesTax === "on" ? <p>{SALES_TAX_ON_NOTE}</p> : null}
+              {portal === "unknown" ? (
+                <p className="font-semibold">{PORTAL_UNKNOWN_LINE}</p>
+              ) : portal !== null && portal.schedulesDowngrades ? (
+                <p className="font-semibold">{PORTAL_SCHEDULES_DOWNGRADES_LINE}</p>
+              ) : portal !== null ? (
+                <p>{PORTAL_DOWNGRADES_NOW_LINE}</p>
+              ) : null}
+              {portal !== null && portal !== "unknown" && portal.loginPage ? (
+                <p>{PORTAL_LOGIN_PAGE_LINE}</p>
+              ) : null}
               {termsBoxOff ? (
                 <p className="font-semibold">
                   {TERMS_BOX_OFF_LINE} (Last checkout without it: {et.format(termsBoxOff)}.)
@@ -641,30 +1083,6 @@ export default async function AdminPage(props: PageProps<"/admin">) {
           </>
         ) : (
           <p>Add STRIPE_SECRET_KEY to the sa project in Vercel first.</p>
-        )}
-      </section>
-
-      <section id="waitlist" aria-labelledby="waitlist-heading" className="flex flex-col gap-3">
-        <h2 id="waitlist-heading" className="text-xl font-black">
-          {ga.heading(waiting.length)}
-        </h2>
-        {waitlistDone ? <Notice>{waitlistDone}</Notice> : null}
-        {waitlistError ? <Notice strong>{waitlistError}</Notice> : null}
-        {waiting.length === 0 ? (
-          <p>{ga.empty}</p>
-        ) : (
-          <ul className="flex flex-col gap-3">
-            {waiting.map((w) => (
-              <WaitlistEntry
-                key={w.email}
-                w={w}
-                now={now}
-                referrals={referrals}
-                growth={growthStates.get(w.email.toLowerCase())}
-                today={today}
-              />
-            ))}
-          </ul>
         )}
       </section>
 
@@ -719,12 +1137,19 @@ export default async function AdminPage(props: PageProps<"/admin">) {
             />
           </label>
           <Button type="submit" className="w-full">
-            Add to invite list
+            Invite and email them
           </Button>
           <p className="text-sm text-muted-foreground">
             This lets them sign in and emails them the sign-in link, with what to have ready. Until
             Google approves the app, also add them as a test user in Google Cloud.
           </p>
+          {/* Check 28 P7: the demo video script as a tick list, for filming. */}
+          <Link
+            href="/admin/video"
+            className="inline-flex min-h-tap items-center self-start font-semibold underline underline-offset-4"
+          >
+            Video script (for filming)
+          </Link>
         </form>
         {invited.length ? (
           <ul className="flex flex-col divide-y rounded-lg border">
@@ -733,14 +1158,46 @@ export default async function AdminPage(props: PageProps<"/admin">) {
                 <span className="flex items-baseline justify-between gap-3">
                   <span className="truncate">{i.email}</span>
                   <span className="shrink-0 text-sm text-muted-foreground">
-                    {i.acceptedAt ? "Signed in" : "Not yet"}
+                    {i.acceptedAt ? "Signed in" : "Not yet"} · Invited{" "}
+                    {inviteDay.format(i.invitedAt)}
                   </span>
                 </span>
+                {!i.acceptedAt ? (
+                  // Check 18 P4: an invite email that failed (the test sender) can go again.
+                  <form action={emailInviteAgainAction}>
+                    <input type="hidden" name="email" value={i.email} />
+                    <Button type="submit" variant="outline" className="w-full">
+                      Email the sign-in link again
+                    </Button>
+                  </form>
+                ) : null}
+                {!i.acceptedAt ? (
+                  // Check 16 P7: a typo or a mistaken invite can be taken back before it's used.
+                  <details className="rounded-lg border">
+                    <summary className="flex min-h-tap cursor-pointer items-center px-4 font-semibold">
+                      Take back this invite
+                    </summary>
+                    <form action={removeInviteAction} className="flex flex-col gap-2 px-4 pb-4">
+                      <input type="hidden" name="email" value={i.email} />
+                      <p>
+                        They won&apos;t be able to sign in. The email we sent them stops working.
+                      </p>
+                      <Button type="submit" className="w-full">
+                        Yes, take back the invite
+                      </Button>
+                    </form>
+                  </details>
+                ) : null}
                 {/* Round 2 (FW A4): until Google approves the app, only test users get in. */}
-                {i.testUserAddedAt ? (
+                {i.gmailConnected ? (
+                  // Check 16 P9: connecting Gmail proves Google let them in as a test user.
+                  <span className="text-sm text-muted-foreground">
+                    Google test user: confirmed (Gmail connected)
+                  </span>
+                ) : isAdminEmail(i.email) ? null : i.testUserAddedAt ? (
                   <span className="text-sm text-muted-foreground">Google test user: added</span>
                 ) : (
-                  <form action={testUserAddedAction} className="flex flex-col gap-1">
+                  <form action={testUserAddedAction} className="flex flex-col gap-2">
                     <input type="hidden" name="email" value={i.email} />
                     <span className="text-sm">
                       Add them as a Google test user in{" "}
@@ -748,7 +1205,7 @@ export default async function AdminPage(props: PageProps<"/admin">) {
                         href={GOOGLE_AUDIENCE_URL}
                         target="_blank"
                         rel="noreferrer"
-                        className="font-semibold underline underline-offset-4"
+                        className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
                       >
                         Google Cloud → Audience
                       </a>
@@ -762,6 +1219,30 @@ export default async function AdminPage(props: PageProps<"/admin">) {
               </li>
             ))}
           </ul>
+        ) : null}
+        {inviteTotal > ADMIN_PAGE_SIZE ? (
+          <nav aria-label="More invites" className="flex flex-col gap-1">
+            <p className="text-muted-foreground">
+              Showing {Math.min((invitePage - 1) * ADMIN_PAGE_SIZE + 1, inviteTotal)} to{" "}
+              {Math.min(invitePage * ADMIN_PAGE_SIZE, inviteTotal)} of {inviteTotal} invites.
+            </p>
+            {invitePage * ADMIN_PAGE_SIZE < inviteTotal ? (
+              <Link
+                href={`${hrefWith({ ipage: invitePage + 1 })}#invite`}
+                className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
+              >
+                Show older invites
+              </Link>
+            ) : null}
+            {invitePage > 1 ? (
+              <Link
+                href={`${hrefWith({ ipage: invitePage - 1 > 1 ? invitePage - 1 : null })}#invite`}
+                className="inline-flex min-h-tap items-center font-semibold underline underline-offset-4"
+              >
+                Show newer invites
+              </Link>
+            ) : null}
+          </nav>
         ) : null}
       </section>
     </>

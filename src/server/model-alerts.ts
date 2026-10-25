@@ -4,7 +4,7 @@ import { utcDay } from "@/ai/usage";
 import { db } from "@/db";
 import { appSettings } from "@/db/schema";
 import type { ModelRole } from "@/config/models";
-import type { EmailSender } from "@/lib/email";
+import { emailErrorFields, type EmailSender } from "@/lib/email";
 import { isModelRole, modelDownEmail } from "./model-alert-rules";
 import { notifyAdminOnce, withTimeoutMs } from "./admin-notify";
 
@@ -41,11 +41,7 @@ export async function recordModelDown(
       deps.timeoutMs ?? 5_000,
     );
   } catch (err) {
-    console.error("model_alert_failed", {
-      role,
-      model,
-      error: err instanceof Error ? err.name : "unknown",
-    });
+    console.error("model_alert_failed", { role, model, ...emailErrorFields(err) });
   }
 }
 

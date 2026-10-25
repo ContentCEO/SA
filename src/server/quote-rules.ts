@@ -3,6 +3,7 @@
  * already sorted, plus the owner's one-tap Won / Lost / No answer and our
  * guesses (plan #30), which the owner can always change.
  */
+import { isInvoiceThread } from "./money-rules";
 
 /** How a quote ended. Set by the owner, or guessed by us (`quote_outcome_source = 'auto'`). */
 export const QUOTE_OUTCOMES = ["won", "lost", "no_answer"] as const;
@@ -12,6 +13,8 @@ export const isQuoteOutcome = (v: unknown): v is QuoteOutcome =>
 
 export const QUOTE_STAGES = [
   "waiting_on_you",
+  // Check 11 P6: the owner answered without a price (a site visit, "I called them").
+  "replied",
   "talking",
   "quiet",
   "won",
@@ -22,12 +25,30 @@ export type QuoteStage = (typeof QUOTE_STAGES)[number];
 
 export const stageLabel: Record<QuoteStage, string> = {
   waiting_on_you: "Waiting on you",
+  replied: "Replied, no price yet",
   talking: "Quoted",
   quiet: "Gone quiet",
   won: "Won",
   lost: "Lost",
   no_answer: "No answer",
 };
+
+/**
+ * Check 36 P3: "Pipe burst… how much to fix it today?" answered "On my way" — a service call,
+ * not an estimate. Shown instead of "Gone quiet" / "Quoted" (a display label only, never a
+ * stored outcome); never nudged, never guessed "no answer". A price from the owner later
+ * brings normal chasing back.
+ */
+export const SERVICE_CALL_LABEL = "Service call";
+
+/**
+ * Check 36 P3: the thread carries the emergency mark and the owner's newest email (their own
+ * words, quoted part already cut) names no dollar amount.
+ */
+export function isServiceCall(extracted: unknown, ownerNewestText: string | null): boolean {
+  if ((extracted as { emergency?: unknown } | null)?.emergency !== true) return false;
+  return amountFromOwnerText(ownerNewestText) === null;
+}
 
 /** Decided = has an outcome (won / lost / no answer). Everything else is still open. */
 export function isDecidedStage(stage: QuoteStage): stage is QuoteOutcome {
@@ -38,13 +59,20 @@ export type QuoteFacts = {
   outcome: string | null;
   lastInboundAt: Date | null;
   lastOutboundAt: Date | null;
+  /**
+   * Check 11 P6: the owner gave a price — the quote's amount is known, or an owner email (not a
+   * purpose note, not a draft) has a dollar figure (`ownerQuotedCents`).
+   */
+  priced: boolean;
 };
 
 /**
  * Where a quote stands:
  *  - an outcome (won / lost / no answer — the owner's, or our guess) wins;
  *  - the customer wrote last (or the owner never replied) → waiting on you;
- *  - the owner wrote last, more than `quietDays` ago → gone quiet;
+ *  - the owner wrote last without a price (a site visit, "I called them") → replied, no price
+ *    yet — it never goes quiet (Check 11 P6);
+ *  - the owner wrote last with a price, more than `quietDays` ago → gone quiet;
  *  - otherwise → quoted / talking.
  */
 export function quoteStage(q: QuoteFacts, now: Date, quietDays: number): QuoteStage {
@@ -52,23 +80,49 @@ export function quoteStage(q: QuoteFacts, now: Date, quietDays: number): QuoteSt
   if (!q.lastOutboundAt || (q.lastInboundAt && q.lastInboundAt > q.lastOutboundAt)) {
     return "waiting_on_you";
   }
+  if (!q.priced) return "replied";
   const quietMs = quietDays * 24 * 60 * 60 * 1000;
   return now.getTime() - q.lastOutboundAt.getTime() >= quietMs ? "quiet" : "talking";
 }
 
 /**
- * A quote thread: sorted as a quote request, or it has ever had an outcome (the owner's
- * or our guess — even one since cleared). A customer's later email is often sorted as
- * scheduling or a question, which overwrites the category; once a thread has been a
- * decided quote it stays on Quotes, and can still be guessed / marked won. SQL twin:
- * `quoteThreadSql` in quotes.ts.
+ * A quote thread: sorted as a quote request, OR it carries the sticky `quoteRequestedAt` mark
+ * from classification, OR it has ever had an outcome (the owner's or our guess — even one
+ * since cleared). A customer's later email is often sorted as scheduling or a question, which
+ * overwrites the category; the quote stays on Quotes from the first request until it's
+ * decided (Check 11 P1). A thread now sorted as noise, or with `extracted.injection`, is left
+ * out unless the owner marked it. SQL twin: `quoteThreadSql` in thread-sql.ts — keep the two
+ * in step. Fields the caller doesn't have count as empty.
  */
 export function isQuoteThread(t: {
   category: string | null;
   quoteOutcome: string | null;
   quoteOutcomeSource: string | null;
+  /** Check 11 P8: the owner's "Not a quote" (absent = never dismissed). */
+  quoteDismissedAt?: Date | null;
+  quoteOutcomeAt?: Date | null;
+  quoteRequestedAt?: Date | string | null;
+  extracted?: unknown;
 }): boolean {
-  return t.category === "quote_request" || t.quoteOutcome != null || t.quoteOutcomeSource != null;
+  const dismissed =
+    t.quoteDismissedAt != null &&
+    !(
+      t.quoteOutcomeSource === "owner" &&
+      t.quoteOutcomeAt != null &&
+      t.quoteOutcomeAt.getTime() > t.quoteDismissedAt.getTime()
+    );
+  if (dismissed) return false;
+  const ownerMarked =
+    t.quoteOutcomeSource === "owner" || (t.quoteOutcome != null && t.quoteOutcomeSource == null);
+  if (ownerMarked) return true;
+  const injection = (t.extracted as { injection?: unknown } | null | undefined)?.injection;
+  if (t.category === "noise" || injection === true) return false;
+  return (
+    t.category === "quote_request" ||
+    t.quoteRequestedAt != null ||
+    t.quoteOutcome != null ||
+    t.quoteOutcomeSource != null
+  );
 }
 
 /**
@@ -80,9 +134,13 @@ export function isQuoteThread(t: {
 export function quoteStopsNudges(t: {
   quoteOutcome: string | null;
   category: string | null;
+  extracted: unknown;
 }): boolean {
   if (t.quoteOutcome == null) return false;
-  return !(t.quoteOutcome === "won" && t.category === "invoice_payment");
+  // Check 21 P4: the job's invoice is chased whatever the customer's last email was sorted as
+  // (`isInvoiceThread`: sorted invoice_payment, or the sticky `invoice_thread` mark, which an
+  // invoice the owner emailed also sets).
+  return !(t.quoteOutcome === "won" && isInvoiceThread(t));
 }
 
 /** Two nudges sent, then this many quiet days → we guess "no answer". */
@@ -95,24 +153,44 @@ export const NO_ANSWER_WITHOUT_NUDGES_DAYS = 21;
 const NUDGES_BEFORE_NO_ANSWER = 2;
 
 /**
- * Our "no answer" guess for an open quote: the customer wrote at least once,
- * the owner wrote last, and it's been quiet since — a week after two nudges,
- * or three weeks however many were sent. Returns why, or null for no guess.
+ * Our "no answer" guess for an open quote: the owner gave a price (Check 11 P6: a site visit
+ * nobody answered isn't a lost quote), the customer wrote at least once, the owner wrote last,
+ * and it's been quiet since — a week after two nudges, or three weeks however many were sent.
+ * Returns why, or null for no guess.
  */
 export function guessNoAnswer(
-  f: { lastInboundAt: Date | null; lastOutboundAt: Date | null; sentNudges: number },
+  f: {
+    lastInboundAt: Date | null;
+    lastOutboundAt: Date | null;
+    sentNudges: number;
+    priced: boolean;
+    /** Check 21 P2: count quiet days from here instead (the date they asked us to wait for). */
+    quietFrom?: Date;
+    /** Check 38 P4: a quote over the money limit with the owner's longer wait set. */
+    bigQuoteDays?: number | null;
+  },
   now: Date,
 ): "two_nudges" | "three_weeks" | null {
+  if (!f.priced) return null;
   if (!f.lastInboundAt || !f.lastOutboundAt || f.lastOutboundAt <= f.lastInboundAt) return null;
-  const quietDays = (now.getTime() - f.lastOutboundAt.getTime()) / 86_400_000;
-  if (f.sentNudges >= NUDGES_BEFORE_NO_ANSWER && quietDays >= NO_ANSWER_AFTER_NUDGES_DAYS)
+  const from = f.quietFrom && f.quietFrom > f.lastOutboundAt ? f.quietFrom : f.lastOutboundAt;
+  const quietDays = (now.getTime() - from.getTime()) / 86_400_000;
+  const big = f.bigQuoteDays ?? null;
+  if (f.sentNudges >= NUDGES_BEFORE_NO_ANSWER && quietDays >= noAnswerAfterDays(2, big))
     return "two_nudges";
-  if (quietDays >= NO_ANSWER_WITHOUT_NUDGES_DAYS) return "three_weeks";
+  if (quietDays >= noAnswerAfterDays(0, big)) return "three_weeks";
   return null;
 }
 
-/** The quiet-days bar `guessNoAnswer` uses for this many sent nudges. */
-export function noAnswerAfterDays(sentNudges: number): number {
+/**
+ * The quiet-days bar `guessNoAnswer` uses for this many sent nudges. Check 38 P4: a big quote
+ * with the owner's longer wait gets that wait after two nudges, and max(21, 3 × it) without.
+ */
+export function noAnswerAfterDays(sentNudges: number, bigQuoteDays: number | null = null): number {
+  if (bigQuoteDays)
+    return sentNudges >= NUDGES_BEFORE_NO_ANSWER
+      ? Math.max(NO_ANSWER_AFTER_NUDGES_DAYS, bigQuoteDays)
+      : Math.max(NO_ANSWER_WITHOUT_NUDGES_DAYS, bigQuoteDays * 3);
   return sentNudges >= NUDGES_BEFORE_NO_ANSWER
     ? NO_ANSWER_AFTER_NUDGES_DAYS
     : NO_ANSWER_WITHOUT_NUDGES_DAYS;
@@ -134,6 +212,8 @@ export function canAutoSet(outcome: string | null, source: string | null): boole
 
 /** Added to a waiting nudge when we guess a quote's outcome (a guess never deletes it). */
 export const QUOTE_GUESS_FLAG = "We think this quote is closed — check before sending.";
+/** Check 21 P2: the note on a waiting nudge when the customer said no. */
+export const DECLINED_FLAG = "They said no. Check before sending.";
 
 /** The note on a waiting nudge closed because the owner decided the quote. */
 export function quoteDecidedNote(outcome: QuoteOutcome): string {
@@ -167,6 +247,8 @@ export function quoteAccepted(f: {
     category: string | null;
     quoteOutcome: string | null;
     quoteOutcomeSource: string | null;
+    quoteDismissedAt?: Date | null;
+    quoteOutcomeAt?: Date | null;
   };
   category: string;
   ownerWroteBefore: boolean;
@@ -199,16 +281,148 @@ export function keepQuoteAccepted(t: {
 }
 
 /**
- * The amount the owner quoted: the largest dollar figure in their own words
- * (quoted text from the customer already stripped). Null if none.
+ * Check 11 P2: cut what isn't the owner's own words before reading amounts (`prepareBody` has
+ * already dropped "> " lines and one-line "On … wrote:"): a signature after a "--" line, an
+ * Outlook header block ("From:" with "Sent:" or "Date:" within the next four lines) and what
+ * follows, Gmail's "On …" line wrapped so the next line ends with "wrote:", and "Sent from my
+ * iPhone" and what follows. Amounts only: the classifier keeps `prepareBody` as it is.
  */
-export function amountFromOwnerText(text: string | null | undefined): number | null {
+export function stripForAmounts(text: string): string {
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!.trim();
+    const next = (lines[i + 1] ?? "").trim();
+    if (
+      line === "--" ||
+      /^sent from my /i.test(line) ||
+      (/^On\s.+/.test(line) && /wrote:\s*$/.test(next)) ||
+      (/^\*?From:\*?\s+\S/i.test(line) &&
+        lines.slice(i + 1, i + 5).some((l) => /^\*?(Sent|Date):\*?\s/i.test(l.trim())))
+    ) {
+      break;
+    }
+    out.push(lines[i]!);
+  }
+  return out.join("\n").trim();
+}
+
+/** Check 11 P2: words right after a figure that make it not the job's price. */
+const NOT_PRICE_AFTER =
+  /\b(per hour|per hr|an hour|an hr|hourly|per month|a month|deposit|trip charge|service call|guarantee|warranty|tax)\b|\/\s?(hr|hour|mo|month)\b/i;
+/** Check 11 P2: words right before a figure that make it not the price (or not the owner's). */
+const NOT_PRICE_BEFORE = /\b(normally|usually|was|not|save|saves|costs me|cost me|budget|over)\b/i;
+/**
+ * Check 39 P3: program figures near a price — rebates, loans, tax credits, monthly payments,
+ * caps ("up to"). Read on both sides, so an "after rebate" / "out of pocket" figure is
+ * dropped too: the saved number is the price before incentives.
+ */
+const PROGRAM_WORDS =
+  /\b(rebates?|incentives?|tax credits?|credits?|loans?|financing|per ton|a ton|a month|per month|monthly|up to|mass save|heat loan|after rebate|out of pocket)\b|0\s?%|\/\s?mo\b/i;
+/** Words that say "this is the price": Check 11 P2. */
+const PRICE_MARKER = /\b(total|all[ -]in|comes to|come to|price is|for the job|in total)\b/i;
+/** Two or more of these → the owner gave choices, not one price. */
+const OPTION_WORD = /\b(option|choice)\b/i;
+const AFTER_WINDOW = 24;
+const BEFORE_WINDOW = 14;
+const PROGRAM_WINDOW = 30;
+
+export type OwnerAmount = {
+  cents: number;
+  /**
+   * 'total' — a figure the owner marked as the price ("$4,250 total", "price is $2,100"), or
+   * the only figure left; 'picked' — the last of several figures (a guess the card asks the
+   * owner to check, kept out of price memory).
+   */
+  note: "total" | "picked";
+};
+
+/**
+ * The amount the owner quoted, from their own words (Check 11 P2 + Check 39 P3), with how sure
+ * we are. Quoted customer text, signatures and forwarded headers are cut first
+ * (`stripForAmounts`). Each "$" figure needs digits right after "$" or "$ " with no inner
+ * spaces and proper thousands commas ("$ 3 200" and "$1,2k" give no figure: the owner types
+ * it). A figure is dropped when the words around it (same sentence, never past another
+ * figure) say it isn't the job's price: an hourly or monthly rate, a deposit, a trip charge,
+ * a guarantee, tax, "normally / was / not / save / costs me / budget / over", or a program
+ * figure (rebate, loan, tax credit, "up to", per ton, 0%) — so the saved number is the price
+ * before incentives. Of what's left, the last figure marked as the price wins ('total'),
+ * else the only one ('total'), else the LAST one ('picked'), never the largest. Several
+ * options ("Option A $650, Option B $3,900") give null. Null when nothing is left.
+ */
+export function readOwnerAmount(text: string | null | undefined): OwnerAmount | null {
   if (!text) return null;
-  const amounts = [...text.matchAll(/\$\s?(\d[\d,]*(?:\.\d{1,2})?)\s*(k\b)?/gi)]
-    .map((m) => Number(m[1]!.replace(/,/g, "")) * (m[2] ? 1000 : 1))
-    .filter((n) => Number.isFinite(n) && n > 0 && n < 10_000_000);
-  if (!amounts.length) return null;
-  return Math.round(Math.max(...amounts) * 100);
+  const body = stripForAmounts(text);
+  const re = /\$ ?(\d{1,3}(?:,\d{3})+|\d+)(\.\d{1,2})?(\s?k\b)?/gi;
+  const found = [...body.matchAll(re)].map((m) => ({
+    m,
+    start: m.index!,
+    end: m.index! + m[0].length,
+  }));
+  type Cand = { cents: number; marked: boolean; option: boolean };
+  const kept: Cand[] = [];
+  found.forEach(({ m, start, end }, i) => {
+    const rest = body.slice(end);
+    // "$ 3 200", "$1,2k", "$12.345": not a figure we can read.
+    if (/^(\s\d|,\d|\.\d)/.test(rest)) return;
+    const value = (Number(m[1]!.replace(/,/g, "")) + Number(m[2] ?? 0)) * (m[3] ? 1000 : 1);
+    if (!Number.isFinite(value) || value <= 0 || value >= 10_000_000) return;
+    // The figure's own clause: stop at a line break, a sentence end or the next figure.
+    const prevEnd = i > 0 ? found[i - 1]!.end : 0;
+    const nextStart = i + 1 < found.length ? found[i + 1]!.start : body.length;
+    let before = body.slice(prevEnd, start);
+    before = before.split(/\n|[.!?;](?:\s|$)/).pop() ?? "";
+    let after = body.slice(end, nextStart);
+    after = after.split(/\n|[.!?;](?:\s|$)/)[0] ?? "";
+    const near = (s: string, n: number, fromEnd: boolean) =>
+      fromEnd ? s.slice(-n) : s.slice(0, n);
+    if (NOT_PRICE_AFTER.test(near(after, AFTER_WINDOW, false))) return;
+    if (NOT_PRICE_BEFORE.test(near(before, BEFORE_WINDOW, true))) return;
+    if (
+      PROGRAM_WORDS.test(near(before, PROGRAM_WINDOW, true)) ||
+      PROGRAM_WORDS.test(near(after, PROGRAM_WINDOW, false))
+    )
+      return;
+    kept.push({
+      cents: Math.round(value * 100),
+      marked:
+        PRICE_MARKER.test(near(before, PROGRAM_WINDOW, true)) ||
+        PRICE_MARKER.test(near(after, PROGRAM_WINDOW, false)),
+      option: OPTION_WORD.test(near(before, PROGRAM_WINDOW, true)),
+    });
+  });
+  if (!kept.length) return null;
+  const marked = kept.filter((c) => c.marked);
+  if (marked.length) return { cents: marked[marked.length - 1]!.cents, note: "total" };
+  if (kept.filter((c) => c.option).length >= 2) return null;
+  if (kept.length === 1) return { cents: kept[0]!.cents, note: "total" };
+  return { cents: kept[kept.length - 1]!.cents, note: "picked" };
+}
+
+/** The amount alone (see `readOwnerAmount`). Null if none. */
+export function amountFromOwnerText(text: string | null | undefined): number | null {
+  return readOwnerAmount(text)?.cents ?? null;
+}
+
+/**
+ * Check 11 P7: a decided card's stage with its day — "Won Oct 14", "Lost Oct 11", "No answer
+ * Oct 9" — in the owner's time zone (Eastern if it's invalid). Just the stage without a date.
+ */
+export function decidedLabel(outcome: QuoteOutcome, at: Date | null, timeZone: string): string {
+  const word = stageLabel[outcome];
+  if (!at) return word;
+  let tz = timeZone;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+  } catch {
+    tz = "America/New_York";
+  }
+  const day = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    month: "short",
+    day: "numeric",
+  }).format(at);
+  return `${word} ${day}`;
 }
 
 /** "$1,450" / "$1,450.50" from cents. */

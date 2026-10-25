@@ -1,7 +1,7 @@
 import "server-only";
 import { and, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
-import { aiCallsToday, utcDay } from "@/ai/usage";
-import { dailyAiCallCap } from "@/config/models";
+import { aiCallsToday, dailyAiCallCapSql, utcDay } from "@/ai/usage";
+import { SORT_SHARE } from "@/config/models";
 import { db } from "@/db";
 import { businessProfiles, mailboxes, messages, threads, usage, workspaces } from "@/db/schema";
 import { mailboxRunning } from "./mailbox-plan";
@@ -44,7 +44,8 @@ export async function unsortedSweepMailboxes(now: Date = new Date()): Promise<st
           and(
             eq(usage.period, utcDay(now)),
             inArray(usage.workspaceId, [...new Set(live.map((r) => r.workspace.id))]),
-            sql`${usage.aiCalls} >= ${dailyAiCallCap()}`,
+            // Check 29 P4 / P5: sorting's share of this shop's limit (per running inbox).
+            sql`${usage.aiCalls} >= greatest(1, floor(${dailyAiCallCapSql('"usage"."workspace_id"')} * ${sql.raw(String(SORT_SHARE))}))`,
           ),
         )
     ).map((r) => r.workspaceId),

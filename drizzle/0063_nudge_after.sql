@@ -1,0 +1,1 @@
+ALTER TABLE "threads" ADD COLUMN "nudge_after" timestamp with time zone;

@@ -67,7 +67,7 @@ describe("H8 sent without changes (pure)", () => {
         repliesSent: 6,
         followupsSent: 0,
         quotesOut: 1,
-        response: { avgMinutes: 60, answered: 1, unanswered: 0 },
+        response: { avgMinutes: 60, typicalMinutes: 60, answered: 1, unanswered: 0 },
         minutesSaved: 18,
         speed: { fast: 1, counted: 1 },
         asWritten: { asWritten: 5, counted: 6 },

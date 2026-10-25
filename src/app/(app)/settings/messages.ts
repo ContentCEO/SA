@@ -1,3 +1,5 @@
+import { OUTLOOK_REMOVE_ACCESS } from "@/lib/outlook-words";
+
 /**
  * The notices each Settings screen shows after a save (`?done=`) or a refusal (`?error=`).
  * One map per screen, keyed by its own path; every redirect in the settings actions names a
@@ -12,12 +14,14 @@ export const SCREEN_MESSAGES = {
     done: {
       connected: "Gmail connected.",
       disconnected: "Gmail disconnected. We've removed our access at Google.",
+      disconnected_outlook: `Outlook disconnected. ${OUTLOOK_REMOVE_ACCESS}`,
       swapped: "Done. That Gmail is on now, and the other one is paused.",
       resumed: "Done. That Gmail is on now.",
     },
     error: {
       limit: "Your plan is at its mailbox limit. Disconnect one first, or ask about a bigger plan.",
       choose: "Pick which Gmail to pause instead.",
+      busy: "That's a lot in a short time, so we've paused it for a bit. Try again in a few minutes.",
       unknown: UNKNOWN,
     },
   },
@@ -26,12 +30,15 @@ export const SCREEN_MESSAGES = {
       profile: "Business profile saved.",
       note_added: "Note added. Drafts will use it until its last day.",
       note_removed: "Note removed.",
+      work_hours: "Working days saved. Alerts about waiting leads follow them.",
     },
     error: {
       note_invalid: "Write a short note and pick its last day.",
       note_past: "That date has already passed.",
       note_too_far: "Pick a date within the next year.",
       note_full: "You can have 5 notes at once. Remove one first.",
+      work_days: "Pick at least one day.",
+      work_hours: "Your day has to end after it starts.",
       unknown: UNKNOWN,
     },
   },
@@ -39,6 +46,10 @@ export const SCREEN_MESSAGES = {
     done: {
       voice: "Saved how you write.",
       never_say: "Never-say list saved.",
+      languages: "Saved. New drafts follow it.",
+      // Check 15 P5: {saved} and {skipped} are filled from the numbers in the address.
+      never_say_skipped:
+        "Saved {saved}. Skipped {skipped} (each needs 2 to 80 characters, up to 50 lines).",
       relearn: "Re-reading your sent mail. This takes a minute or two.",
       idea_yes: "Done. New drafts will be written that way.",
       idea_no: "Okay — nothing changed.",
@@ -62,8 +73,8 @@ export const SCREEN_MESSAGES = {
     error: { autopilot: "Autopilot can't be turned on for that yet." },
   },
   "/settings/morning-email": {
-    done: { saved: "Saved." },
-    error: { unknown: UNKNOWN },
+    done: { saved: "Saved.", zone: "Time zone saved." },
+    error: { unknown: UNKNOWN, zone: "That time zone didn't work. Pick one from the list." },
   },
   "/settings/notifications": { done: { saved: "Saved." }, error: {} },
   "/settings/texts": {
@@ -72,6 +83,10 @@ export const SCREEN_MESSAGES = {
       sms_on: "Text alerts are on.",
       sms_off: "Text alerts are off.",
       sms_removed: "Number removed.",
+      sms_summary_on: "Morning summary texts are on.",
+      sms_summary_off: "Morning summary texts are off.",
+      sms_at_risk_on: "Waiting-quote texts are on.",
+      sms_at_risk_off: "Waiting-quote texts are off.",
       saved: "Saved.",
     },
     error: {
@@ -80,6 +95,11 @@ export const SCREEN_MESSAGES = {
       sms_code: "That code didn't match, or it expired. Send a new one.",
       sms_not_configured: "Texting isn't switched on yet.",
       sms_not_verified: "Confirm your number first.",
+      sms_alerts_off: "Turn on text alerts first.",
+      sms_send_failed: "We couldn't text that number. Check it's a mobile number and try again.",
+      // Check 27 P6: Twilio's 21610 when the code is sent.
+      sms_opted_out:
+        "That number replied STOP to our texts. Text START to the number, then try again.",
     },
   },
   "/settings/away": {
@@ -109,6 +129,8 @@ export const SCREEN_MESSAGES = {
     error: {
       delete_billing:
         "We couldn't cancel your plan, so nothing was deleted. Try again, or call us and we'll do it.",
+      // Check 26 P4.
+      confirm: "Type DELETE to confirm.",
     },
   },
 } satisfies Record<string, Messages>;

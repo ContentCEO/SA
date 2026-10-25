@@ -6,8 +6,10 @@ import { anthropicClientOptions } from "@/config/e2e";
 import {
   aiMaxRetries,
   aiTimeouts,
+  modelCapabilities,
   modelFallbacks,
   models,
+  type AiPurpose,
   type ModelId,
   type ModelRole,
 } from "@/config/models";
@@ -22,8 +24,10 @@ export type StructuredRequest = {
   system: { text: string; cache: boolean }[];
   user: string;
   schema: z.ZodType;
-  /** Sonnet only; Haiku 4.5 rejects the effort setting. */
+  /** Sent only when the model takes it (`modelCapabilities` in src/config/models.ts). */
   effort?: "low" | "medium" | "high";
+  /** Check 48 P2: "disabled" sends `thinking: { type: "disabled" }`; absent sends nothing. */
+  thinking?: "disabled";
   /** Check 48 P4: the SDK's time limit for this request, in milliseconds. */
   timeoutMs?: number;
 };
@@ -73,6 +77,7 @@ const anthropicTransport: Transport = async (req) => {
         ...(b.cache ? { cache_control: { type: "ephemeral" as const } } : {}),
       })),
       messages: [{ role: "user", content: req.user }],
+      ...(req.thinking === "disabled" ? { thinking: { type: "disabled" as const } } : {}),
       output_config: {
         format: zodOutputFormat(req.schema),
         ...(req.effort ? { effort: req.effort } : {}),
@@ -106,6 +111,27 @@ export function setModelFallbacksForTests(f: Fallbacks | undefined) {
 /** Tests only. */
 export function setModelTransportForTests(t: Transport | undefined) {
   transport = t ?? anthropicTransport;
+}
+
+/**
+ * Check 48 P2: `pnpm eval --model classify=<id>` runs the eval set on another model without
+ * touching src/config/models.ts. Only the eval script and tests call this; production never does.
+ */
+let modelOverrides: Partial<Record<ModelRole, ModelId>> = {};
+export function setEvalModelOverrides(o: Partial<Record<ModelRole, ModelId>> | undefined) {
+  modelOverrides = { ...(o ?? {}) };
+}
+
+/** Check 48 P2: the request options this model takes (the capability map decides). */
+export function requestOptionsFor(
+  model: ModelId,
+  effort: StructuredRequest["effort"],
+): Pick<StructuredRequest, "effort" | "thinking"> {
+  const caps = modelCapabilities[model];
+  return {
+    ...(effort && caps.effort ? { effort } : {}),
+    ...(caps.thinking === "disabled" ? { thinking: "disabled" as const } : {}),
+  };
 }
 
 /**
@@ -191,6 +217,8 @@ export async function callStructured<S extends z.ZodType>(opts: {
   workspaceId: string;
   role: ModelRole;
   promptVersion: string;
+  /** Check 29 P4: what the call is for; sorting has its own share of the day's limit. */
+  purpose?: AiPurpose;
   maxTokens: number;
   system: { text: string; cache: boolean }[];
   user: string;
@@ -201,11 +229,11 @@ export async function callStructured<S extends z.ZodType>(opts: {
   now?: Date;
 }): Promise<z.infer<S> | null> {
   const now = opts.now ?? new Date();
-  await reserveAiCall(opts.workspaceId, now);
+  await reserveAiCall(opts.workspaceId, now, opts.purpose ?? "other");
 
   // Check 48 P3: one stand-in try per call, only when Davi approved it for this role.
   const fallback = fallbacks[opts.role];
-  let model: ModelId = models[opts.role];
+  let model: ModelId = modelOverrides[opts.role] ?? models[opts.role];
   let fallbackUsed = false;
   const started = Date.now();
   // One deadline for the whole call, stand-in included: no call outlives its limit.
@@ -223,7 +251,7 @@ export async function callStructured<S extends z.ZodType>(opts: {
           system: opts.system,
           user: opts.user,
           schema: opts.schema,
-          effort: opts.effort,
+          ...requestOptionsFor(model, opts.effort),
           timeoutMs: leftMs,
         }),
         leftMs,

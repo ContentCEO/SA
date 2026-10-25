@@ -17,12 +17,18 @@ export type ChecklistStep = {
 };
 export type Checklist = { steps: ChecklistStep[]; allDone: boolean; show: boolean };
 
+/** Check 9 P13: a finished list goes away by itself this long after it was first all done. */
+export const CHECKLIST_DONE_HIDE_MS = 3 * 24 * 60 * 60 * 1000;
+
 /** Pure: the checklist from facts (plan #39). Each step ticks itself; nothing to tick by hand. */
 export function buildChecklist(f: {
   mailboxes: number;
   profileCompleted: boolean;
   draftsChecked: number;
   dismissed: boolean;
+  /** Check 9 P13: when every step was first all done (null: not yet, or a step un-did). */
+  doneAt?: Date | null;
+  now?: Date;
   /**
    * Round 2 (FW E7): the account is read-only (the three days ran out, or the plan stopped).
    * Drafts can't be checked then, so that step becomes what to do next.
@@ -55,7 +61,10 @@ export function buildChecklist(f: {
         },
   ];
   const allDone = steps.every((s) => s.done);
-  return { steps, allDone, show: !(allDone && f.dismissed) };
+  // Check 9 P13: all done for 3 days → gone on its own (Hide still works sooner).
+  const aged =
+    !!f.doneAt && (f.now ?? new Date()).getTime() - f.doneAt.getTime() >= CHECKLIST_DONE_HIDE_MS;
+  return { steps, allDone, show: !(allDone && (f.dismissed || aged)) };
 }
 
 /**
@@ -65,8 +74,9 @@ export function buildChecklist(f: {
  */
 export async function checklistFor(
   workspaceId: string,
-  opts: { readOnly?: boolean } = {},
+  opts: { readOnly?: boolean; now?: Date } = {},
 ): Promise<Checklist> {
+  const now = opts.now ?? new Date();
   const [boxes] = await db()
     .select({ n: count() })
     .from(mailboxes)
@@ -75,6 +85,7 @@ export async function checklistFor(
     .select({
       completedAt: businessProfiles.completedAt,
       dismissedAt: businessProfiles.onboardingDismissedAt,
+      doneAt: businessProfiles.onboardingDoneAt,
     })
     .from(businessProfiles)
     .where(eq(businessProfiles.workspaceId, workspaceId));
@@ -99,13 +110,36 @@ export async function checklistFor(
     ...acted.map((r) => r.id),
     ...practiced.flatMap((r) => (r.id ? [r.id] : [])),
   ]);
-  return buildChecklist({
+  const facts = {
     mailboxes: boxes?.n ?? 0,
     profileCompleted: !!profile?.completedAt,
     draftsChecked: checked.size,
     dismissed: !!profile?.dismissedAt,
     readOnly: opts.readOnly,
-  });
+  };
+  const allDone = buildChecklist(facts).allDone;
+  // Check 9 P13: remember when it was first all done; forget it when a step un-does, so the
+  // full list comes back (and the 3 days start again once it's finished again).
+  let doneAt = profile?.doneAt ?? null;
+  if (allDone && !doneAt) {
+    doneAt = now;
+    await db()
+      .insert(businessProfiles)
+      .values({ workspaceId, onboardingDoneAt: now })
+      .onConflictDoUpdate({
+        target: businessProfiles.workspaceId,
+        set: {
+          onboardingDoneAt: sql`coalesce(${businessProfiles.onboardingDoneAt}, excluded.onboarding_done_at)`,
+        },
+      });
+  } else if (!allDone && doneAt) {
+    doneAt = null;
+    await db()
+      .update(businessProfiles)
+      .set({ onboardingDoneAt: null })
+      .where(eq(businessProfiles.workspaceId, workspaceId));
+  }
+  return buildChecklist({ ...facts, doneAt, now });
 }
 
 /** Only once every step is done — the server re-checks. */

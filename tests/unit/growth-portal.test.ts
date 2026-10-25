@@ -63,7 +63,8 @@ const NOW = new Date("2026-10-16T15:00:00Z");
 
 const session = vi.hoisted(() => ({ email: null as string | null, id: "" }));
 vi.mock("@/auth", () => ({
-  auth: async () => (session.email ? { user: { id: session.id, email: session.email } } : null),
+  auth: async () =>
+    session.email ? { user: { id: session.id, email: session.email, sv: 0 } } : null,
 }));
 vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
 class Redirected extends Error {

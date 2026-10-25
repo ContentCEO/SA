@@ -22,9 +22,14 @@ them:
   on a Growth request, and `/start`, `/my-growth` and `/admin/growth` — numbers Davi enters by hand
   only (nothing from anyone's inbox).
 
+The referral offer (plan #47 offer A, behind `FEATURE_REFERRALS`, off) was merged on top of
+those on branch `referral-offer-a` the same day (migrations `0039_referral_free_month` and
+`0040_referral_after_end_check`, renumbered to `0044` / `0045` after wave 1 on 2026-10-18), with one plan pause for both (the decisions package's
+`plan_paused_at`) and Davi's 2026-10-16 rule that a Growth request can earn a referral.
+
 Because `draft.v7` and `purpose.v2` are taken, the review pages' "draft.v7" bundle is `draft.v8`
 here. The whole version plan (draft.v8 / v9, classify.v5, followup.v5, voice.v3, purpose.v3) is in
-`CLAUDE.md` under "Prompt versions".
+`docs/decisions/ai-and-prompts.md` under "Prompt versions".
 
 ## Before you start a step
 
@@ -41,6 +46,14 @@ here. The whole version plan (draft.v8 / v9, classify.v5, followup.v5, voice.v3,
    (`PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-browsers/chromium` in a sandbox), and
    `pnpm eval --no-drafts` when a prompt file changed if `ANTHROPIC_API_KEY` is available (else say
    it wasn't run).
+
+## Legal text
+
+Builders never edit `docs/terms.md`, `docs/privacy-policy.md` or `TERMS_VERSION`. They write
+the exact wording they need in `docs/notes/legal-<branch>.md` with the reason and the review
+prompt id. `tests/unit/legal-freeze.test.ts` fails any other branch that changes them (branches
+named `claude/legal-*` and `integrate-*` are allowed). The integrator applies every note in one
+`claude/legal-<date>` release, so owners agree again once (`docs/LEGAL-RELEASE.md`).
 
 ## The order
 
@@ -157,5 +170,246 @@ edits this file after it is created.
 - [x] Wave 1, When things break, 7) C48 P4
 - [x] Wave 1, When things break, 8) C01 P4
 - [x] Wave 1, When things break, 9) C50 P6
+- [x] Wave 2, Voice, 1) C24 P1 + C29 P2 [M]
+- [x] Wave 2, Voice, 2) C24 P2
+- [x] Wave 2, Voice, 3) C24 P3
+- [x] Wave 2, Voice, 4) C24 P4
+- [x] Wave 2, Voice, 5) C24 P6
+- [x] Wave 2, Voice, 6) C24 P7
+- [x] Wave 2, Voice, 7) C24 P8
+- [x] Wave 2, Voice, 8) C24 P12
+- [x] Wave 2, Inbox, 1) C10 P1 + C11 P8 [M]
+- [x] Wave 2, Inbox, 2) C10 P3
+- [x] Wave 2, Inbox, 3) C10 P2
+- [x] Wave 2, Inbox, 4) C10 P4 + C10 P5
+- [x] Wave 2, Inbox, 5) C10 P6
+- [x] Wave 2, Inbox, 6) C10 P7
+- [x] Wave 2, Inbox, 7) C10 P8
+- [x] Wave 2, Inbox, 8) C10 P9 + C10 P10
+- [x] Wave 2, Sync and Gmail connect, 1) C25 P1 [M]
+- [x] Wave 2, Sync and Gmail connect, 2) C25 P2
+- [x] Wave 2, Sync and Gmail connect, 3) C47 P1
+- [x] Wave 2, Sync and Gmail connect, 4) C25 P3 [M]
+- [x] Wave 2, Sync and Gmail connect, 5) C20 P4 + C21 P1
+- [x] Wave 2, Sync and Gmail connect, 6) C40 P2 [M]
+- [x] Wave 2, Sync and Gmail connect, 7) C25 P4
+- [x] Wave 2, Sync and Gmail connect, 8) C25 P5
+- [x] Wave 2, Sync and Gmail connect, 9) C25 P6
+- [x] Wave 2, Sync and Gmail connect, 10) C25 P7 [M]
+- [x] Wave 2, Sync and Gmail connect, 11) C42 P3
+- [x] Wave 2, Sync and Gmail connect, 12) C47 P2
+- [x] Wave 2, Sync and Gmail connect, 13) C47 P4
+- [x] Wave 2, Sync and Gmail connect, 14) C25 P8
+- [x] Wave 2, Queue screen, 1) C32 P1
+- [x] Wave 2, Queue screen, 2) C09 P5 + C32 P7
+- [x] Wave 2, Queue screen, 3) C09 P6
+- [x] Wave 2, Queue screen, 4) C09 P7 + C09 P12
+- [x] Wave 2, Queue screen, 5) C09 P9
+- [x] Wave 2, Queue screen, 6) C09 P11 + C23 P8
+- [x] Wave 2, Queue screen, 7) C23 P9
+- [x] Wave 2, Queue screen, 8) C09 P13 [M]
+- [x] Wave 2, Queue screen, 9) C09 P14
+- [x] Wave 2, Queue screen, 10) C41 P2
+- [x] Wave 2, Queue screen, 11) C21 P8
+- [x] Wave 2, Queue screen, 12) C32 P9 + C32 P11
+- [x] Wave 2, Queue screen, 13) C08 P7 + C08 P9
+- [x] Wave 2, Queue screen, 14) C09 P15 + C48 P5
+- [x] Wave 2, Quotes and Money, 1) C11 P1
+- [x] Wave 2, Quotes and Money, 2) C11 P2 + C39 P3 [M]
+- [x] Wave 2, Quotes and Money, 3) C11 P3 [M]
+- [x] Wave 2, Quotes and Money, 4) C11 P4
+- [x] Wave 2, Quotes and Money, 5) C11 P5
+- [x] Wave 2, Quotes and Money, 6) C11 P6
+- [x] Wave 2, Quotes and Money, 7) C11 P7
+- [x] Wave 2, Quotes and Money, 8) C11 P9
+- [x] Wave 2, Quotes and Money, 9) C12 P4
+- [x] Wave 2, Quotes and Money, 10) C12 P5
+- [x] Wave 2, Quotes and Money, 11) C12 P6
+- [x] Wave 2, Quotes and Money, 12) C12 P8 + C12 P9
+- [x] Wave 2, Settings and time zone, 1) C15 P1
+- [x] Wave 2, Settings and time zone, 2) C45 P1 + C44 P5 + C15 P7 [M]
+- [x] Wave 2, Settings and time zone, 3) C15 P2
+- [x] Wave 2, Settings and time zone, 4) C15 P3
+- [x] Wave 2, Settings and time zone, 5) C15 P4
+- [x] Wave 2, Settings and time zone, 6) C15 P5
+- [x] Wave 2, Settings and time zone, 7) C15 P6 + C24 P11
+- [x] Wave 2, Settings and time zone, 8) C15 P8 [M]
+- [x] Wave 2, Settings and time zone, 9) C43 P8 [M]
+- [x] Wave 2, Settings and time zone, 10) C15 P9 + C15 P10 + C15 P11 + C15 P12
+- [x] Wave 2, Follow-ups, 1) C12 P1
+- [x] Wave 2, Follow-ups, 2) C21 P2 [M]
+- [x] Wave 2, Follow-ups, 3) C21 P3
+- [x] Wave 2, Follow-ups, 4) C21 P4 [M]
+- [x] Wave 2, Follow-ups, 5) C21 P5
+- [x] Wave 2, Follow-ups, 6) C21 P6
+- [x] Wave 2, Follow-ups, 7) C36 P3
+- [x] Wave 2, Follow-ups, 8) C38 P4 [M]
+- [x] Wave 2, Customers and senders, 1) C13 P1 + C22 P10 + C41 P6
+- [x] Wave 2, Customers and senders, 2) C13 P2 + C22 P7 + C41 P7
+- [x] Wave 2, Customers and senders, 3) C13 P3
+- [x] Wave 2, Customers and senders, 4) C13 P4
+- [x] Wave 2, Customers and senders, 5) C41 P5
+- [x] Wave 2, Customers and senders, 6) C13 P5
+- [x] Wave 2, Customers and senders, 7) C13 P6 + C13 P7 + C13 P8
+- [x] Wave 2, Customers and senders, 8) C13 P9
+- [x] Wave 2, Autopilot rules, 1) C20 P2
+- [x] Wave 2, Autopilot rules, 2) C20 P13
+- [x] Wave 2, Autopilot rules, 3) C20 P3
+- [x] Wave 2, Autopilot rules, 4) C20 P8
+- [x] Wave 2, Autopilot rules, 5) C20 P7 [M]
+- [x] Wave 2, Autopilot rules, 6) C20 P6
+- [x] Wave 2, Mail format, 1) C43 P3 [M]
+- [x] Wave 2, Mail format, 2) C42 P4 [M]
+- [x] Wave 2, Mail format, 3) C43 P4
+- [x] Wave 2, Mail format, 4) C43 P5
+- [x] Wave 2, Mail format, 5) C43 P6
+- [x] Wave 2, Mail format, 6) C43 P10
+- [x] Wave 2, Town, utility and job-kind lists, 1) C22 P8 + C36 P5 + C37 P6 + C40 P7 + C44 P4 + C45 P3
+- [x] Wave 2, Town, utility and job-kind lists, 2) C37 P3
+- [x] Wave 2, Town, utility and job-kind lists, 3) C36 P4 + C37 P2
+- [x] Wave 2, Town, utility and job-kind lists, 4) C36 P9 + C37 P7 + C38 P8 + C39 P7 + C40 P5 + C41 P8
+- [x] Wave 2, Numbers and Activity, 1) C14 P2
+- [x] Wave 2, Numbers and Activity, 2) C14 P3 + C14 P4
+- [x] Wave 2, Numbers and Activity, 3) C14 P5
+- [x] Wave 2, Numbers and Activity, 4) C14 P6 + C14 P7
+- [x] Wave 2, Numbers and Activity, 5) C14 P8
+- [x] Wave 2, Numbers and Activity, 6) C14 P9 + C14 P10 + C14 P11
+- [x] Wave 2, Numbers and Activity, 7) C42 P5
+- [x] Wave 2, Billing and admin, 1) C17 P2
+- [x] Wave 2, Billing and admin, 2) C17 P3 [M]
+- [x] Wave 2, Billing and admin, 3) C17 P4
+- [x] Wave 2, Billing and admin, 4) C17 P5 + C01 P3
+- [x] Wave 2, Billing and admin, 5) C17 P6
+- [x] Wave 2, Billing and admin, 6) C17 P7
+- [x] Wave 2, Billing and admin, 7) C17 P8 [M]
+- [x] Wave 2, Billing and admin, 8) C17 P9
+- [x] Wave 2, Billing and admin, 9) C17 P11
+- [x] Wave 2, Billing and admin, 10) C16 P3
+- [x] Wave 2, Billing and admin, 11) C16 P5
+- [x] Wave 2, Billing and admin, 12) C16 P6 + C16 P7
+- [x] Wave 2, Billing and admin, 13) C16 P8
+- [x] Wave 2, Billing and admin, 14) C16 P9 + C16 P10 + C29 P8
+- [x] Wave 2, Billing and admin, 15) C05 P5
+- [x] Wave 2, Data and speed, 1) C30 P1 + C29 P6 + C30 P4 [M]
+- [x] Wave 2, Data and speed, 2) C30 P3
+- [x] Wave 2, Data and speed, 3) C30 P6 [M]
+- [x] Wave 2, Data and speed, 4) C29 P7
+- [x] Wave 2, Data and speed, 5) C29 P4 + C29 P5
+- [x] Wave 2, Data and speed, 6) C29 P3
+- [x] Wave 2, Phone look and accessibility, 1) C32 P2 + C08 P2 + C08 P5
+- [x] Wave 2, Phone look and accessibility, 2) C08 P3
+- [x] Wave 2, Phone look and accessibility, 3) C08 P4
+- [x] Wave 2, Phone look and accessibility, 4) C32 P5
+- [x] Wave 2, Phone look and accessibility, 5) C32 P3 + C32 P4
+- [x] Wave 2, Phone look and accessibility, 6) C32 P6
+- [x] Wave 2, Phone look and accessibility, 7) C32 P8
+- [x] Wave 2, Phone look and accessibility, 8) C32 P10
+- [x] Wave 2, Phone look and accessibility, 9) C32 P12
+- [x] Wave 2, Phone look and accessibility, 10) C08 P6 + C08 P8 + C08 P10
+- [x] Wave 2, Phone look and accessibility, 11) C07 P2
+- [x] Wave 2, Phone look and accessibility, 12) C07 P3
+- [x] Wave 2, Phone look and accessibility, 13) C07 P5 + C07 P9 + C07 P11 + C01 P5 + C03 P8
+- [x] Wave 2, Security and limits, 1) C26 P3 [M]
+- [x] Wave 2, Security and limits, 2) C26 P4
+- [x] Wave 2, Security and limits, 3) C26 P5
+- [x] Wave 2, Security and limits, 4) C26 P6
+- [x] Wave 2, Security and limits, 5) C26 P7
+- [x] Wave 2, Security and limits, 6) C40 P3
+- [x] Wave 2, Security and limits, 7) C31 P4
+- [x] Wave 2, Security and limits, 8) C26 P9 + C26 P10
+- [x] Wave 2, Security and limits, 9) C26 P11
+- [x] Wave 2, Security and limits, 10) C31 P6
+- [x] Wave 2, Security and limits, 11) C31 P7
+- [x] Wave 2, Security and limits, 12) C31 P8
+- [x] Wave 2, Phone alerts and the app, 1) C19 P1
+- [x] Wave 2, Phone alerts and the app, 2) C19 P2
+- [x] Wave 2, Phone alerts and the app, 3) C19 P3
+- [x] Wave 2, Phone alerts and the app, 4) C19 P4
+- [x] Wave 2, Phone alerts and the app, 5) C19 P5 [M]
+- [x] Wave 2, Phone alerts and the app, 6) C19 P6 [M]
+- [x] Wave 2, Phone alerts and the app, 7) C19 P7 + C19 P8 + C19 P9
+- [x] Wave 2, Phone alerts and the app, 8) C46 P3
+- [x] Wave 2, Phone alerts and the app, 9) C46 P5
+- [x] Wave 2, Phone alerts and the app, 10) C46 P1 + C46 P2
+- [x] Wave 2, Phone alerts and the app, 11) C46 P4
+
+- [x] Wave 2, Prompt versions, 1) C12 P2 + C12 P3 + C22 P9 + C38 P5 + C45 P7
+- [x] Wave 2, Prompt versions, 2) C23 P11 + C43 P1 + C44 P1 + C45 P2
+- [x] Wave 2, Prompt versions, 3) C36 P8 + C37 P4 + C39 P6
+- [x] Wave 2, Prompt versions, 4) C12 P7 + C21 P7
+- [x] Wave 2, Prompt versions, 5) C24 P5 + C24 P9
+- [x] Wave 2, Prompt versions, 6) C39 P5 + C40 P4
+- [x] Wave 2, Prompt versions, 7) C41 P3 [M]
+- [x] Wave 2, Prompt versions, 8) C41 P4 [M]
+- [x] Wave 2, Prompt versions, 9) C22 P12 + C23 P12 + C24 P10 + C31 P5
+- [x] Wave 2, Prompt versions, 10) C37 P8 + C39 P8 + C40 P6
+- [x] Wave 3, Legal text, one release, 1) C50 P5
+- [x] Wave 3, Legal text, one release, 2) C27 P1
+- [x] Wave 3, Legal text, one release, 3) C27 P2 + C27 P7
+- [x] Wave 3, Legal text, one release, 4) C27 P3 + C27 P4
+- [x] Wave 3, Legal text, one release, 5) C27 P5 + C27 P8 + C45 P6
+- [x] Wave 3, Legal text, one release, 6) C27 P6
+- [x] Wave 3, Legal text, one release, 7) C27 P9 + C27 P10
+- [x] Wave 3, Legal text, one release, 8) C07 P1 + C07 P8
+- [x] Wave 3, Google review and the domain, 1) C28 P1
+- [x] Wave 3, Google review and the domain, 2) C33 P1
+- [x] Wave 3, Google review and the domain, 3) C28 P2
+- [x] Wave 3, Google review and the domain, 4) C28 P3
+- [x] Wave 3, Google review and the domain, 5) C28 P4
+- [x] Wave 3, Google review and the domain, 6) C28 P5
+- [x] Wave 3, Google review and the domain, 7) C28 P6
+- [x] Wave 3, Google review and the domain, 8) C28 P7
+- [x] Wave 3, Google review and the domain, 9) C33 P5
+- [x] Wave 3, Google review and the domain, 10) C01 P6
+- [x] Wave 3, Google review and the domain, 11) C33 P3 + C33 P4
+- [x] Wave 3, Google review and the domain, 12) C33 P6
+
+- [x] Wave 3, App emails, 1) C18 P2
+- [x] Wave 3, App emails, 2) C18 P5 + C42 P6
+- [x] Wave 3, App emails, 3) C18 P6 + C20 P12
+- [x] Wave 3, App emails, 4) C18 P7 + C07 P10
+- [x] Wave 3, App emails, 5) C01 P2 [M]
+- [x] Wave 3, App emails, 6) C01 P7
+- [x] Wave 3, App emails, 7) C18 P4
+- [x] Wave 3, App emails, 8) C47 P3 [M]
+- [x] Wave 3, App emails, 9) C18 P8
+- [x] Wave 3, App emails, 10) C18 P9
+- [x] Wave 3, Growth: site and form, 2) C02 P4 + C03 P2
+- [x] Wave 3, Growth: site and form, 3) C02 P1 + C03 P7
+- [x] Wave 3, Growth: site and form, 4) C02 P2
+- [x] Wave 3, Growth: site and form, 5) C02 P3
+- [x] Wave 3, Growth: site and form, 8) C02 P6
+- [x] Wave 3, Growth: site and form, 9) C02 P7 + C06 P6
+- [x] Wave 3, Growth: site and form, 10) C07 P7 + C06 P11
+- [x] Wave 3, Growth: site and form, 11) C02 P8 + C03 P4 + C05 P2 + C45 P5 + C44 P3 [M]
+- [x] Wave 3, Growth: site and form, 12) C33 P2
+- [x] Wave 3, Growth: site and form, 13) C07 P4 + C07 P6 + C02 P9
+- [x] Wave 3, Growth: site and form, 14) C29 P9
+- [x] Wave 3, Growth: site and form, 15) C26 P8
+
+Queue screen 15) C09 P8 was not built (it waits for Davi's yes; `docs/LAUNCH.md` step 13). Voice 7) C24 P8's new prompt `voice-examples.v1` and the Inbox / Sync prompt lines wait for the Prompt
+versions group in `docs/notes/prompt-versions-inbox.md`.
+
+Autopilot rules 7) C20 P9, 8) C20 P10 [M] and 9) C48 P6 were not built (they wait for Davi's yes;
+`docs/LAUNCH.md` step 13). The classify.v6, followup.v5 and reply-language lines from the
+Follow-ups, Customers and Settings groups wait in `docs/notes/prompt-versions-inbox.md`.
+
+Billing and admin 5) C17 P6 was built without its item 3 (over-limit lines): Davi's 2026-10-16
+decision already pauses the extra Gmail addresses on a lower plan. The Town, utility and job-kind
+lists group's classify.v6 lines (Check 36 P5, Check 37 P3) wait in
+`docs/notes/prompt-versions-inbox.md`.
+
+Wave 2 Prompt versions wrote every line that waited in `docs/notes/prompt-versions-inbox.md`
+except one optional voice-block wording (Check 24 P11), which waits for the next draft version.
+Wave 3 Legal text: every document sentence (Check 27 P1–P8, Check 45 P6) is written out in
+`docs/notes/legal-w3-legal.md` and waits for the one legal release; 7) C27 P10 was already done
+at the tip. Wave 3 Google review: 6) C28 P5's `poweredByHeader` part was already done; its CASA
+pre-scan workflow has not been run yet. 12) C33 P6 keeps one exception (/growth's description)
+until the Growth site group shortens it.
+Wave 3 App emails: 5) C01 P2 kept the built trial emails (no fourth email, no migration; the
+question is in `docs/LAUNCH.md` step 13). Its mail-host sentence waits in
+`docs/notes/legal-w3-emails.md`.
+Wave 3 Growth site: 1) C03 P3 not built (Davi's call); 6) C03 P1 + C03 P5 and 7) C03 P6 +
+C34 P4 were built and then reverted at the merge (46d4e03, 4f8bc6a) until Davi okays the words; 11) built without its migration (no town, no waitlist state); 15) only the per-email limit.
 
 Later steps are added to this list as their pull requests merge.

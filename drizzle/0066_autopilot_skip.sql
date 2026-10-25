@@ -1,0 +1,1 @@
+ALTER TABLE "drafts" ADD COLUMN "autopilot_skip" jsonb;

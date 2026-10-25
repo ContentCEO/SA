@@ -1,10 +1,14 @@
 import type { Metadata } from "next";
+import { AppEmailsGoTo } from "@/components/app/app-emails-go-to";
 import { AutoSaveForm } from "@/components/forms/auto-save-form";
-import { TimeZoneInput } from "@/components/forms/time-zone-input";
 import { Button } from "@/components/ui/button";
+import { listMailboxes } from "@/server/mailboxes";
 import { DIGEST_HOURS, getBusinessProfile } from "@/server/profile";
 import { requireOwner } from "@/server/session";
+import { nowLine, zoneChoices, zoneLine } from "@/server/time-zone-rules";
+import { usableTimeZone } from "@/server/snooze-rules";
 import { trialEmailsMatter } from "@/server/trial-emails";
+import { PhoneZoneOffer } from "./phone-zone-offer";
 import { saveDigestSettingsAction, saveTrialEmailsAction } from "../profile-actions";
 import { SettingsScreen } from "../screen";
 
@@ -13,8 +17,12 @@ export const metadata: Metadata = { title: "Morning email" };
 export default async function MorningEmailSettingsPage(
   props: PageProps<"/settings/morning-email">,
 ) {
-  const { workspace } = await requireOwner();
-  const profile = await getBusinessProfile(workspace.id);
+  const { workspace, session } = await requireOwner();
+  const [profile, mailboxes] = await Promise.all([
+    getBusinessProfile(workspace.id),
+    listMailboxes(workspace.id),
+  ]);
+  const zone = usableTimeZone(profile?.timeZone);
   return (
     <SettingsScreen
       path="/settings/morning-email"
@@ -35,6 +43,13 @@ export default async function MorningEmailSettingsPage(
         <p id="digest-monthly-note" className="-mt-2 pl-9 text-muted-foreground">
           (and a short one on the 1st of each month)
         </p>
+        {/* Check 42 P6: where it goes — the sign-in address, from the session (never logged). */}
+        <AppEmailsGoTo
+          kind="digest"
+          signInEmail={session.user.email}
+          connectedEmails={mailboxes.map((m) => m.email)}
+          className="-mt-1 pl-9 text-muted-foreground"
+        />
         <label className="flex flex-col gap-1.5">
           <span className="font-semibold">Send it at</span>
           <select
@@ -49,17 +64,37 @@ export default async function MorningEmailSettingsPage(
             ))}
           </select>
         </label>
-        <TimeZoneInput fallback={profile?.timeZone ?? "America/New_York"} />
+        {/* Check 44 P5 / 15 P7: the zone is shown and picked here; no hidden browser zone. */}
+        <label className="flex flex-col gap-1.5">
+          <span className="font-semibold">Your time zone</span>
+          <select
+            name="timeZone"
+            defaultValue={zone}
+            aria-describedby="zone-line"
+            className="min-h-tap rounded-lg border border-input bg-paper px-3 text-base"
+          >
+            {zoneChoices(zone).map((z) => (
+              <option key={z.value} value={z.value}>
+                {z.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        {/* What the select showed: an untouched select never becomes the owner's pick. */}
+        <input type="hidden" name="timeZoneShown" value={zone} />
+        <p id="zone-line" className="text-muted-foreground">
+          {zoneLine(zone)} {nowLine(new Date(), zone)}
+        </p>
         <p className="text-muted-foreground">
           Just counts and totals — how many replies are waiting, what needs you, and this
           month&apos;s money so far (quotes won, invoices paid, still owed). No customer names or
-          email text go in it. Skipped on mornings with nothing to say. On the 1st of each month you
-          also get a short summary of the month (counts only).
+          email text go in it. Skipped on mornings with nothing to say.
         </p>
         <Button type="submit" variant="outline" className="w-full">
           Save
         </Button>
       </AutoSaveForm>
+      <PhoneZoneOffer saved={zone} />
       {trialEmailsMatter(workspace) ? (
         // 2026-10-16: the trial's short emails (day 2, the last day, and one a week after it ends).
         <AutoSaveForm action={saveTrialEmailsAction} hideButton className="flex flex-col gap-2">

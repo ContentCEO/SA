@@ -1,28 +1,37 @@
 import { Phone } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 import { Headline } from "@/components/brand/headline";
+import { GROWTH_PROOF } from "@/config/growth-proof";
 import { siteConfig } from "@/config/site";
 import { phoneHref } from "@/lib/phone-href";
+import { deferred } from "@/lib/deferred-section";
 import { cn } from "@/lib/utils";
 import { GrowthCallForm } from "./growth-call-form";
 import { growthCopy as c } from "./growth-copy";
+import { GrowthProof } from "./growth-proof";
 
 function Section({
   id,
   label,
   className,
   children,
+  defer,
 }: {
   id?: string;
   label: string;
   className?: string;
   children: React.ReactNode;
+  /** Check 29 P9: [phone px, wide px] for an off-screen section (src/lib/deferred-section.ts). */
+  defer?: [number, number];
 }) {
+  const d = defer ? deferred(...defer) : null;
   return (
     <section
       id={id}
       aria-label={label}
-      className={cn("border-t border-ash/40 px-4 py-16 sm:py-24", className)}
+      className={cn("border-t border-ash/40 px-4 py-16 sm:py-24", d?.className, className)}
+      style={d?.style}
     >
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-10">{children}</div>
     </section>
@@ -43,18 +52,17 @@ export function GrowthChapter({
   headingLevel,
   standalone,
   openerId,
+  referrals,
 }: {
   headingLevel: "h1" | "h2";
   standalone: boolean;
   openerId?: string;
+  /** Plan #47: referral links are on, so the form reads a link's ?ref= (the homepage). */
+  referrals?: boolean;
 }) {
   return (
     <>
-      <section
-        id={openerId}
-        aria-label={c.opener.region}
-        className={cn("px-4 py-16 sm:py-24", openerId && "scroll-mt-18")}
-      >
+      <section id={openerId} aria-label={c.opener.region} className="px-4 py-16 sm:py-24">
         <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
           <p className="font-semibold text-ash">{c.opener.eyebrow}</p>
           <Headline
@@ -94,11 +102,16 @@ export function GrowthChapter({
         </div>
       </section>
 
-      <Section label={c.services.region}>
+      <Section label={c.services.region} defer={[2514, 1008]}>
         <Headline as="h2" serif={c.services.serif} heavy={c.services.heavy} />
-        <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {c.services.items.map((s) => (
-            <li key={s.title} className="rounded-2xl border border-ash/40 p-6">
+        {/* Check 2 P9: the first card spans two columns, so seven cards leave no lone card
+            (sm: 2 + 2×3; lg: 2+1+1, then 4). One column on phones. */}
+        <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {c.services.items.map((s, i) => (
+            <li
+              key={s.title}
+              className={cn("rounded-2xl border border-ash/40 p-6", i === 0 && "sm:col-span-2")}
+            >
               <h3 className="text-xl font-black">{s.title}</h3>
               <p className="mt-2 text-lg text-ash">{s.body}</p>
             </li>
@@ -106,7 +119,7 @@ export function GrowthChapter({
         </ul>
       </Section>
 
-      <Section label={c.pledge.region}>
+      <Section label={c.pledge.region} defer={[383, 258]}>
         <Headline as="h2" serif={c.pledge.serif} heavy={c.pledge.heavy} />
         <div className="flex max-w-3xl flex-col gap-4 border-l-4 border-offwhite pl-5">
           <p className="text-xl leading-relaxed">{c.pledge.body}</p>
@@ -114,7 +127,7 @@ export function GrowthChapter({
         </div>
       </Section>
 
-      <Section label={c.how.region}>
+      <Section label={c.how.region} defer={[744, 328]}>
         <Headline as="h2" serif={c.how.serif} heavy={c.how.heavy} />
         <ol className="grid gap-6 md:grid-cols-3">
           {c.how.steps.map((s, i) => (
@@ -129,7 +142,7 @@ export function GrowthChapter({
         </ol>
       </Section>
 
-      <Section label={c.rules.region}>
+      <Section label={c.rules.region} defer={[820, 424]}>
         <Headline as="h2" serif={c.rules.serif} heavy={c.rules.heavy} />
         <ul className="grid gap-x-10 gap-y-8 sm:grid-cols-2">
           {c.rules.items.map((r) => (
@@ -143,12 +156,24 @@ export function GrowthChapter({
 
       {standalone ? (
         <Section label={c.who.region}>
+          {/* Check 2 P6: the operator's photo from siteConfig; null = text only, as before. */}
+          {siteConfig.operatorPhoto ? (
+            <Image
+              src={siteConfig.operatorPhoto.src}
+              alt={siteConfig.operatorPhoto.alt}
+              width={448}
+              height={448}
+              className="aspect-square w-full max-w-48 rounded-2xl object-cover"
+            />
+          ) : null}
           <Headline as="h2" serif={c.who.serif} heavy={c.who.heavy} />
           <p className="max-w-2xl text-xl leading-relaxed">{c.who.body}</p>
         </Section>
       ) : null}
 
-      <Section label={c.faq.region}>
+      <GrowthProof items={GROWTH_PROOF} now={new Date()} />
+
+      <Section label={c.faq.region} defer={[685, 637]}>
         <Headline as="h2" serif={c.faq.serif} heavy={c.faq.heavy} />
         <div className="divide-y divide-ash/40 border-y border-ash/40">
           {c.faq.items.map((f) => (
@@ -183,7 +208,7 @@ export function GrowthChapter({
         </div>
       </Section>
 
-      <Section id="growth-call" label={c.call.region} className="scroll-mt-18">
+      <Section id="growth-call" label={c.call.region}>
         <div className="grid gap-10 lg:grid-cols-2">
           <div className="flex flex-col gap-4">
             <Headline as="h2" serif={c.call.serif} heavy={c.call.heavy} />
@@ -193,13 +218,14 @@ export function GrowthChapter({
               <a href={phoneHref("tel", siteConfig.phone)} className={outlined}>
                 {c.call.callLink}
               </a>
-              <a href={phoneHref("sms", siteConfig.phone)} className={outlined}>
+              {/* Check 2 P9: an sms: link usually does nothing on a desktop. */}
+              <a href={phoneHref("sms", siteConfig.phone)} className={cn(outlined, "lg:hidden")}>
                 {c.call.textLink}
               </a>
             </div>
           </div>
           <div className="sa-light rounded-2xl p-5 sm:p-6">
-            <GrowthCallForm />
+            <GrowthCallForm referrals={referrals} />
           </div>
         </div>
       </Section>

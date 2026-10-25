@@ -5,6 +5,8 @@
  * always undo. No accounting connection.
  */
 
+import { readExtracted } from "./extracted";
+
 /**
  * Payment processors whose receipts can tell us a customer's invoice was paid. A receipt
  * only ever marks ANOTHER thread (one whose invoice number it names, A12); its own thread
@@ -38,12 +40,43 @@ export function normalizeInvoiceNumber(s: string | null | undefined): string | n
   return bare || null;
 }
 
-export const INVOICE_STATUSES = ["unpaid", "paid", "partly_paid", "unknown"] as const;
+/** Check 12 P3: `said_sent` = the customer says payment is on its way; not money yet, still owed. */
+export const INVOICE_STATUSES = ["unpaid", "paid", "partly_paid", "said_sent", "unknown"] as const;
 export type InvoiceStatus = (typeof INVOICE_STATUSES)[number];
+export const INVOICE_KINDS = ["invoice", "payment", "credit"] as const;
+export type InvoiceKind = (typeof INVOICE_KINDS)[number];
+/** Check 12 P3: a mailed check gets this long to clear before the invoice is chased again. */
+export const SAID_SENT_WAIT_DAYS = 7;
 export type InvoiceFacts = {
   invoice_number: string | null;
-  /** In dollars, as the sorter read it. */
+  /**
+   * In dollars: the FULL amount billed (classify.v6, Check 12 P2: the "Total due" line), as the
+   * sorter read it (or from the owner's own invoice email: `amount_source`). Rows sorted before
+   * v6 hold "the amount owed or paid", read the same way.
+   */
   amount: number | null;
+  /**
+   * Check 12 P2: everything paid or credited toward `amount` so far, in dollars, added up by
+   * `carryInvoiceFacts` from each email's `amount_paid_now`. Absent when nothing was paid.
+   * What's owed is `balanceDollars` = amount − paid, never below 0.
+   */
+  paid?: number;
+  /** Check 12 P2: what THIS email says was paid or credited (the model's field; never stored). */
+  amount_paid_now?: number;
+  /** Check 12 P2: the bill itself, a payment, or a credit (this email). */
+  kind?: InvoiceKind;
+  /** Check 12 P3: "I'll pay Friday" — the day they promised, as written. */
+  promised_on?: string;
+  /** Check 12 P3: when they said payment was on its way (ISO); kept while status is said_sent. */
+  said_sent_at?: string;
+  /** Check 12 P2: further invoices listed in THIS email (merged into `earlier_open` on carry). */
+  other_invoices?: EarlierInvoice[];
+  /**
+   * Check 12 P5: "your_email" when the amount was read from the owner's own sent email on the
+   * thread (`captureInvoiceAmounts`) because the customer's email gave none. The card says
+   * "From your email". Absent when the sorter read it from the email itself.
+   */
+  amount_source?: "your_email";
   /** As written in the email. */
   due_date: string | null;
   status: InvoiceStatus;
@@ -61,26 +94,114 @@ const MAX_EARLIER_OPEN = 5;
 
 /** `extracted.invoice`, read loosely (old rows and odd values never throw). */
 export function invoiceOf(extracted: unknown): InvoiceFacts | null {
-  const inv = (extracted as { invoice?: unknown } | null | undefined)?.invoice;
+  const inv = readExtracted(extracted)?.invoice;
   if (!inv || typeof inv !== "object") return null;
   const r = inv as Record<string, unknown>;
   const amount = positive(r.amount);
   const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
-  const earlier = Array.isArray(r.earlier_open)
-    ? r.earlier_open
-        .filter((e): e is Record<string, unknown> => !!e && typeof e === "object")
-        .map((e) => ({ invoice_number: str(e.invoice_number), amount: positive(e.amount) }))
-        .filter((e) => e.amount !== null)
-    : [];
+  const list = (v: unknown): EarlierInvoice[] =>
+    Array.isArray(v)
+      ? v
+          .filter((e): e is Record<string, unknown> => !!e && typeof e === "object")
+          .map((e) => ({ invoice_number: str(e.invoice_number), amount: positive(e.amount) }))
+          .filter((e) => e.amount !== null)
+      : [];
+  const earlier = list(r.earlier_open);
+  // Check 12 P2: `other_invoices` sits beside `invoice` on the model's output.
+  const others = list((readExtracted(extracted) as { other_invoices?: unknown })?.other_invoices);
+  const paid = positive(r.paid);
+  const paidNow = positive(r.amount_paid_now);
+  const kind = (INVOICE_KINDS as readonly unknown[]).includes(r.kind)
+    ? (r.kind as InvoiceKind)
+    : null;
   return {
     invoice_number: str(r.invoice_number),
     amount,
+    ...(amount !== null && r.amount_source === "your_email"
+      ? { amount_source: "your_email" as const }
+      : {}),
+    ...(paid !== null ? { paid } : {}),
+    ...(paidNow !== null ? { amount_paid_now: paidNow } : {}),
+    ...(kind ? { kind } : {}),
+    ...(str(r.promised_on) ? { promised_on: str(r.promised_on)! } : {}),
+    ...(str(r.said_sent_at) ? { said_sent_at: str(r.said_sent_at)! } : {}),
     due_date: str(r.due_date),
     status: (INVOICE_STATUSES as readonly unknown[]).includes(r.status)
       ? (r.status as InvoiceStatus)
       : "unknown",
     ...(earlier.length ? { earlier_open: earlier.slice(-MAX_EARLIER_OPEN) } : {}),
+    ...(others.length ? { other_invoices: others.slice(0, 4) } : {}),
   };
+}
+
+/**
+ * Check 12 P2: what's still owed on the current invoice, in dollars — the full amount minus
+ * everything paid or credited, never below 0. Null when no email said how much.
+ */
+export function balanceDollars(invoice: InvoiceFacts | null): number | null {
+  if (!invoice || invoice.amount === null) return null;
+  if (invoice.status === "paid") return 0;
+  return Math.max(0, Math.round((invoice.amount - (invoice.paid ?? 0)) * 100) / 100);
+}
+
+/** A payment or a credit (money toward an invoice), rather than the bill itself. */
+export function isMoneyToward(f: InvoiceFacts | null): boolean {
+  return !!f && (f.kind === "payment" || f.kind === "credit" || (f.amount_paid_now ?? 0) > 0);
+}
+
+/**
+ * Check 12 P3: "the check is in the mail" holds the nudges for `SAID_SENT_WAIT_DAYS` from that
+ * email; with no paid mark after that, the invoice is chaseable again. Pure; the SQL twin is
+ * `saidSentHold` in `threadsToFollowUp` (followups.ts).
+ */
+export function saidSentBlocksNudge(invoice: InvoiceFacts | null, now: Date): boolean {
+  if (!invoice || invoice.status !== "said_sent" || !invoice.said_sent_at) return false;
+  const at = Date.parse(invoice.said_sent_at);
+  if (!Number.isFinite(at)) return false;
+  return now.getTime() - at < SAID_SENT_WAIT_DAYS * 86_400_000;
+}
+
+/** "Oct 16" in the owner's zone (Eastern when the zone is bad). */
+function shortDay(iso: string, timeZone: string): string | null {
+  const at = Date.parse(iso);
+  if (!Number.isFinite(at)) return null;
+  try {
+    return new Intl.DateTimeFormat("en-US", { timeZone, month: "short", day: "numeric" }).format(
+      new Date(at),
+    );
+  } catch {
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York",
+      month: "short",
+      day: "numeric",
+    }).format(new Date(at));
+  }
+}
+
+/**
+ * Check 12 P3: the card's line while a payment is "on its way", or a day was promised. Null
+ * when the email said neither.
+ */
+export function paymentPromiseLine(invoice: InvoiceFacts | null, timeZone: string): string | null {
+  if (!invoice) return null;
+  if (invoice.status === "said_sent") {
+    const day = invoice.said_sent_at ? shortDay(invoice.said_sent_at, timeZone) : null;
+    return `They say it's on the way${day ? ` (${day})` : ""}. Tap Mark paid when it clears.`;
+  }
+  if (invoice.promised_on && (invoice.status === "unpaid" || invoice.status === "partly_paid")) {
+    return `They said they'd pay ${invoice.promised_on}.`;
+  }
+  return null;
+}
+
+/**
+ * Check 12 P3: how our paid guess was made, for the paid list — never "we spotted the payment"
+ * (we read the customer saying so, or matched a receipt's invoice number).
+ */
+export function paidViaLine(via: string | null | undefined, invoiceNumber: string | null): string {
+  if (via === "receipt")
+    return invoiceNumber ? `a receipt for #${invoiceNumber} matched` : "a payment receipt matched";
+  return "they said they paid";
 }
 
 function positive(v: unknown): number | null {
@@ -92,10 +213,29 @@ function positive(v: unknown): number | null {
  * before (`extracted.invoice_thread`, kept from one classification to the next).
  */
 export function isInvoiceThread(t: { category: string | null; extracted: unknown }): boolean {
-  return (
-    t.category === "invoice_payment" ||
-    (t.extracted as { invoice_thread?: unknown } | null | undefined)?.invoice_thread === true
-  );
+  return t.category === "invoice_payment" || readExtracted(t.extracted)?.invoice_thread === true;
+}
+
+/**
+ * Check 12 P4: a bill the BUSINESS owes (a supplier's or a subcontractor's invoice), never
+ * money owed to the owner — kept off Money owed and never chased. True when the sorter said
+ * `owed_by_business`; or when it said nothing clear (unknown, or a thread sorted before
+ * classify.v4 with no direction stored) and the sender is someone the business buys from —
+ * another thread from the same business (the same domain, or the same address on public
+ * webmail) is sorted supplier_vendor, or the owner tapped "Not owed to me" on another thread
+ * from this exact address. An owner's
+ * own mark on this thread (paid, or put back) always wins. SQL twin: `billOwedByOwnerSql`
+ * (thread-sql.ts) — keep the two in step.
+ */
+export function billOwedByOwner(f: {
+  direction: unknown;
+  ownerMarked: boolean;
+  senderHasSupplierThread: boolean;
+  senderMarkedNotOwed: boolean;
+}): boolean {
+  if (f.direction === "owed_by_business") return true;
+  if (f.direction === "owed_to_business" || f.ownerMarked) return false;
+  return f.senderHasSupplierThread || f.senderMarkedNotOwed;
 }
 
 /** Dollars → cents (never a fraction of a cent). */
@@ -104,7 +244,8 @@ export const toCents = (dollars: number) => Math.round(dollars * 100);
 /**
  * Still owed: nobody has marked it paid (or hidden it), and either the owner put it back on
  * the list ("Undo" / "Put back") — which beats whatever the email said, amount or not — or
- * there's an amount and the email says unpaid / partly paid.
+ * the email says unpaid / partly paid (Check 12 P5: with or without an amount — "Got your
+ * invoice, I'll pay Friday" is owed, "Amount not stated", left out of the total).
  */
 export function isOwed(f: {
   invoice: InvoiceFacts | null;
@@ -118,15 +259,20 @@ export function isOwed(f: {
 
 /**
  * The invoice facts themselves say money is owed, whatever the marks: the current invoice
- * has an amount and is unpaid / partly paid, or an earlier invoice on the thread is still
+ * is unpaid / partly paid (Check 12 P5: an amount isn't needed — the row then reads "Amount
+ * not stated" and adds nothing to the total), or an earlier invoice on the thread is still
  * open (`earlier_open` only ever holds entries with an amount). "Got #42 for phase 2" with
  * no amount, while #41's $500 is open, still owes the $500.
  */
 export function holdsOwedInvoice(invoice: InvoiceFacts | null): boolean {
   if (!invoice) return false;
   if ((invoice.earlier_open ?? []).some((e) => (e.amount ?? 0) > 0)) return true;
-  if (!(invoice.amount && invoice.amount > 0)) return false;
-  return invoice.status === "unpaid" || invoice.status === "partly_paid";
+  // Check 12 P3: "the check is in the mail" is still owed until it clears.
+  return (
+    invoice.status === "unpaid" ||
+    invoice.status === "partly_paid" ||
+    invoice.status === "said_sent"
+  );
 }
 
 /**
@@ -141,14 +287,21 @@ export function holdsOwedInvoice(invoice: InvoiceFacts | null): boolean {
 export function invoiceWasOpen(invoice: InvoiceFacts | null): boolean {
   if (!invoice) return false;
   if ((invoice.earlier_open ?? []).length > 0) return true;
-  return invoice.status === "unpaid" || invoice.status === "partly_paid";
+  return (
+    invoice.status === "unpaid" ||
+    invoice.status === "partly_paid" ||
+    invoice.status === "said_sent"
+  );
 }
 
-/** What a row adds to the total owed: its invoice plus any earlier ones still open, in cents. */
+/**
+ * What a row adds to the total owed: the current invoice's balance (Check 12 P2: the amount
+ * minus what was paid or credited) plus any earlier ones still open, in cents.
+ */
 export function owedCents(invoice: InvoiceFacts | null): number {
   if (!invoice) return 0;
   const earlier = (invoice.earlier_open ?? []).reduce((t, e) => t + toCents(e.amount ?? 0), 0);
-  return toCents(invoice.amount ?? 0) + earlier;
+  return toCents(balanceDollars(invoice) ?? 0) + earlier;
 }
 
 const DAY_MS = 86_400_000;
@@ -219,14 +372,8 @@ function yearlessDay(month: number, day: number, anchor: number, anchorYear: num
   return null;
 }
 
-/**
- * The due date as a calendar date. Only clear dates count ("2026-11-03", "Nov 3",
- * "3 November 2026", "11/3/2026"); a date with no year is placed in the year nearest the
- * day the email was written (`yearlessDay`). Anything else ("net 30", "upon receipt") is
- * no due date — never a guess.
- */
-function dueDay(dueDate: string, anchor: number, anchorYear: number): number | null {
-  const text = dueDate.trim();
+/** A clear date in the text ("2026-11-03", "Nov 3", "3 November 2026", "11/3/2026"), or null. */
+function dateIn(text: string, anchor: number, anchorYear: number): number | null {
   const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(text);
   if (iso) return ymdDay(Number(iso[1]), Number(iso[2]), Number(iso[3]));
   const on = (y: string | undefined, month: number, day: number) =>
@@ -242,18 +389,78 @@ function dueDay(dueDate: string, anchor: number, anchorYear: number): number | n
   return null;
 }
 
+/** "due Nov 15" / "by 11/15": a date right after "due" or "by" is the due day itself. */
+function statesDueDate(text: string): boolean {
+  const at = /\b(?:due|by)\s+(?:on\s+)?/i.exec(text);
+  if (!at) return false;
+  const rest = text.slice(at.index + at[0].length);
+  return [/^\d{4}-\d{2}-\d{2}/, MONTH_DAY, DAY_MONTH, SLASHED].some(
+    (re) => re.exec(rest)?.index === 0,
+  );
+}
+
+/** Check 12 P6: payment terms — "net 30", "within 10 days", "15 days from/after …". */
+const TERMS = [
+  /\bnet\s*(\d{1,3})\b/i,
+  /\bwithin\s+(\d{1,3})\s+days?\b/i,
+  /\b(\d{1,3})\s+days?\s+(?=from|after)/i,
+];
+/** "… of / from / after <something>" that is a day we can know: the invoice, the receipt, today. */
+const KNOWN_START =
+  /^\s*(?:of|from|after)\s+(?:the\s+|this\s+|our\s+|my\s+)?(?:invoice|receipt|bill|billing|today|date)/i;
+const UNKNOWN_START = /^\s*(?:of|from|after)\s+\S/i;
+const ON_RECEIPT = /\b(?:due\s+)?(?:up)?on\s+receipt\b|\bdue\s+(?:immediately|now)\b/i;
+
+/**
+ * The due date as a calendar date. Check 12 P6: payment terms first — "Net 30 from 10/01/2026"
+ * is that date + 30; plain "net 30" / "within 10 days" is the day the email was written
+ * (`anchor`) + N; "upon receipt" is the day it was written. Terms counted from something we
+ * can't know ("within 10 days of completion") give no due date. Then clear dates
+ * ("2026-11-03", "Nov 3", "3 November 2026", "11/3/2026"); a date with no year is placed in
+ * the year nearest the day the email was written (`yearlessDay`). Anything else ("end of
+ * month", "Friday") is no due date — never a guess.
+ */
+function dueDay(dueDate: string, anchor: number, anchorYear: number): number | null {
+  const text = dueDate.trim();
+  for (const re of TERMS) {
+    const m = re.exec(text);
+    if (!m) continue;
+    const days = Number(m[1]);
+    if (!Number.isFinite(days) || days > 365) return null;
+    const written = dateIn(text, anchor, anchorYear);
+    // "Due Nov 15 (net 30)": the date already is the due day.
+    if (written !== null) return statesDueDate(text) ? written : written + days;
+    const rest = text.slice(m.index + m[0].length);
+    if (UNKNOWN_START.test(rest) && !KNOWN_START.test(rest)) return null;
+    return anchor + days;
+  }
+  if (ON_RECEIPT.test(text)) return dateIn(text, anchor, anchorYear) ?? anchor;
+  return dateIn(text, anchor, anchorYear);
+}
+
+/** "Oct 31" for a day number (a calendar date, already in the owner's zone). */
+function dayWords(day: number): string {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "UTC",
+    month: "short",
+    day: "numeric",
+  }).format(new Date(day * DAY_MS));
+}
+
 /**
  * How the due date reads to the owner, from their own calendar day: "No due date",
- * "Not due yet", "Due today" or "12 days past due". `daysPastDue` is negative before the
- * due date and null without one. `writtenAt` is when the email was written (the thread's
- * last message); a due date with no year is read around that day, not around today.
+ * "Not due yet", "Due today" or "12 days past due", plus the day itself (Check 12 P6):
+ * "Due Oct 31" / "Was due Oct 10" (null without one, and on the day itself). `daysPastDue`
+ * is negative before the due date and null without one. `writtenAt` is when the email was
+ * written (the thread's last message); a due date with no year, and net terms with no date,
+ * are read from that day, not from today.
  */
 export function dueLabel(
   dueDate: string | null,
   now: Date,
   timeZone: string,
   writtenAt: Date | null = null,
-): { daysPastDue: number | null; text: string } {
+): { daysPastDue: number | null; text: string; day?: string | null } {
   if (!dueDate) return { daysPastDue: null, text: "No due date" };
   const today = localDate(now, timeZone);
   const todayN = dayNumber(today);
@@ -264,9 +471,13 @@ export function dueLabel(
   const due = dueDay(dueDate, writtenN, Number(written.slice(0, 4)));
   if (due === null) return { daysPastDue: null, text: "No due date" };
   const late = todayN - due;
-  if (late < 0) return { daysPastDue: late, text: "Not due yet" };
-  if (late === 0) return { daysPastDue: 0, text: "Due today" };
-  return { daysPastDue: late, text: `${late} day${late === 1 ? "" : "s"} past due` };
+  if (late < 0) return { daysPastDue: late, text: "Not due yet", day: `Due ${dayWords(due)}` };
+  if (late === 0) return { daysPastDue: 0, text: "Due today", day: null };
+  return {
+    daysPastDue: late,
+    text: `${late} day${late === 1 ? "" : "s"} past due`,
+    day: `Was due ${dayWords(due)}`,
+  };
 }
 
 /**
@@ -303,8 +514,13 @@ export function matchReceipt(
   if (!n) return null;
   const hits = open.filter((o) => normalizeInvoiceNumber(o.invoice?.invoice_number) === n);
   if (hits.length !== 1) return null;
-  const theirs = hits[0]!.invoice?.amount;
-  if (receipt.amount && theirs && toCents(receipt.amount) !== toCents(theirs)) return null;
+  // Check 12 P2: a receipt pays what's left (the balance), or the whole amount.
+  const theirs = hits[0]!.invoice ?? null;
+  const paid = receipt.amount ?? receipt.amount_paid_now ?? null;
+  if (paid && theirs?.amount) {
+    const left = balanceDollars(theirs) ?? theirs.amount;
+    if (toCents(paid) !== toCents(left) && toCents(paid) !== toCents(theirs.amount)) return null;
+  }
   return hits[0]!.threadId;
 }
 
@@ -315,6 +531,9 @@ export function matchReceipt(
  */
 export function isNewInvoice(prev: InvoiceFacts | null, next: InvoiceFacts | null): boolean {
   if (!prev || !next) return false;
+  // Check 12 P2: a payment or credit ("CM-7 applied to 1043") is money toward an invoice,
+  // never a new one.
+  if (isMoneyToward(next)) return false;
   if (next.status !== "unpaid" && next.status !== "partly_paid") return false;
   const a = normalizeInvoiceNumber(prev.invoice_number);
   const b = normalizeInvoiceNumber(next.invoice_number);
@@ -357,6 +576,56 @@ export function promoteEarlierOpen(invoice: InvoiceFacts | null): InvoiceFacts |
   };
 }
 
+/** Entries with an amount, once per invoice number (a number-less entry is kept once). */
+function mergeOpen(a: EarlierInvoice[], b: EarlierInvoice[]): EarlierInvoice[] {
+  const out: EarlierInvoice[] = [];
+  for (const e of [...a, ...b]) {
+    if (!((e.amount ?? 0) > 0)) continue;
+    const n = normalizeInvoiceNumber(e.invoice_number);
+    if (out.some((o) => normalizeInvoiceNumber(o.invoice_number) === n)) continue;
+    out.push(e);
+  }
+  return out.slice(-MAX_EARLIER_OPEN);
+}
+
+/**
+ * Check 12 P2 / P3: this email's facts as the thread would store them: `amount_paid_now`
+ * becomes `paid`, `other_invoices` become `earlier_open`, and a balance of zero reads as paid.
+ * The model's own one-email fields (`amount_paid_now`, `other_invoices`, `kind`) never stay.
+ */
+function settled(f: InvoiceFacts): InvoiceFacts {
+  const paid = (f.paid ?? 0) + (f.amount_paid_now ?? 0);
+  const { amount_paid_now, other_invoices, kind, ...rest } = f;
+  void amount_paid_now;
+  void kind;
+  // An invoice the email lists beside itself under its own number is the same invoice.
+  const own = normalizeInvoiceNumber(f.invoice_number);
+  const earlier = mergeOpen(
+    f.earlier_open ?? [],
+    (other_invoices ?? []).filter((e) => !own || normalizeInvoiceNumber(e.invoice_number) !== own),
+  );
+  const covered = f.amount !== null && f.amount > 0 && paid > 0 && paid >= f.amount;
+  const status: InvoiceStatus =
+    f.status === "paid"
+      ? "paid"
+      : covered && (f.status === "partly_paid" || f.status === "unpaid" || f.status === "said_sent")
+        ? "paid"
+        : f.status;
+  return {
+    ...rest,
+    ...(paid > 0 ? { paid } : {}),
+    ...(status === "said_sent" ? {} : { said_sent_at: undefined }),
+    ...(status === "unpaid" || status === "partly_paid" ? {} : { promised_on: undefined }),
+    status,
+    ...(earlier.length ? { earlier_open: earlier } : {}),
+  };
+}
+
+/** Drops the keys `settled` set to undefined, so stored JSON stays clean. */
+function compact(f: InvoiceFacts): InvoiceFacts {
+  return Object.fromEntries(Object.entries(f).filter(([, v]) => v !== undefined)) as InvoiceFacts;
+}
+
 /**
  * Every classification replaces the thread's facts, so a "paid, thanks" (no amount) or a
  * "use the side gate" (no invoice at all) would drop the amount and the row with it (A11).
@@ -364,17 +633,26 @@ export function promoteEarlierOpen(invoice: InvoiceFacts | null): InvoiceFacts |
  * same invoice (same number, or no number). A different number is a new invoice; if the
  * earlier one was still owed (`prevOwed`, which the caller works out from the paid marks),
  * it is kept in `earlier_open` so it never silently drops off the total.
+ *
+ * Check 12 P2: the facts are a running balance. A payment or credit toward the SAME invoice
+ * (same number, or no number) adds to `paid` instead of replacing the amount; a credit memo
+ * never opens a new invoice; invoices listed alongside go into `earlier_open` (counted in the
+ * total); when payments cover the amount the invoice reads paid (our paid guess, never a
+ * silent drop). Check 12 P3: `said_sent` stays owed, with when they said it.
  */
 export function carryInvoiceFacts(
   prev: InvoiceFacts | null,
   next: InvoiceFacts | null,
-  prevOwed: boolean = prev?.status === "unpaid" || prev?.status === "partly_paid",
+  prevOwed: boolean = prev?.status === "unpaid" ||
+    prev?.status === "partly_paid" ||
+    prev?.status === "said_sent",
 ): InvoiceFacts | null {
-  if (!prev) return next;
+  if (!prev) return next ? compact(settled(next)) : null;
   if (!next) return prev;
   const a = normalizeInvoiceNumber(prev.invoice_number);
   const b = normalizeInvoiceNumber(next.invoice_number);
   const earlier = prev.earlier_open ?? [];
+  const money = isMoneyToward(next);
   // "Paid #41" while #42 is the current one: #41 is settled, #42 is still owed.
   if (
     b &&
@@ -382,39 +660,90 @@ export function carryInvoiceFacts(
     earlier.some((e) => normalizeInvoiceNumber(e.invoice_number) === b)
   ) {
     const left = earlier.filter((e) => normalizeInvoiceNumber(e.invoice_number) !== b);
-    return promoteEarlierOpen({
-      invoice_number: prev.invoice_number,
-      amount: prev.amount,
-      due_date: prev.due_date,
-      status: prev.status,
-      ...(left.length ? { earlier_open: left } : {}),
-    });
+    return promoteEarlierOpen(
+      compact(
+        settled({
+          ...prev,
+          ...(left.length ? { earlier_open: left } : { earlier_open: undefined }),
+          other_invoices: next.other_invoices,
+        }),
+      ),
+    );
   }
-  if (a && b && a !== b) {
+  // Check 12 P2: "Sent $500 toward #41" while #42 is current: #41's open balance goes down.
+  if (
+    money &&
+    b &&
+    a !== b &&
+    earlier.some((e) => normalizeInvoiceNumber(e.invoice_number) === b)
+  ) {
+    const left = earlier
+      .map((e) =>
+        normalizeInvoiceNumber(e.invoice_number) === b
+          ? { ...e, amount: Math.max(0, (e.amount ?? 0) - (next.amount_paid_now ?? 0)) }
+          : e,
+      )
+      .filter((e) => (e.amount ?? 0) > 0);
+    return promoteEarlierOpen(
+      compact(
+        settled({
+          ...prev,
+          ...(left.length ? { earlier_open: left } : { earlier_open: undefined }),
+          other_invoices: next.other_invoices,
+        }),
+      ),
+    );
+  }
+  if (a && b && a !== b && !money) {
+    // The earlier invoice is kept at what's still owed on it (Check 12 P2).
+    const prevLeft = balanceDollars(prev);
     const stillOpen = [
       ...(prevOwed ? earlier : []),
-      ...(prevOwed && prev.amount
-        ? [{ invoice_number: prev.invoice_number, amount: prev.amount }]
-        : []),
+      ...(prevOwed && prevLeft ? [{ invoice_number: prev.invoice_number, amount: prevLeft }] : []),
     ].filter((e) => normalizeInvoiceNumber(e.invoice_number) !== b);
-    return promoteEarlierOpen({
-      invoice_number: next.invoice_number,
-      amount: next.amount,
-      due_date: next.due_date,
-      status: next.status,
-      ...(stillOpen.length ? { earlier_open: stillOpen.slice(-MAX_EARLIER_OPEN) } : {}),
-    });
+    return promoteEarlierOpen(
+      compact(
+        settled({
+          invoice_number: next.invoice_number,
+          amount: next.amount,
+          due_date: next.due_date,
+          status: next.status,
+          ...(next.amount_paid_now ? { amount_paid_now: next.amount_paid_now } : {}),
+          ...(next.promised_on ? { promised_on: next.promised_on } : {}),
+          ...(next.said_sent_at ? { said_sent_at: next.said_sent_at } : {}),
+          ...(stillOpen.length ? { earlier_open: stillOpen.slice(-MAX_EARLIER_OPEN) } : {}),
+          other_invoices: next.other_invoices,
+        }),
+      ),
+    );
   }
   // "Paid invoice 42" while #41 is still open: #42 is settled and #41 becomes the current
   // invoice (promoteEarlierOpen), so the thread is never marked paid with money left.
-  return promoteEarlierOpen({
-    invoice_number: next.invoice_number ?? prev.invoice_number,
-    amount: next.amount ?? prev.amount,
-    due_date: next.due_date ?? prev.due_date,
-    // "Can you resend invoice 42?" doesn't say whether it's paid: the earlier word stands.
-    status: next.status === "unknown" ? prev.status : next.status,
-    ...(earlier.length ? { earlier_open: earlier } : {}),
-  });
+  // Check 12 P2: a payment or credit (whatever number it names) adds to what was paid.
+  return promoteEarlierOpen(
+    compact(
+      settled({
+        invoice_number: money
+          ? (prev.invoice_number ?? next.invoice_number)
+          : (next.invoice_number ?? prev.invoice_number),
+        amount: next.amount ?? prev.amount,
+        // Check 12 P5: an amount read from the owner's email keeps its label while it's kept.
+        ...(next.amount == null && prev.amount != null && prev.amount_source
+          ? { amount_source: prev.amount_source }
+          : {}),
+        ...(prev.paid ? { paid: prev.paid } : {}),
+        ...(next.amount_paid_now ? { amount_paid_now: next.amount_paid_now } : {}),
+        due_date: next.due_date ?? prev.due_date,
+        // "Can you resend invoice 42?" doesn't say whether it's paid: the earlier word stands.
+        status: next.status === "unknown" ? prev.status : next.status,
+        promised_on: next.promised_on ?? prev.promised_on,
+        said_sent_at:
+          next.status === "said_sent" ? (next.said_sent_at ?? prev.said_sent_at) : undefined,
+        ...(earlier.length ? { earlier_open: earlier } : {}),
+        other_invoices: next.other_invoices,
+      }),
+    ),
+  );
 }
 
 /**
@@ -422,8 +751,7 @@ export function carryInvoiceFacts(
  * set at classification and never carried over). Null when it said nothing of the kind.
  */
 export function paymentSaid(extracted: unknown): "paid" | "partly_paid" | null {
-  const v = (extracted as { payment_said?: unknown } | null | undefined)?.payment_said;
-  return v === "paid" || v === "partly_paid" ? v : null;
+  return readExtracted(extracted)?.payment_said ?? null;
 }
 
 /** Added to a waiting nudge when we think the invoice was paid (a guess never deletes it, A8). */
@@ -431,3 +759,29 @@ export const PAID_GUESS_FLAG = "We think this was paid — check before sending.
 /** The note on a waiting nudge closed because the owner marked the invoice paid (or not owed). */
 export const PAID_NOTE = "Marked paid, so this nudge was dropped.";
 export const NOT_OWED_NOTE = "You said this isn't owed to you, so this nudge was dropped.";
+
+/**
+ * Check 12 P1: what the Money owed card says about chasing, in one honest line. "Nudges used:
+ * 0 of 2" read as "a nudge is coming" even when none ever would. `needsYou` is "manual" for
+ * the owner's own "This one needs me", "other" for any other needs-you reason that stops a nudge
+ * (a dispute, say; an invoice that needs the owner only for its size is still chased).
+ */
+export type ChaseFacts = {
+  followupsOn: boolean;
+  nudgesUsed: number;
+  needsYou: "manual" | "other" | null;
+  /** The customer wrote last: the owner owes them an answer, so we don't nudge. */
+  waitingOnOwner: boolean;
+  /** The owner last wrote longer ago than nudges are ever drafted for. */
+  quietTooLong: boolean;
+};
+
+export function chaseLine(row: ChaseFacts, maxNudges = 2): string {
+  if (!row.followupsOn) return "Not chased: follow-ups are off in Settings";
+  if (row.nudgesUsed >= maxNudges) return "Both reminders used. Chasing is up to you now.";
+  if (row.needsYou === "manual") return "Not chased: you marked this one as needing you";
+  if (row.needsYou === "other") return "Not chased: this one needs you first";
+  if (row.waitingOnOwner) return "Not chased while they're waiting on your reply";
+  if (row.quietTooLong) return "Not chased: it's been quiet too long. Chasing is up to you now.";
+  return `We'll draft a reminder if they go quiet (${Math.max(0, row.nudgesUsed)} of ${maxNudges} used)`;
+}

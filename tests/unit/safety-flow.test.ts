@@ -434,8 +434,9 @@ describe("the model's emergency counts in code (Check 36 P2)", () => {
       replyToMessageId: inbound!.id,
       toAddress: "dana@x.test",
       subject: "Re: Help",
-      body: "See you at 9.",
-      originalBody: "See you at 9.",
+      // No day or time in it (Check 41 P2 keeps those out of batches on its own).
+      body: "Thanks, noted — see you then.",
+      originalBody: "Thanks, noted — see you then.",
       reason: "Confirming.",
       flags: [],
       confidence: 95,
@@ -609,10 +610,11 @@ describe("'is this a bot?', sorted and batched (Check 48 P1 + Check 43 P2)", () 
     });
     await database
       .insert(drafts)
-      .values(draftRow("Thursday works. This is Mike himself, no bots.", "g1"));
+      .values(draftRow("Sounds good. This is Mike himself, no bots.", "g1"));
     expect(await batchCandidates(workspaceId, ["scheduling"], NOW)).toEqual([]);
     await database.delete(drafts);
-    await database.insert(drafts).values(draftRow("Thursday works.", "g2"));
+    // No day named (Check 41 P2 keeps a day-confirming reply out on its own).
+    await database.insert(drafts).values(draftRow("Sounds good.", "g2"));
     expect(await batchCandidates(workspaceId, ["scheduling"], NOW)).toHaveLength(1);
   });
 });

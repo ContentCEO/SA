@@ -60,6 +60,9 @@ async function threadFacts(workspaceId: string, threadIds: string[]) {
       invoicePaidSource: threads.invoicePaidSource,
       quoteOutcome: threads.quoteOutcome,
       quoteOutcomeSource: threads.quoteOutcomeSource,
+      quoteOutcomeAt: threads.quoteOutcomeAt,
+      quoteDismissedAt: threads.quoteDismissedAt,
+      quoteRequestedAt: threads.quoteRequestedAt,
       // Where a reply goes (a website form's Reply-To, else the sender) and who sent it.
       customerAddress: customerAddressSql(),
       senderAddress: sql<
@@ -207,6 +210,7 @@ function cheapReviewReason(
     job_done?: unknown;
     injection?: unknown;
     municipal?: unknown;
+    utility?: unknown;
   };
   const address = f.customerAddress;
   return reviewOfferReason({
@@ -214,7 +218,8 @@ function cheapReviewReason(
     needsOwner: f.needsOwner,
     needsOwnerManual: f.needsOwnerManual,
     complained: threadComplained(f) || (address != null && ctx.complained.has(address)),
-    untrusted: marks.injection === true || marks.municipal === true,
+    // Check 37 P3 (integrator, merge C): the electric company is never asked for a review.
+    untrusted: marks.injection === true || marks.municipal === true || marks.utility === true,
     jobDone: marks.job_done === true,
     // "Not owed to me" also sets invoice_paid_at; only a real paid mark counts.
     invoicePaid:
@@ -314,10 +319,14 @@ export async function reviewAllowed(
 }
 
 function thankYouReason(f: Facts): ThankYouOfferReason | null {
-  const marks = (f.extracted ?? {}) as { injection?: unknown; municipal?: unknown };
+  const marks = (f.extracted ?? {}) as {
+    injection?: unknown;
+    municipal?: unknown;
+    utility?: unknown;
+  };
   return thankYouOfferReason({
     category: f.category,
-    untrusted: marks.injection === true || marks.municipal === true,
+    untrusted: marks.injection === true || marks.municipal === true || marks.utility === true,
     // "Not owed to me" also sets invoice_paid_at; only a real paid mark counts.
     invoicePaid:
       f.invoicePaidAt != null &&

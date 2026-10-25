@@ -127,3 +127,42 @@ export function proposeSuggestions(signals: EditSignal[]): Suggestion[] {
   }
   return out.slice(0, 3);
 }
+
+/** Lines an accepted "warmer" / "skip the opener" idea adds to the voice summary. */
+export const SUMMARY_ADDS: Partial<Record<SuggestionKind, string>> = {
+  skip_opener: "Gets straight to the point — no warm-up sentence.",
+  warmer: "Warm and friendly.",
+};
+
+type IdeaVoice = {
+  avgLengthWords: number | null;
+  formality: string | null;
+  summary: string | null;
+};
+export type AcceptedIdea = { kind: string; targetWords: number | null };
+
+/**
+ * Check 24 P7: what accepted ideas change in a voice, applied oldest first so the newest idea of
+ * each kind wins (shorter/longer → length, more_formal/more_casual → formality; warmer and
+ * skip_opener add their summary line once). Used when the owner says yes and after every re-learn,
+ * so a yes keeps holding while the weekly refresh still runs. Greeting / sign-off ideas change
+ * nothing here (the owner types those).
+ */
+export function ideaChanges(voice: IdeaVoice, acceptedOldestFirst: AcceptedIdea[]): IdeaVoice {
+  // Only these three fields: callers spread the result into an UPDATE.
+  const out: IdeaVoice = {
+    avgLengthWords: voice.avgLengthWords,
+    formality: voice.formality,
+    summary: voice.summary,
+  };
+  for (const idea of acceptedOldestFirst) {
+    if ((idea.kind === "shorter" || idea.kind === "longer") && idea.targetWords)
+      out.avgLengthWords = idea.targetWords;
+    if (idea.kind === "more_formal") out.formality = "formal";
+    if (idea.kind === "more_casual") out.formality = "casual";
+    const add = SUMMARY_ADDS[idea.kind as SuggestionKind];
+    if (add && !(out.summary ?? "").includes(add))
+      out.summary = [out.summary?.trim(), add].filter(Boolean).join(" ");
+  }
+  return out;
+}

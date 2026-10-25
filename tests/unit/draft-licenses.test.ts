@@ -92,7 +92,7 @@ describe("license numbers in a real draft (Check 38 P6)", () => {
       .values({ workspaceId, licenses: { hic_number: "198344" } });
     const d = await run();
     expect(d.flags).toEqual([]);
-    expect(d.promptVersion).toBe("draft.v8");
+    expect(d.promptVersion).toBe("draft.v9");
     expect(system).toContain(
       "- Registration and licenses (quote exactly; never add others): Home improvement registration (HIC) number: 198344",
     );

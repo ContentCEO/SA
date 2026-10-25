@@ -1,9 +1,13 @@
 name: CI
 
+# Check 31 P8: one run per change. A branch push with an open pull request is tested by the
+# pull_request run only; a branch without one can be tested from the Actions tab
+# (workflow_dispatch).
 on:
   push:
-    branches: [main, "claude/**"]
+    branches: [main]
   pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -42,6 +46,10 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # Check 26 P11: fail on a high or critical advisory in production dependencies (the
+      # reviewed exceptions, if any, are in .github/audit-allow.txt).
+      - name: Audit production dependencies
+        run: pnpm exec tsx scripts/audit-check.ts
       # Check 30 P2: drizzle silently skips a migration stamped older than one already applied,
       # so this branch's journal must be main's journal unchanged plus new entries at the end.
       - name: Migration journal only grows
@@ -67,6 +75,11 @@ jobs:
       # Playwright starts the e2e fakes (fake Google / Gmail / Anthropic, tsx) on 3101 next to
       # the app on 3100, in local e2e mode with neutral credentials: no new secrets needed.
       - run: pnpm test:e2e
+      # Check 31 P8: a test that passed only on its retry still counts as green, so list it
+      # where a person will see it.
+      - name: Flaky e2e tests
+        if: always()
+        run: node scripts/flaky-report.mjs playwright-results.json >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

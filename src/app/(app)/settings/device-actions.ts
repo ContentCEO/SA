@@ -2,12 +2,7 @@
 
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import {
-  CONTRAST_COOKIE,
-  DEVICE_COOKIE_MAX_AGE,
-  HAND_COOKIE,
-  OFFLINE_COOKIE,
-} from "@/lib/device-prefs";
+import { DEVICE_COOKIE_MAX_AGE, HAND_COOKIE, OFFLINE_COOKIE } from "@/lib/device-prefs";
 import { removePushSubscription, savePushSubscription } from "@/server/push-alerts";
 import { requireOwner } from "@/server/session";
 
@@ -50,10 +45,5 @@ export async function removePushAction(endpoint: string): Promise<void> {
   if (typeof endpoint === "string") await removePushSubscription(workspace.id, endpoint);
 }
 
-/** Plan #37: sunlight mode, this device only. The page refreshes with the new look. */
-export async function toggleSunlightAction() {
-  await requireOwner();
-  const jar = await cookies();
-  if (jar.get(CONTRAST_COOKIE)?.value === "high") jar.delete(CONTRAST_COOKIE);
-  else jar.set(CONTRAST_COOKIE, "high", options);
-}
+// Plan #37's Sunlight switch is a client button now (Check 8 P4, sunlight-button.tsx): it writes
+// its own cookie, with no server round trip.

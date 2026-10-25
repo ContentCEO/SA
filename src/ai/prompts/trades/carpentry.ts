@@ -20,7 +20,8 @@ export const carpentry: TradePrompt = {
     "photos of the area",
     "materials they have in mind (e.g. pressure-treated, composite, hardwood)",
     "whether any wall involved might be load-bearing",
-    "whether a permit is needed (decks, structural work)",
+    // Check 37 P4 (wave 2): the owner knows about permits; ask for the town instead.
+    "the town the job is in (for decks and structural work)",
     "when they'd like it done",
   ],
 };

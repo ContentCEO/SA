@@ -11,7 +11,7 @@ server-side and tested).
    milestone it rides on. Build that milestone's brief scope first, then that milestone's features
    here, in the order listed.
 2. One milestone per session. At the end, tick the boxes here and in `CLAUDE.md`, write down
-   decisions in `CLAUDE.md` → Decisions, and report: what's done, how to see it, what's next, what's
+   decisions in the matching `docs/decisions/*.md` file (CLAUDE.md → Decisions lists them), and report: what's done, how to see it, what's next, what's
    needed from Davi.
 3. Every feature ships with tests. Anything that touches sending, approval or a gate has a guardrail
    test that fails if the rule is broken.
@@ -208,19 +208,38 @@ _Re-checked 2026-10-10: brief scope complete with tests; nothing else filed here
 
 ## Milestone 10 — Billing
 
-- [ ] **#47 Referral credit.** _(Built 2026-10-12 behind `FEATURE_REFERRALS` (off). Decided 2026-10-13: the referrer only, and the same-domain block stays (public webmail like gmail.com is exempt). Still waiting on Davi: the amount (options A–F in `docs/LAUNCH.md` step 13; the free-month options E and F need more code). `REFERRAL_CREDIT_CENTS` is `null`, so nothing happens even with the switch on; see `docs/SETUP.md` §6d.)_ ASK DAVI: the credit amount and who gets it. Do not pick a number.
-      Each workspace gets a referral link; when the referred workspace becomes `active`, both get a
-      credit applied as a Stripe customer balance credit. Amount lives in `src/config/pricing.ts`.
-      Self-referral and same-domain referrals blocked. Tests: credit only on `active`, once.
+- [x] **#47 Referral reward.** _(Decided 2026-10-15: offer A, the referrer's next month free on the plan above theirs (Solo → Crew, Crew → Company, Company → Company), back to their own plan afterwards unless they tap Keep at the normal price; the referrer only; the same-domain block stays. Davi's answers to the seven questions on 2026-10-16 are in `docs/LAUNCH.md` step 13. Built behind `FEATURE_REFERRALS` (off); turning it on follows `docs/SETUP.md` §6d, including the terms and privacy lines and a local Stripe Test Clock check.)_
+      Each workspace gets a referral link; when the referred workspace becomes `active`, the
+      referrer earns a free month one plan up (a one-time coupon on their next renewal; the app
+      gives the plan above for that month). Self-referral and same-domain referrals blocked.
+      Tests: earned only on `active`, once; nothing charges more without the owner's Keep tap.
 
 ## After launch (Milestone 11+) — were MVP non-goals
 
-- [ ] **#49 Outlook / Microsoft 365.** ASK DAVI: needs an Azure app registration and Microsoft
+- [x] **#49 Outlook / Microsoft 365.** _(Built behind `FEATURE_OUTLOOK` (off) on 2026-10-24; offered only with `MS_CLIENT_ID` and `MS_CLIENT_SECRET` set too. Turning it on follows `docs/SETUP.md` §8b (Azure app registration, publisher verification, the privacy and terms lines in `docs/notes/legal-m12-outlook.md`); decisions in `docs/decisions/gmail-and-sync.md` ("Outlook / Microsoft 365").)_ ASK DAVI: needs an Azure app registration and Microsoft
       publisher verification. Implement `src/mailbox/outlook/` against the existing connector
-      interface using Microsoft Graph (delta queries for sync, `createReply` drafts, subscriptions
-      for push). Same encryption, same revoke-and-delete rules. Connector contract tests run against
-      both.
-- [ ] **#50 Text me a summary.** _(Partly done 2026-10-09: opt-in, code-verified number, content-free new-lead alerts, quiet hours, caps — off until Twilio env is set. Still to do: digest summary by text, leads-at-risk by text.)_ ASK DAVI: needs a Twilio account, A2P 10DLC registration, and has a
+      interfaces (`src/mailbox/connector.ts`; built in `src/mailbox/clients.ts`) using Microsoft
+      Graph: delta queries for sync, subscriptions for push. Same encryption, same
+      revoke-and-delete rules, and the same shared tests (docs/SETUP.md §8b, "Adding a second mailbox
+      provider"). Facts checked on Microsoft Learn on 2026-10-19: - **Drafts from our own MIME, not `createReply`.** `createReply` lets Microsoft write its own
+      quoted reply; the app builds the reply in `src/mailbox/mime.ts`. Graph creates a draft from
+      base64 MIME (`POST /me/messages` with `Content-Type: text/plain`;
+      [user-post-messages](https://learn.microsoft.com/en-us/graph/api/user-post-messages)). - **Updating a draft takes JSON fields only** (subject, body, recipients…, only while
+      `isDraft`; [message-update](https://learn.microsoft.com/en-us/graph/api/message-update)),
+      so `updateDraft(raw)` needs a parts-based path (or delete and re-create from MIME). - **Sending a draft returns 202 with no body**
+      ([message-send](https://learn.microsoft.com/en-us/graph/api/message-send)), so
+      `sendDraft` returns the draft's own id, fetched with `Prefer: IdType="ImmutableId"`: that
+      id stays the same when the draft becomes the copy in Sent Items
+      ([outlook-immutable-id](https://learn.microsoft.com/en-us/graph/outlook-immutable-id)).
+      Every request needs the header. - **Subscriptions last at most 10,080 minutes** (under seven days) for Outlook messages and
+      must be renewed before then
+      ([resources/subscription](https://learn.microsoft.com/en-us/graph/api/resources/subscription)). - **A new refresh token on each refresh**: Microsoft says to keep the new one and delete the
+      old ([refresh-tokens](https://learn.microsoft.com/en-us/entra/identity-platform/refresh-tokens));
+      `MailboxClientOptions.onRefreshTokenRotated` is the hook for it. - **Permissions:** `Mail.ReadWrite` (drafts), `Mail.Send` (send), `offline_access` (a
+      refresh token), `User.Read` (the address). - **Publisher verification** needs a verified Microsoft AI Cloud Partner Program account and
+      a publisher domain that isn't `*.onmicrosoft.com`
+      ([publisher-verification-overview](https://learn.microsoft.com/en-us/entra/identity-platform/publisher-verification-overview)).
+- [x] **#50 Text me a summary.** _(Partly done 2026-10-09: opt-in, code-verified number, content-free new-lead alerts, quiet hours, caps — off until Twilio env is set. Done 2026-10-24 (branch `m12-sms-summary`): the morning summary by text and leads at risk by text, each its own opt-in on Settings → Text alerts, off by default — still off until Twilio env is set. Decisions: `docs/decisions/queue-and-sending.md` ("Text summaries and waiting-quote texts"); the privacy lines in `docs/notes/legal-m12-sms-summary.md`.)_ ASK DAVI: needs a Twilio account, A2P 10DLC registration, and has a
       per-message cost. Opt-in per owner, verified phone number, digest summary + leads-at-risk
       alerts by SMS. Content-free like push ("2 quote requests need you — open Squared Away").
       STOP/HELP handled. Owner can't reply to customers by SMS.

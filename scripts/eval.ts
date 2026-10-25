@@ -3,6 +3,8 @@
  *   pnpm eval                    score and compare with tests/evals/baseline.json
  *   pnpm eval --update-baseline  record these scores as the new baseline (commit it)
  *   pnpm eval --no-drafts        classification only (cheaper)
+ *   pnpm eval --model classify=<id>   run on another model (also draft= / voice=); only ids in
+ *                                     EVAL_MODEL_IDS (src/config/models.ts). Production is unchanged.
  * Needs ANTHROPIC_API_KEY. Costs a dollar or two per full run. Run it before a
  * release or after any prompt change — not on every PR (Davi, 2026-10-09).
  */
@@ -10,15 +12,36 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { EVAL_CASES } from "../tests/evals/cases";
 import { PROMPT_VERSIONS, runEvals } from "../tests/evals/run";
 import { regressions, table, type Baseline } from "../tests/evals/score";
+import { EvalArgsError, parseModelArgs } from "../tests/evals/model-args";
+import { setEvalModelOverrides } from "@/ai/client";
+import { models } from "../src/config/models";
 
 const BASELINE = "tests/evals/baseline.json";
 
 async function main() {
+  const argv = process.argv.slice(2);
+  const args = new Set(argv);
+  let overrides;
+  try {
+    overrides = parseModelArgs(argv);
+  } catch (err) {
+    if (err instanceof EvalArgsError) {
+      console.error(err.message);
+      process.exit(2);
+    }
+    throw err;
+  }
+  const trial = Object.keys(overrides).length > 0;
+  if (trial && args.has("--update-baseline")) {
+    console.error("The baseline is production's models: drop --model to update it.");
+    process.exit(2);
+  }
   if (!process.env.ANTHROPIC_API_KEY) {
     console.error("ANTHROPIC_API_KEY isn't set — evals call the real models.");
     process.exit(2);
   }
-  const args = new Set(process.argv.slice(2));
+  setEvalModelOverrides(overrides);
+  if (trial) console.log(`Trial models: ${JSON.stringify(overrides)}`);
   const base = JSON.parse(readFileSync(BASELINE, "utf8")) as Baseline;
   const run = await runEvals(EVAL_CASES, {
     drafts: !args.has("--no-drafts"),
@@ -36,11 +59,19 @@ async function main() {
     console.log(`revise ${id}: ${problems.join("; ")}`);
   for (const [id, problems] of Object.entries(run.purposeProblems))
     console.log(`purpose ${id}: ${problems.join("; ")}`);
+  for (const [id, problems] of Object.entries(run.followupProblems))
+    console.log(`followup ${id}: ${problems.join("; ")}`);
+  for (const [id, problems] of Object.entries(run.voiceProblems))
+    console.log(`voice ${id}: ${problems.join("; ")}`);
+  for (const [id, problems] of Object.entries(run.voiceExamplesProblems))
+    console.log(`voice samples ${id}: ${problems.join("; ")}`);
 
   if (args.has("--update-baseline")) {
     const next: Baseline = {
       recordedAt: new Date().toISOString(),
       promptVersions: PROMPT_VERSIONS,
+      // Check 31 P5: the record says which models it was measured on, too.
+      models: { ...models },
       scores: run.scores,
     };
     writeFileSync(BASELINE, `${JSON.stringify(next, null, 2)}\n`);

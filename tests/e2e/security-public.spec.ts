@@ -17,7 +17,16 @@ test("every response carries the security headers, HSTS included", async ({ requ
     expect(h["x-frame-options"], path).toBe("DENY");
     expect(h["x-content-type-options"], path).toBe("nosniff");
     expect(h["strict-transport-security"], path).toBe("max-age=31536000");
+    // Check 26 P9.
+    expect(h["cross-origin-opener-policy"], path).toBe("same-origin");
+    expect(h["x-powered-by"], path).toBeUndefined();
   }
+});
+
+test("robots.txt doesn't name /admin (Check 26 P9)", async ({ request }) => {
+  const res = await request.get("/robots.txt");
+  expect(res.status()).toBe(200);
+  expect(await res.text()).not.toMatch(/admin/i);
 });
 
 test("the test hook stays hidden without its secret, even with the e2e switch on", async ({

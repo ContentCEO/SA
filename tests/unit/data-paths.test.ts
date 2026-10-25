@@ -35,12 +35,27 @@ const FETCH_HOSTS: Record<string, string> = {
   "gmail.googleapis.com": "Google",
   "oauth2.googleapis.com": "Google",
   "openidconnect.googleapis.com": "Google",
+  // Check 26 P10: Google's public signing keys, to check Gmail push requests (sends nothing).
+  "www.googleapis.com": "Google",
   "accounts.google.com": "Google",
   // "**Resend** — delivers our emails to you …"
   "api.resend.com": "Resend",
   // "**Twilio** — only if you turn on text alerts: delivers texts to your own phone …"
   "api.twilio.com": "Twilio",
 };
+
+/**
+ * Plan #49 (Outlook, off unless FEATURE_OUTLOOK): Microsoft hosts, reached only for an owner who
+ * connected an Outlook mailbox. Their privacy-policy line is written word for word in
+ * docs/notes/legal-m12-outlook.md and goes into docs/privacy-policy.md before the switch is
+ * turned on (docs/SETUP.md §8b step 6); until then the test below accepts it from the note.
+ */
+const FETCH_HOSTS_AWAITING_POLICY: Record<string, string> = {
+  "graph.microsoft.com": "Microsoft",
+  "login.microsoftonline.com": "Microsoft",
+};
+const LEGAL_NOTE = "docs/notes/legal-m12-outlook.md";
+const ALLOWED_HOSTS: Record<string, string> = { ...FETCH_HOSTS, ...FETCH_HOSTS_AWAITING_POLICY };
 
 /**
  * Files that call fetch with a URL built at run time, each with why the host is covered. Their
@@ -54,6 +69,9 @@ const DYNAMIC_FETCH: Record<string, string> = {
   // "**Your browser's push service** (Google, Apple, Mozilla or Microsoft) — … an empty ping"
   "src/lib/web-push.ts": "push services only: isPushEndpoint (src/lib/push-endpoint.ts)",
   "src/components/app/app-badge.tsx": "same origin: /api/badge (a count, no content)",
+  "src/mailbox/outlook/http.ts":
+    "Microsoft: Graph and token endpoints from src/config/e2e.ts microsoftEndpoints (plan #49)",
+  "src/mailbox/outlook/connector.ts": "Microsoft: token exchange and the owner's /me (plan #49)",
 };
 /** Where the Google base URLs live (checked against FETCH_HOSTS too). */
 const URL_TABLES = ["src/config/e2e.ts"];
@@ -125,7 +143,7 @@ function scan(file: string, text: string): Finding[] {
       if (literal !== null && literal.startsWith("/")) return;
       const host = literal?.match(/^https?:\/\/([^/:?#]+)/)?.[1];
       if (host) {
-        if (!(host in FETCH_HOSTS)) add(`fetches ${host}`);
+        if (!(host in ALLOWED_HOSTS)) add(`fetches ${host}`);
         return;
       }
       if (!(file in DYNAMIC_FETCH)) add("calls fetch with a URL built at run time");
@@ -136,7 +154,7 @@ function scan(file: string, text: string): Finding[] {
     walk(sf, (n) => {
       if (ts.isStringLiteralLike(n) || ts.isTemplateHead(n)) {
         const host = n.text.match(/^https?:\/\/([^/:?#]+)/)?.[1];
-        if (host && !(host in FETCH_HOSTS)) add(`names host ${host}`);
+        if (host && !(host in ALLOWED_HOSTS)) add(`names host ${host}`);
       }
     });
   }
@@ -170,6 +188,13 @@ describe("email text goes only where the privacy policy says (Check 48 P7)", () 
     const policy = readFileSync("docs/privacy-policy.md", "utf8");
     for (const vendor of new Set(Object.values(FETCH_HOSTS))) {
       expect(policy, vendor).toContain(`**${vendor}** —`);
+    }
+    // Plan #49: in the policy already, or written word for word in the legal note for it.
+    const note = readFileSync(LEGAL_NOTE, "utf8");
+    for (const vendor of new Set(Object.values(FETCH_HOSTS_AWAITING_POLICY))) {
+      expect(policy.includes(`**${vendor}** —`) || note.includes(`**${vendor}** —`), vendor).toBe(
+        true,
+      );
     }
     for (const vendor of ["Anthropic", "Stripe", "Inngest", "Sentry", "Vercel"]) {
       expect(policy, vendor).toContain(`**${vendor}** —`);

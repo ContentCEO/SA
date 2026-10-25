@@ -1,5 +1,3 @@
-import { pricing, type PlanId } from "@/config/pricing";
-
 /**
  * A lower plan pauses extra Gmail addresses (Davi, 2026-10-16: "yes", and the owner picks which).
  * Pure rules; the database side is `mailbox-plan.ts`.
@@ -14,10 +12,12 @@ import { pricing, type PlanId } from "@/config/pricing";
 /** What the owner sees wherever a paused address's draft would send (and the server answers). */
 export const MAILBOX_PAUSED_LINE = "This Gmail address is paused on your plan.";
 
-/** Before a plan is chosen (the trial), a workspace gets one mailbox. */
-export function mailboxLimitFor(plan: PlanId | null | undefined): number {
-  return plan ? pricing.plans[plan].mailboxLimit : 1;
-}
+/**
+ * Before a plan is chosen (the trial), a workspace gets one mailbox. One definition, in
+ * pricing.ts (the referral merge found two); callers pass the plan that counts
+ * (`effectivePlan`), so a free referral month's higher plan covers more addresses.
+ */
+export { mailboxLimitFor } from "@/config/pricing";
 
 /** "Paused: your plan covers 1 Gmail address." — Settings → Your Gmail. */
 export function planPausedLine(limit: number): string {

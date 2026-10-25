@@ -5,24 +5,33 @@ import { z } from "zod";
 import { enqueue, foundMoneyDraftsRequested } from "@/jobs/client";
 import { claimFoundMoneyDrafts, hideFirstLook, markAnsweredByPhone } from "@/server/first-week";
 import { ReadOnlyError } from "@/server/lifecycle";
+import { draftLimitUntil } from "@/server/draft-limit-rules";
 import { hitLimit } from "@/server/rate-limit";
 import { requireOwner } from "@/server/session";
 
 /** Round 2 (FW E11): "I called them". No draft, no nudge; it counts as answered. */
 export async function answeredByPhoneAction(formData: FormData) {
   const { workspace } = await requireOwner();
+  // Check 10 P1: the Inbox carries the same button; back to the screen it was tapped on.
+  const onInbox = formData.get("back") === "inbox";
+  const back = (q: string) => (onInbox ? `/inbox?${q}` : `/queue?${q}`);
   const threadId = z.string().uuid().safeParse(formData.get("threadId"));
-  if (!threadId.success) redirect("/queue?error=unknown");
+  if (!threadId.success) redirect(back("error=unknown"));
   let r;
   try {
     r = await markAnsweredByPhone(workspace.id, threadId.data);
   } catch (err) {
-    if (err instanceof ReadOnlyError) redirect("/queue?error=readonly");
+    if (err instanceof ReadOnlyError) redirect(back("error=readonly"));
     throw err;
   }
   // Leads package: the same mark says "Done" on lead-site, voicemail and emergency cards.
   const done = formData.get("as") === "done" ? "done" : "called";
-  redirect(r === "marked" ? `/queue?done=${done}` : "/queue?error=unknown");
+  if (onInbox) redirect(back(r === "marked" ? `done=${done}` : "error=unknown"));
+  // Check 9 P5: land on the next card, not the top of the queue.
+  // (The card's own id when it was the last one, so the URL still changes.)
+  const next = z.string().uuid().safeParse(formData.get("nextThreadId"));
+  const t = r === "marked" && next.success ? next.data : threadId.data;
+  redirect(r === "marked" ? `/queue?done=${done}&t=${t}` : `/queue?error=unknown&t=${t}`);
 }
 
 /** Round 2 (FW D1): hide the "your last 30 days" card. */
@@ -35,7 +44,10 @@ export async function hideFirstLookAction() {
 /** Round 2 (FW D2): draft replies and nudges for the quotes that slipped. Drafts only. */
 export async function foundMoneyDraftsAction() {
   const { workspace } = await requireOwner();
-  if (!(await hitLimit("draft", workspace.id)).allowed) redirect("/queue?error=busy");
+  // Check 40 P3: one tap starts a batch of drafts, so it counts here, before the job is queued.
+  const limit = await hitLimit("draft", workspace.id);
+  if (!limit.allowed)
+    redirect(`/queue?error=draft_limit&until=${draftLimitUntil(limit.retryAfterSec)}`);
   let found;
   try {
     found = await claimFoundMoneyDrafts(workspace);

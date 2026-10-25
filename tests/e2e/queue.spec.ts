@@ -32,13 +32,23 @@ test("queue: needs-you first, then drafts; sending is off until setup, and it sa
   await expect(page.getByText("Customer says the leak came back.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Draft a reply" })).toBeVisible();
 
-  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  const card = page.getByRole("article", { name: "Priya · draft reply" });
   await expect(card).toContainText("Asked for the address and panel age.");
   await expect(card).toContainText("Panel upgrade quote."); // what they want, at a glance
   await expect(card).toContainText("Check you can do Tuesday morning.");
   // The Send button is replaced by an explanation, not hidden.
   await expect(card.getByRole("button", { name: "Send reply" })).toHaveCount(0);
   await expect(card.getByRole("note")).toContainText("Sending isn't on yet");
+  // Check 43 P3: who the customer sees as the sender, above To.
+  await expect(card).toContainText("From:");
+  // Check 43 P5: the subject the customer will see, above the reply.
+  await expect(card).toContainText("Subject: Re: Panel");
+  // Check 43 P4: no signature saved → one line under the first draft, linking to the field.
+  await expect(card).toContainText("No signature. Customers won't see your phone number.");
+  await expect(card.getByRole("link", { name: "Add a signature" })).toHaveAttribute(
+    "href",
+    "/settings/profile#signature",
+  );
 
   await card.getByRole("button", { name: "Show full draft" }).click();
   await expect(card).toContainText("how old is the current panel?");
@@ -76,6 +86,26 @@ test("queue: needs-you first, then drafts; sending is off until setup, and it sa
   expect(overflow).toBe(false);
 });
 
+test("Check 43 P4: an owner with a signature sees no 'No signature' line", async ({
+  page,
+  context,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await seedQueue(owner.mailboxId!);
+  await testDb
+    .insert(schema.businessProfiles)
+    .values({ workspaceId: owner.workspaceId, signature: "Davi\n978-555-0142" })
+    .onConflictDoUpdate({
+      target: schema.businessProfiles.workspaceId,
+      set: { signature: "Davi\n978-555-0142" },
+    });
+  await signInAs(context, owner);
+  await page.goto("/queue");
+  const card = page.getByRole("article", { name: "Priya · draft reply" });
+  await expect(card).toContainText("Asked for the address and panel age.");
+  await expect(page.getByText("No signature.")).toHaveCount(0);
+});
+
 test("hitting the send endpoint directly before setup gets a 403", async ({
   page,
   context,
@@ -108,10 +138,12 @@ test("after sending: the squared-away moment", async ({ page, context }) => {
   await signInAs(context, owner);
 
   await page.goto(`/queue?sent=${draft.id}`);
-  await expect(page.getByText("reply sent,")).toBeVisible();
-  await expect(page.getByText("squared away.")).toBeVisible();
+  await expect(page.getByTestId("sent-strip").getByText("reply sent,")).toBeVisible();
+  await expect(page.getByTestId("sent-strip").getByText("squared away.")).toBeVisible();
   // A quote: we say when we'll nudge if it goes quiet.
-  await expect(page.getByText(/I'll nudge Priya on \w+day if there's no reply\./)).toBeVisible();
+  await expect(
+    page.getByText(/A nudge for Priya will be ready \w+day morning if there's no reply\./),
+  ).toBeVisible();
 });
 
 test("a link from the morning summary lands on its card (plan #31)", async ({ page, context }) => {
@@ -163,7 +195,7 @@ test("a link from the morning summary lands on its card (plan #31)", async ({ pa
   // Draft cards carry the same anchor, and a hash change on the page moves to it. From the top,
   // with the hash set quietly and the event sent by hand, so the browser's own jump to the
   // fragment can't stand in for ScrollToThread.
-  const draftCard = page.getByRole("article", { name: "Draft reply to Priya" });
+  const draftCard = page.getByRole("article", { name: "Priya · draft reply" });
   await expect(draftCard).toHaveAttribute("id", `t-${quote.t.id}`);
   await page.evaluate((id) => {
     window.scrollTo(0, 0);
@@ -219,12 +251,12 @@ test("a refresh that keeps the link doesn't pull the owner back to the card", as
   // A summary link lands on the card…
   await page.goto(`/queue#t-${quote.t.id}`);
   const needsYou = page.getByRole("heading", { name: "Needs you" });
-  await expect(page.getByRole("article", { name: "Draft reply to Priya" })).toBeVisible();
+  await expect(page.getByRole("article", { name: "Priya · draft reply" })).toBeVisible();
   await settled(page);
   await expect(needsYou).not.toBeInViewport();
 
-  // …then the owner scrolls up and turns on Sunlight. That action re-renders the page in place
-  // (no redirect, `#t-…` still in the URL), which remounts ScrollToThread.
+  // …then the owner scrolls up and turns on Sunlight (a client-only switch since Check 8 P4;
+  // `#t-…` still in the URL). Nothing may scroll them back down to the card.
   await page.evaluate(() => window.scrollTo(0, 0));
   const sunlight = page.getByRole("button", { name: "Sunlight" });
   await expect(sunlight).toHaveAttribute("aria-pressed", "false");
@@ -249,7 +281,7 @@ test("a 'not on your queue' notice goes away after the next queue action", async
   // An unrelated queue action redirects to /queue?done=…, which keeps client state.
   await page.goto(gone);
   await expect(notice).toBeVisible();
-  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  const card = page.getByRole("article", { name: "Priya · draft reply" });
   await card.getByRole("button", { name: "Remind me later" }).click();
   await card.getByRole("button", { name: "After this job (3 hours)" }).click();
   await expect(page.getByText("Snoozed.")).toBeVisible();
@@ -263,7 +295,8 @@ test("a 'not on your queue' notice goes away after the next queue action", async
   await dana.getByRole("button", { name: "Remind me later" }).click();
   await dana.getByRole("button", { name: "After this job (3 hours)" }).click();
   await expect(dana).toHaveCount(0);
-  await expect(page).toHaveURL(/\/queue\?done=snoozed$/);
+  // Check 9 P5: the last card's own id rides along (`&t=`), so the URL changes.
+  await expect(page).toHaveURL(/\/queue\?done=snoozed&t=[0-9a-f-]{36}$/);
   await expect(page.getByText("Snoozed.")).toBeVisible();
   await expect(notice).toHaveCount(0);
 });
@@ -329,13 +362,14 @@ test("undo send: the window shows a countdown, and Undo puts the reply back", as
   await signInAs(context, owner);
 
   await page.goto(`/queue?sent=${draft.id}`);
-  await expect(page.getByText("reply on its way,")).toBeVisible();
+  // Next 16.4's route announcer repeats the heading after a client navigation; look in the strip.
+  await expect(page.getByTestId("sent-strip").getByText("reply on its way,")).toBeVisible();
   await expect(page.getByText(/Sending in \d+ seconds/)).toBeVisible();
   // While it's going, it's not in the queue to tap again.
-  await expect(page.getByRole("article", { name: "Draft reply to Priya" })).toHaveCount(0);
+  await expect(page.getByRole("article", { name: "Priya · draft reply" })).toHaveCount(0);
   await page.getByRole("button", { name: "Undo" }).click();
   await expect(page.getByText("Stopped. Nothing was sent")).toBeVisible();
-  await expect(page.getByRole("article", { name: "Draft reply to Priya" })).toBeVisible();
+  await expect(page.getByRole("article", { name: "Priya · draft reply" })).toBeVisible();
 });
 
 test("remind me later: the conversation leaves the queue until then", async ({ page, context }) => {
@@ -343,11 +377,11 @@ test("remind me later: the conversation leaves the queue until then", async ({ p
   await seedQueue(owner.mailboxId!);
   await signInAs(context, owner);
   await page.goto("/queue");
-  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  const card = page.getByRole("article", { name: "Priya · draft reply" });
   await card.getByRole("button", { name: "Remind me later" }).click();
   await card.getByRole("button", { name: "After this job (3 hours)" }).click();
   await expect(page.getByText("Snoozed.")).toBeVisible();
-  await expect(page.getByRole("article", { name: "Draft reply to Priya" })).toHaveCount(0);
+  await expect(page.getByRole("article", { name: "Priya · draft reply" })).toHaveCount(0);
 });
 
 test("review all ready: lists who and how it starts, then asks once before sending", async ({
@@ -392,7 +426,8 @@ test("review all ready: lists who and how it starts, then asks once before sendi
     gmailDraftId: "fake-draft-2",
     toAddress: "omar@x.com",
     subject: "Re: Time",
-    body: "Hi Omar,\nTuesday works — see you then.\nSam",
+    // Check 41 P2: no day named (a reply that confirms a visit day goes one at a time).
+    body: "Hi Omar,\nGot it — thanks for the update.\nSam",
     originalBody: "same",
     reason: "Confirms the time.",
     confidence: 95,
@@ -405,7 +440,7 @@ test("review all ready: lists who and how it starts, then asks once before sendi
   const list = page.getByRole("list", { name: "Replies to send" });
   await expect(list.getByRole("listitem")).toHaveCount(2);
   await expect(list).toContainText("To Omar");
-  await expect(list).toContainText("Tuesday works — see you then.");
+  await expect(list).toContainText("Got it — thanks for the update.");
   await expect(list).toContainText("What's the address, and how old is the current panel?");
 
   // Untick Scheduling → only the quote is left.
@@ -468,12 +503,12 @@ test("price memory: past prices for similar jobs, and a tap fills only the price
   await signInAs(context, owner);
 
   await page.goto("/queue");
-  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  const card = page.getByRole("article", { name: "Priya · draft reply" });
   const memory = card.getByRole("region", { name: "Last 2 similar quotes:" });
   await expect(memory).toBeVisible();
   await expect(memory).toContainText("Only you see these.");
   await expect(card.getByRole("button", { name: "Fill in price" })).toBeVisible();
-  await expect(card.getByRole("note")).toContainText("Fill in 3 gaps to send");
+  await expect(card.getByRole("button", { name: "Fill in 3 gaps to send" })).toBeVisible();
   await expect(card.getByRole("button", { name: "Send reply" })).toHaveCount(0);
   // Amounts are visible text only — never in an aria-label (A9).
   await expect(page.locator('[aria-label*="$"]')).toHaveCount(0);
@@ -538,9 +573,9 @@ test("a [name]-style blank is a gap: a chip, never Ready, Send reply only once f
   await signInAs(context, owner);
 
   await page.goto("/queue");
-  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  const card = page.getByRole("article", { name: "Priya · draft reply" });
   await expect(card.getByRole("button", { name: "Fill in their name" })).toBeVisible();
-  await expect(card.getByRole("note")).toContainText("Fill in 1 gap to send");
+  await expect(card.getByRole("button", { name: "Fill in 1 gap to send" })).toBeVisible();
   await expect(card.getByRole("button", { name: "Send reply" })).toHaveCount(0);
   await expect(card).not.toContainText("Ready");
 
@@ -561,7 +596,7 @@ test("a typical draft's Send reply is on the first screen of its card (outside r
   await signInAs(context, owner);
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto(`/queue?t=${quote.t.id}#t-${quote.t.id}`);
-  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  const card = page.getByRole("article", { name: "Priya · draft reply" });
   await expect(card).toBeVisible();
   await settled(page);
   const send = card.getByRole("button", { name: "Send reply" });
@@ -599,7 +634,7 @@ test("a first reply to a new lead says so and offers other ways to reply (replie
   await signInAs(context, owner);
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto(`/queue?t=${quote.t.id}#t-${quote.t.id}`);
-  const card = page.getByRole("article", { name: "Draft reply to Priya" });
+  const card = page.getByRole("article", { name: "Priya · draft reply" });
   await expect(card).toContainText("First reply: asks 1 question · they described the job");
   const others = card.getByRole("form", { name: "Other ways to reply" });
   for (const name of ["Ask a few questions", "Offer to come take a look", "Short and friendly"]) {
@@ -624,4 +659,43 @@ test("a first reply to a new lead says so and offers other ways to reply (replie
   await page.reload();
   await expect(card).toContainText("First reply: asks 1 question");
   await expect(card.getByRole("form", { name: "Other ways to reply" })).toHaveCount(0);
+});
+
+test("Edit puts the cursor at the end, keeps Send reply apart, and hides the tab bar while typing (Check 8 P7, P9)", async ({
+  page,
+  context,
+  isMobile,
+}) => {
+  const owner = await seedOwner({ mailbox: true, backfilled: true });
+  await setWorkspace(owner.workspaceId, {
+    status: "active",
+    setupPaidAt: new Date(),
+    setupPaidVia: "stripe",
+  });
+  await seedQueue(owner.mailboxId!);
+  await signInAs(context, owner);
+  await page.goto("/queue");
+  const card = page.getByRole("article", { name: "Priya · draft reply" });
+  // Check 8 P9: the To line and the card facts are 16px.
+  const toLine = card.locator("p", { hasText: "To:" }).first();
+  expect(
+    await toLine.evaluate((e) => parseFloat(getComputedStyle(e).fontSize)),
+  ).toBeGreaterThanOrEqual(16);
+
+  await card.getByRole("button", { name: "Edit", exact: true }).click();
+  const box = card.getByLabel("Your reply");
+  await expect(box).toBeFocused();
+  const sel = await box.evaluate((el: HTMLTextAreaElement) => [el.selectionStart, el.value.length]);
+  expect(sel[0]).toBe(sel[1]);
+  expect(sel[1]).toBeGreaterThan(0);
+  const boxBottom = (await box.boundingBox())!;
+  const send = (await card.getByRole("button", { name: "Send reply" }).boundingBox())!;
+  expect(send.y - (boxBottom.y + boxBottom.height)).toBeGreaterThanOrEqual(24);
+
+  if (isMobile) {
+    const tabBar = page.locator('nav[aria-label="Main"].fixed');
+    await expect(tabBar).toBeHidden();
+    await box.blur();
+    await expect(tabBar).toBeVisible();
+  }
 });

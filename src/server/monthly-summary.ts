@@ -14,8 +14,9 @@ import {
   workspaces,
 } from "@/db/schema";
 import { appUrl } from "@/lib/app-url";
-import { sendEmail, type EmailSender } from "@/lib/email";
+import { sendEmail, type EmailSender, emailErrorFields } from "@/lib/email";
 import { closeRateBetween } from "./activity";
+import { autopilotOnFor, digestStopHeaders } from "./digest";
 import { jobsAllowed } from "./lifecycle";
 import {
   buildMonthlySummary,
@@ -240,10 +241,15 @@ export async function sendMonthlySummaries(
         month.end,
         r.workspace.extraTrades ?? [],
       );
-      const email = buildMonthlySummary(stats, localMonthName(month.start, timeZone), {
-        activityUrl: appUrl("/activity"),
-        settingsUrl: appUrl("/settings/morning-email"),
-      });
+      const email = buildMonthlySummary(
+        stats,
+        localMonthName(month.start, timeZone),
+        {
+          activityUrl: appUrl("/activity"),
+          settingsUrl: appUrl("/settings/morning-email"),
+        },
+        { autopilotOn: await autopilotOnFor(r.workspace.id) },
+      );
       if (email.worthSending) {
         const outcome = await send({
           to: r.ownerEmail,
@@ -251,6 +257,8 @@ export async function sendMonthlySummaries(
           html: email.html,
           text: email.text,
           idempotencyKey: `monthly-${r.workspace.id}-${monthKey}`,
+          // Check 18 P9: Gmail's own Unsubscribe turns off the morning email this follows.
+          headers: digestStopHeaders(r.workspace.id),
         });
         if (outcome === "not_configured") {
           run.notConfigured = true;
@@ -292,7 +300,7 @@ export async function sendMonthlySummaries(
       run.failed++;
       console.error("monthly_summary_failed", {
         workspaceId: r.workspace.id,
-        error: err instanceof Error ? err.name : "unknown",
+        ...emailErrorFields(err),
       });
     }
   }

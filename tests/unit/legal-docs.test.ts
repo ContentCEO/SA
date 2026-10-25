@@ -175,7 +175,8 @@ describe("privacy policy", () => {
     expect(ACCESS_REMINDER_AFTER_MS).toBe(2 * 86_400_000);
     expect(policy).toContain("(plus one reminder two days later)");
     expect(policy).toContain("**Twilio**");
-    expect(policy).toContain("speech service (run by Google or Apple");
+    // Check 48 P5: desktop Edge sends speech to Microsoft.
+    expect(policy).toContain("speech service (run by Google, Apple or Microsoft");
     expect(policy).toContain(`You then have ${UNDO_WINDOW_SECONDS} seconds to undo it`);
   });
 
@@ -280,8 +281,10 @@ describe("privacy policy", () => {
     // Voice examples: names depend on the AI; our code scrubs the rest.
     expect(policy).not.toContain("placeholders in place of names");
     expect(policy).toContain(
-      "our own code also replaces any email addresses, phone numbers, prices and street addresses",
+      "our own code also replaces the email addresses, phone numbers, prices and street addresses it recognizes",
     );
+    // Check 24 P4: the scrub covers the whole stored description, not only the examples.
+    expect(policy).toContain("before we save the description and the examples");
   });
 
   it("round 2 (FW): the emails we send and the notices we get are all named", () => {
@@ -315,8 +318,13 @@ describe("privacy policy", () => {
     );
   });
 
-  it("says nothing about referrals while they are switched off", () => {
-    expect(policy).not.toMatch(/referr/i);
+  it("says nothing about referrals while they are switched off, but the Growth request's code", () => {
+    // Davi, 2026-10-16: a Growth request can carry a referral code (stored only while referrals
+    // are on). That one sentence is in now; the rest waits in docs/SETUP.md §6d step 3.
+    const GROWTH_REFERRAL_LINE =
+      "If you followed another Squared Away owner's referral link while we offer referrals, we keep that link's code with your request, so that owner can be thanked once if you become a Growth client.";
+    expect(policy.replace(/\s+/g, " ")).toContain(GROWTH_REFERRAL_LINE);
+    expect(policy.replace(/\s+/g, " ").replace(GROWTH_REFERRAL_LINE, "")).not.toMatch(/referr/i);
   });
 });
 

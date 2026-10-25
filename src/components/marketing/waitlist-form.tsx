@@ -9,7 +9,9 @@ import { useFocusFirstError } from "@/components/forms/use-focus-first-error";
 import { Button } from "@/components/ui/button";
 import { siteConfig } from "@/config/site";
 import { TRADE_OPTIONS } from "@/config/trades";
+import { ReferralField } from "@/components/marketing/referral-field";
 import { SourceFields } from "./source-fields";
+import { OtherTradeField } from "@/components/forms/other-trade-field";
 
 const trades = TRADE_OPTIONS.map((t) =>
   t.value === "other" ? { ...t, label: "Another trade" } : t,
@@ -42,7 +44,7 @@ function Joined() {
       ref={ref}
       role="status"
       tabIndex={-1}
-      className="sa-inverted flex scroll-mt-20 flex-col gap-3 rounded-2xl p-6 outline-none"
+      className="sa-inverted flex flex-col gap-3 rounded-2xl p-6 outline-none"
     >
       <p className="flex flex-col">
         <span className="sa-headline-serif text-3xl">thanks,</span>{" "}
@@ -59,8 +61,8 @@ function Joined() {
   );
 }
 
-/** `referralCode`: from a referral link (?ref=), only passed while referrals are switched on. */
-export function WaitlistForm({ referralCode }: { referralCode?: string } = {}) {
+/** `referrals`: referral links are switched on (decided by the server page). */
+export function WaitlistForm({ referrals = false }: { referrals?: boolean } = {}) {
   const [state, action] = useActionState<WaitlistState, FormData>(joinWaitlistAction, {
     status: "idle",
   });
@@ -109,6 +111,8 @@ export function WaitlistForm({ referralCode }: { referralCode?: string } = {}) {
           error={e.teamSize}
         />
       </div>
+      {/* Check 41 P4: say which trade "Another trade" is. */}
+      <OtherTradeField initialTrade={v.trade} defaultValue={v.tradeOther} error={e.tradeOther} />
       <TextField
         name="phone"
         type="tel"
@@ -126,14 +130,12 @@ export function WaitlistForm({ referralCode }: { referralCode?: string } = {}) {
         error={e.note}
         rows={3}
       />
-      {referralCode ? (
-        <input type="hidden" name="ref" defaultValue={v.ref ?? referralCode} />
-      ) : null}
+      {referrals ? <ReferralField kept={v.ref} /> : null}
       {/* Left empty by people; bots fill it in. */}
       <div aria-hidden className="absolute -left-[9999px] h-0 w-0 overflow-hidden">
         <label>
-          Website
-          <input name="website" tabIndex={-1} autoComplete="off" />
+          Leave this empty
+          <input name="sa_hp" tabIndex={-1} autoComplete="off" />
         </label>
       </div>
       <SourceFields />

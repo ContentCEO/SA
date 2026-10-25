@@ -123,6 +123,32 @@ export function googleEndpoints(env: Env = process.env): GoogleEndpoints {
   };
 }
 
+export type MicrosoftEndpoints = {
+  /** Microsoft Graph v1.0 (mail, subscriptions, the signed-in user). */
+  graph: string;
+  /** The Microsoft identity platform's token endpoint (code exchange and refresh). */
+  token: string;
+};
+
+const MICROSOFT: MicrosoftEndpoints = {
+  graph: "https://graph.microsoft.com/v1.0",
+  token: "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+};
+
+/**
+ * Plan #49: where the server talks to Microsoft (Outlook, off unless FEATURE_OUTLOOK). In e2e
+ * mode it is the local fakes server's Graph stand-in at `SA_E2E_MICROSOFT_BASE_URL`, which must be
+ * on this machine too: e2e mode without it throws instead of reaching the real Microsoft. The
+ * browser's sign-in page is not here, for the same reason as Google's (CSP form-action).
+ */
+export function microsoftEndpoints(env: Env = process.env): MicrosoftEndpoints {
+  if (!e2eMode(env)) return MICROSOFT;
+  if (!isLoopbackHttpUrl(env.SA_E2E_MICROSOFT_BASE_URL))
+    throw new Error("e2e mode needs SA_E2E_MICROSOFT_BASE_URL on this machine for Outlook.");
+  const base = trimSlash(env.SA_E2E_MICROSOFT_BASE_URL!);
+  return { graph: `${base}/graph/v1.0`, token: `${base}/token` };
+}
+
 export type AnthropicClientOptions = {
   baseURL?: string;
   apiKey?: string;
@@ -158,6 +184,15 @@ export function anthropicClientOptions(env: Env = process.env): AnthropicClientO
     ...(names.length ? { defaultHeaders: Object.fromEntries(names.map((n) => [n, null])) } : {}),
     maxRetries: 0,
   };
+}
+
+/**
+ * Check 47 P3 (CI fix 2026-10-19): the waitlist's mail-host lookup asks real DNS. In e2e mode it
+ * makes no lookup at all (the host is "unknown"), like every other outside service there, so a
+ * test's result never depends on who really hosts example domains' mail.
+ */
+export function mxLookupAllowed(env: Env = process.env): boolean {
+  return !e2eMode(env);
 }
 
 /** The test-hooks secret: only in e2e mode and only if it's at least 32 characters. */

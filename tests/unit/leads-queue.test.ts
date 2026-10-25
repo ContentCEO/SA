@@ -204,6 +204,12 @@ describe("Done and complaint check-ins (G5)", () => {
     await markAnsweredByPhone(workspaceId, t.id, { now: () => NOW });
     expect((await queueCounts(workspaceId, NOW)).needsYou).toBe(0);
     await inbound(t.id, { fromAddress: "voice-noreply@google.com", sentAt: hoursAgo(-0.1) });
+    // Check 10 P1: the call cleared the flag; the sorter raises it again for the new voicemail
+    // (owner rule "phone"), from that email's time.
+    await database
+      .update(threads)
+      .set({ needsOwner: true, needsOwnerSince: hoursAgo(-0.1) })
+      .where(eq(threads.id, t.id));
     expect((await queueCounts(workspaceId, hoursAgo(-0.2))).needsYou).toBe(1);
   });
 

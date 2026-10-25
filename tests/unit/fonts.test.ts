@@ -54,6 +54,21 @@ describe("self-hosted fonts", () => {
     }
   });
 
+  it("sunlight mode uses a full 100–900 face from the same file (Check 7 P2)", () => {
+    // Declared once, by the range instance; normal mode keeps its three single-weight faces.
+    expect(layout.match(/weight: "100 900"/g)).toHaveLength(1);
+    expect(layout).toContain('variable: "--font-inter-tight-range"');
+    expect(layout).toContain("${interTightRange.variable}");
+    for (const w of ["400", "600", "900"]) expect(layout).toContain(`weight: "${w}"`);
+    const theme = readFileSync(join(ROOT, "src/styles/theme.css"), "utf8");
+    const start = theme.indexOf(':root:has([data-contrast="high"]) {');
+    const block = theme.slice(start, theme.indexOf("}", start));
+    expect(start).toBeGreaterThan(-1);
+    expect(block).toContain("--font-sans: var(--font-inter-tight-range)");
+    expect(block).toContain("--font-heading: var(--font-inter-tight-range)");
+    expect(block).toContain("--font-inter-tight: var(--font-inter-tight-range)");
+  });
+
   it("keeps the CSS variables the theme reads", () => {
     expect(layout).toContain('variable: "--font-inter-tight"');
     expect(layout).toContain('variable: "--font-instrument-serif"');

@@ -5,7 +5,7 @@ import { db } from "@/db";
 import { activityLog, businessProfiles, mailboxes, users, workspaces } from "@/db/schema";
 import { appUrl } from "@/lib/app-url";
 import { brandEmail } from "@/lib/email-layout";
-import { sendEmail, type EmailSender } from "@/lib/email";
+import { sendEmail, type EmailSender, emailErrorFields } from "@/lib/email";
 import { queueCounts } from "./drafts";
 import { notPlanPaused } from "./mailbox-plan";
 import { stopHeaders, stopLinkFor } from "./trial-email-links";
@@ -164,7 +164,7 @@ export async function sendTrialEmails(
       console.error("trial_email_failed", {
         workspaceId: w.id,
         kind,
-        error: err instanceof Error ? err.name : "unknown",
+        ...emailErrorFields(err),
       });
     }
   }

@@ -10,18 +10,22 @@ import {
   type Category,
   type EmailInput,
   type ModelClassification,
-} from "./prompts/classify.v5";
+} from "./prompts/classify.v6";
 import { SENDER_NEEDS_ME_REASON } from "@/server/owner-sender-rule-rules";
 import {
   ASKS_IF_AI_REASON,
   asksIfAi,
   CO_REASON,
+  CONTRACT_RIGHTS_REASON,
+  mentionsContractRights,
   ELECTRICAL_HAZARD_REASON,
   GAS_SMELL_REASON,
   INJECTION_REASON,
   injectionCheck,
   looksLikePaymentChange,
-  looksMunicipal,
+  looksLikeUtility,
+  looksLikeUtilityScam,
+  readMunicipal,
   mentionsCarbonMonoxide,
   mentionsElectricalHazard,
   mentionsGasSmell,
@@ -30,10 +34,13 @@ import {
   mentionsWaterSmell,
   incentiveAmounts,
   PAYMENT_CHANGE_REASON,
+  UTILITY_DATE_REASON,
+  UTILITY_SCAM_REASON,
   WATER_SMELL_REASON,
 } from "./guards";
 import { isLeadCategory } from "@/config/categories";
 import { EMERGENCY_REASON } from "@/server/emergency-rules";
+import { followupSignalsOf } from "@/server/followup-rules";
 import { OUTSIDE_AREA_REASON, outsideArea } from "@/server/service-area-rules";
 import type { ChannelKind } from "@/server/channel-rules";
 
@@ -47,11 +54,57 @@ import type { ChannelKind } from "@/server/channel-rules";
  * was a quote the owner answered (see `quoteAccepted` in quote-rules).
  * Rows written before v3 simply lack the newer keys — read them as optional.
  */
-export type Extracted = ModelClassification["extracted"] & {
+export type Extracted = Omit<
+  ModelClassification["extracted"],
+  "wait_until" | "other_invoices" | "also_asks"
+> & {
+  /** Check 12 P2: the model's one-email list; merged into the invoice's `earlier_open` on store. */
+  other_invoices?: ModelClassification["extracted"]["other_invoices"];
+  /** Check 22 P9: the other kinds this email also is (a payment that asks for new work). */
+  also_asks?: ModelClassification["extracted"]["also_asks"];
+  /**
+   * Check 10 P7: the model failed twice and nothing was decided (the category is a placeholder
+   * so other code keeps working). Only ever present as `true`. Screens say "Couldn't sort".
+   */
+  unreadable?: boolean;
   municipal?: boolean;
+  /**
+   * Check 22 P8: only the sender's name says town office, and it writes from gmail.com or the
+   * like. Not the town for the hard rule; the card shows a caution. Only ever present as `true`.
+   */
+  municipal_name_only?: boolean;
+  /**
+   * Check 37 P3: from the electric company (Eversource, National Grid, Unitil, a town light
+   * plant). Never junk, never drafted by a job, never autopilot. Only ever present as `true`.
+   */
+  utility?: boolean;
+  /**
+   * Check 37 P3: a fake disconnect demand (`looksLikeUtilityScam`). Set with `payment_change`,
+   * so every payment-change stop applies; sticky for the thread. Only ever present as `true`.
+   */
+  utility_scam?: boolean;
   injection?: boolean;
   accepts_quote?: boolean;
   job_done?: boolean;
+  /**
+   * Check 21 P1: the email only thanks or acknowledges ("we'll look it over and get back to
+   * you"), asks nothing and needs no answer. Read from the model's
+   * `signals.acknowledgment_only`, which the next classify prompt version adds (until then it
+   * is never present). Only ever present as `true`.
+   */
+  acknowledgment_only?: boolean;
+  /**
+   * Check 38 P5: asks about cancelling the contract or their rights under it (the code's
+   * `mentionsContractRights`). Needs the owner; jobs never draft it; autopilot refuses it. Only
+   * ever present as `true`; not carried over.
+   */
+  contract_rights?: boolean;
+  /** Check 22 P9: someone booking work they don't pay for (the model's signal). `true` only. */
+  not_the_payer?: boolean;
+  /** Check 22 P9: a "pay now" bill that looks fake (the model's signal). `true` only. */
+  fake_bill?: boolean;
+  /** Check 22 P9: this email also asks for new work the owner would quote. `true` only. */
+  new_job_requested?: boolean;
   quote_accepted?: boolean;
   /** When the acceptance email was written (ISO), kept with `quote_accepted`. */
   quote_accepted_at?: string;
@@ -147,10 +200,28 @@ export type Extracted = ModelClassification["extracted"] & {
   /** Ideas H4: the sorter's own kind for this email, whatever kind the owner chose. */
   model_category?: Category;
   /**
+   * Check 22 P10 + 41 P6: a conversation with the owner's own people only (the crew list in
+   * Settings, another connected Gmail address of theirs, or their business domain). Never a
+   * customer, never drafted by a job, never autopilot. Only ever present as `true`.
+   */
+  crew?: boolean;
+  /**
    * Leads package: every owner rule this email matched, as fixed content-free keys
    * (`OWNER_RULE_KEYS`). Cards read these, never the reason text.
    */
   owner_rule_hits?: string[];
+  /**
+   * Check 12 P1: why the thread needs the owner, content-free (`needsOwnerCode`). Absent when it
+   * doesn't, and on rows sorted before it existed.
+   */
+  owner_code?: string;
+  /**
+   * Check 21 P2: the customer turns the quote down (hired someone else, holding off
+   * indefinitely, no longer needs it). Our "lost" guess; stops nudges. Only ever `true`.
+   */
+  declines_quote?: boolean;
+  /** Check 21 P2: the date (YYYY-MM-DD) they asked us to wait for. Becomes `threads.nudge_after`. */
+  wait_until?: string;
 };
 
 /** The owner-rule keys, in display order (leads package §1g). */
@@ -159,16 +230,22 @@ export const OWNER_RULE_KEYS = [
   "gas",
   "co_alarm",
   "electrical",
+  "utility_scam",
   "payment_change",
   "asks_if_ai",
+  "fake_bill",
   "complaint",
   "legal",
   "dispute",
+  "contract_rights",
   "vip",
   "sender_rule",
   "amount",
   "big_new_job",
+  "not_the_payer",
   "emergency",
+  "utility",
+  "municipal",
   "water_smell",
   "phone",
   "site",
@@ -179,21 +256,70 @@ export const OWNER_RULE_KEYS = [
 export type OwnerRuleKey = (typeof OWNER_RULE_KEYS)[number];
 /** Hits whose fixed text always wins over the model's own reason (no town or name rides along). */
 const FIXED_TEXT_HITS: readonly OwnerRuleKey[] = [
+  // Wave 2 (Check 38 P5, Check 22 P9): their plain reasons are the point; never the model's prose.
+  "contract_rights",
+  "fake_bill",
+  "not_the_payer",
   "emergency",
+  "utility",
+  "municipal",
   "water_smell",
   "phone",
   "site",
   "outside_area",
 ];
 
+/**
+ * Check 36 P4: why a town email needs the owner, built only from the stored permit facts (never
+ * the model's words or the town's name).
+ */
+export function municipalReason(permit: ModelClassification["extracted"]["permit"]): string {
+  if (permit?.result === "failed") {
+    const n = permit.corrections?.length ?? 0;
+    return n > 0
+      ? `From the town: inspection failed, ${n} thing${n === 1 ? "" : "s"} to fix.`
+      : "From the town: inspection failed.";
+  }
+  if (permit?.result === "scheduled") return "From the town: inspection scheduled.";
+  if (permit?.result === "passed") return "From the town: inspection passed.";
+  return "From the town.";
+}
+
 /** The needs-owner reasons a dispute or legal threat gets (when the model gave none). */
-export const LEGAL_REASON = "Mentions something legal.";
+export const LEGAL_REASON = "Mentions a lawyer, a lien or a claim.";
 export const DISPUTE_REASON = "Asks for money back or disputes a charge.";
+/** Check 10 P10: the legal reason's wording before 2026-10-17, still on stored rows. */
+export const OLD_LEGAL_REASON = "Mentions something legal.";
 /**
  * Threads sorted before `extracted.disputed` existed only kept the reason: one of these
- * still showing marks a dispute (treated as a complaint for review requests).
+ * still showing marks a dispute (treated as a complaint for review requests). Older wordings
+ * stay listed so rows stored with them are still recognised (Check 10 P10).
  */
-export const DISPUTE_REASONS: readonly string[] = [LEGAL_REASON, DISPUTE_REASON];
+export const DISPUTE_REASONS: readonly string[] = [LEGAL_REASON, DISPUTE_REASON, OLD_LEGAL_REASON];
+
+/** Check 22 P9: the model's fake-bill and not-the-payer signals, in plain words. */
+export const FAKE_BILL_REASON =
+  "This bill may be fake. Check with the supplier at a number you already have.";
+export const NOT_THE_PAYER_REASON = "Writes for someone else. Check who pays before booking.";
+
+/** Check 10 P10: plain, kind reasons with no dashes. */
+export const COMPLAINT_REASON = "A complaint. You'll want to answer this one yourself.";
+export const LOW_CONFIDENCE_REASON = "Not sure what this one is. Have a look.";
+export const UNREADABLE_REASON = "Couldn't sort this one. Have a look.";
+export const MODEL_FLAG_REASON = "The assistant thinks you should see this one.";
+
+/**
+ * Check 41 P5: the big-job reason. The backfill reads only 30 days, and seasonal trades hear
+ * from most customers once a year, so until a year of mail is read it never says "new".
+ */
+export const BIG_JOB_UNREAD_REASON =
+  "Big job from someone who hasn't written in the mail we've read so far.";
+export const BIG_JOB_NEW_REASON = "Big job from someone new.";
+export function bigJobReason(historyDays: number | undefined): string {
+  return historyDays !== undefined && historyDays >= 365
+    ? BIG_JOB_NEW_REASON
+    : BIG_JOB_UNREAD_REASON;
+}
 
 /** Below this, the owner looks. */
 export const CONFIDENCE_THRESHOLD = 0.6;
@@ -281,38 +407,71 @@ export function prepareBody(body: string): string {
  */
 export function applyOwnerRules(
   m: ModelClassification,
-  ctx: {
-    firstTimeSender: boolean;
-    senderIsVip: boolean;
-    /** Ideas H3: a company-wide "Always needs me" rule matched the sender or reply address. */
-    senderNeedsMe?: boolean;
-    amountThresholdDollars: number;
-    injection?: boolean;
-    /** Someone smells gas (round 2, TW B4): top priority, whatever the model said. */
-    gasSmell?: boolean;
-    /** A carbon monoxide alarm went off (Check 22 P4): like gas, its own reason. */
-    coAlarm?: boolean;
-    /** Electrical fire signs (Check 37 P1): like gas, its own reason. */
-    electricalHazard?: boolean;
-    /** Asks to pay a new account (round 2, A11). */
-    paymentChange?: boolean;
-    /** Check 22 P3: lawyers, liens, small claims found in code anywhere in the email. */
-    legalThreat?: boolean;
-    /** Check 48 P1: asks whether a person or an AI is answering. */
-    asksIfAi?: boolean;
-    /**
-     * Check 39 P2 + Check 38 P3: amounts that never count toward the limit (whole dollars): a
-     * rebate's, a loan's or a tax credit's, and ones the owner already wrote on this
-     * conversation (a homeowner repeating the contract total isn't new money).
-     */
-    ignoreAmounts?: readonly number[];
-    /** The water smells like rotten eggs, nothing says gas (Check 36 P1). */
-    waterSmell?: boolean;
-    /** Leads package: the email came through a phone service or a lead website (code-decided). */
-    channel?: { kind: ChannelKind; name: string } | null;
-    /** Leads package (B9): a quote request from a town that isn't on the owner's list. */
-    outsideArea?: boolean;
-  },
+  ctx: OwnerRuleContext,
+): Pick<Classification, "needsOwner" | "needsOwnerReason" | "priority"> & {
+  hits: OwnerRuleKey[];
+  /**
+   * Check 12 P1: WHY the thread needs the owner, as a content-free code: the rule whose reason is
+   * shown, else "model" (the model's own call). Null when it doesn't need the owner. Stored as
+   * `extracted.owner_code`; the follow-up scan reads it with `owner_rule_hits`.
+   */
+  needsOwnerCode: OwnerRuleKey | null;
+} {
+  const r = ownerRules(m, ctx);
+  return { ...r, needsOwnerCode: r.needsOwner ? (r.hits[0] ?? "model") : null };
+}
+
+type OwnerRuleContext = {
+  /** Check 22 P7: "unknown" (a lead site or voicemail robot) counts as first time. */
+  firstTimeSender: boolean | "unknown";
+  /**
+   * Check 41 P5: days of mail we have for this mailbox (now minus its oldest synced email).
+   * Under a year, "first time" only means "not in the mail we've read", so the big-job
+   * reason says so. Unknown counts as under a year.
+   */
+  historyDays?: number;
+  senderIsVip: boolean;
+  /** Ideas H3: a company-wide "Always needs me" rule matched the sender or reply address. */
+  senderNeedsMe?: boolean;
+  amountThresholdDollars: number;
+  injection?: boolean;
+  /** Someone smells gas (round 2, TW B4): top priority, whatever the model said. */
+  gasSmell?: boolean;
+  /** A carbon monoxide alarm went off (Check 22 P4): like gas, its own reason. */
+  coAlarm?: boolean;
+  /** Electrical fire signs (Check 37 P1): like gas, its own reason. */
+  electricalHazard?: boolean;
+  /** Asks to pay a new account (round 2, A11). */
+  paymentChange?: boolean;
+  /** Check 37 P3: a fake electric-company disconnect demand. Like a payment change. */
+  utilityScam?: boolean;
+  /** Check 37 P3: from the electric company and the email carries a date. */
+  utilityDate?: boolean;
+  /** Check 36 P4: from the town (code or the model's signal). */
+  municipal?: boolean;
+  /** Check 22 P3: lawyers, liens, small claims found in code anywhere in the email. */
+  legalThreat?: boolean;
+  /** Check 48 P1: asks whether a person or an AI is answering. */
+  asksIfAi?: boolean;
+  /** Check 38 P5: asks about cancelling the contract or their rights under it (code). */
+  contractRights?: boolean;
+  /**
+   * Check 39 P2 + Check 38 P3: amounts that never count toward the limit (whole dollars): a
+   * rebate's, a loan's or a tax credit's, and ones the owner already wrote on this
+   * conversation (a homeowner repeating the contract total isn't new money).
+   */
+  ignoreAmounts?: readonly number[];
+  /** The water smells like rotten eggs, nothing says gas (Check 36 P1). */
+  waterSmell?: boolean;
+  /** Leads package: the email came through a phone service or a lead website (code-decided). */
+  channel?: { kind: ChannelKind; name: string } | null;
+  /** Leads package (B9): a quote request from a town that isn't on the owner's list. */
+  outsideArea?: boolean;
+};
+
+function ownerRules(
+  m: ModelClassification,
+  ctx: OwnerRuleContext,
 ): Pick<Classification, "needsOwner" | "needsOwnerReason" | "priority"> & { hits: OwnerRuleKey[] } {
   // Never let the model's own words explain away an email that tried to instruct it.
   if (ctx.injection) {
@@ -343,6 +502,13 @@ export function applyOwnerRules(
       needsOwnerReason: ELECTRICAL_HAZARD_REASON,
       priority: "high",
       hits: ["electrical"],
+    };
+  if (ctx.utilityScam)
+    return {
+      needsOwner: true,
+      needsOwnerReason: UTILITY_SCAM_REASON,
+      priority: "high",
+      hits: ["utility_scam", "payment_change"],
     };
   if (ctx.paymentChange)
     return {
@@ -377,42 +543,54 @@ export function applyOwnerRules(
       : m.category !== "noise" && m.category !== "supplier_vendor");
   const emergency = m.extracted.urgency === "emergency" && isLeadCategory(m.category);
   const reasons: [boolean, OwnerRuleKey, string][] = [
-    [m.category === "complaint", "complaint", "Complaint — you'll want to handle this yourself."],
+    // Check 22 P9: a "pay now" bill that looks fake is money at risk.
+    [
+      m.signals.looks_like_fake_bill === true && m.category !== "noise",
+      "fake_bill",
+      FAKE_BILL_REASON,
+    ],
+    [m.category === "complaint", "complaint", COMPLAINT_REASON],
     [m.signals.mentions_legal || !!ctx.legalThreat, "legal", LEGAL_REASON],
     [m.signals.mentions_refund_or_dispute, "dispute", DISPUTE_REASON],
+    // Check 38 P5: cancelling the contract, the deposit back, the Guaranty Fund.
+    [!!ctx.contractRights, "contract_rights", CONTRACT_RIGHTS_REASON],
     [ctx.senderIsVip, "vip", "From someone on your VIP list."],
     [ctx.senderNeedsMe === true, "sender_rule", SENDER_NEEDS_ME_REASON],
     // Check 38 P3: a new customer's big job reads better than "Mentions more than $2,500".
     [
-      ctx.firstTimeSender && m.signals.large_request,
+      ctx.firstTimeSender !== false && m.signals.large_request,
       "big_new_job",
-      "New customer asking about a big job.",
+      bigJobReason(ctx.historyDays),
     ],
     [
       overThreshold,
       "amount",
       `Mentions more than $${ctx.amountThresholdDollars.toLocaleString("en-US")}.`,
     ],
+    // Check 22 P9: a tenant, a realtor, a neighbor booking work someone else pays for.
+    [
+      m.signals.not_the_payer === true && isLeadCategory(m.category),
+      "not_the_payer",
+      NOT_THE_PAYER_REASON,
+    ],
     [emergency, "emergency", EMERGENCY_REASON],
+    [!!ctx.utilityDate && m.category !== "noise", "utility", UTILITY_DATE_REASON],
+    [!!ctx.municipal && m.category !== "noise", "municipal", municipalReason(m.extracted.permit)],
     [!!ctx.waterSmell, "water_smell", WATER_SMELL_REASON],
     [
       channelLead && channel?.kind !== "site",
       "phone",
       channel?.kind === "phone_text"
-        ? "Text message — text them back from your phone."
-        : "Voicemail — call them back.",
+        ? "Text message. Text them back from your phone."
+        : "Voicemail. Call them back.",
     ],
     [
       channelLead && channel?.kind === "site",
       "site",
-      `Came through ${channel?.name ?? "a lead website"} — answer them there.`,
+      `Came through ${channel?.name ?? "a lead website"}. Answer them there.`,
     ],
     [!!ctx.outsideArea && m.category === "quote_request", "outside_area", OUTSIDE_AREA_REASON],
-    [
-      confidence < CONFIDENCE_THRESHOLD,
-      "low_confidence",
-      "Not sure what this one is — take a look.",
-    ],
+    [confidence < CONFIDENCE_THRESHOLD, "low_confidence", LOW_CONFIDENCE_REASON],
   ];
   const matched = reasons.filter(([when]) => when);
   const hit = matched[0];
@@ -433,18 +611,27 @@ export function applyOwnerRules(
       needsOwnerReason:
         !fixed && m.needs_owner && m.needs_owner_reason ? m.needs_owner_reason : hit[2],
       priority:
-        m.category === "complaint" || m.signals.mentions_legal || ctx.legalThreat || emergency
+        m.category === "complaint" ||
+        m.signals.mentions_legal ||
+        ctx.legalThreat ||
+        emergency ||
+        // Check 22 P9: a fake bill is money at risk.
+        matched.some(([, key]) => key === "fake_bill")
           ? "high"
           : // Check 36 P1: smelly water is worth a call, not a 2am emergency.
             hit[1] === "water_smell"
             ? "normal"
-            : m.priority,
+            : // Check 36 P4: a passed inspection is good news, worth a look, not urgent.
+              matched.some(([, key]) => key === "municipal") &&
+                m.extracted.permit?.result === "passed"
+              ? "normal"
+              : m.priority,
       hits,
     };
   }
   return {
     needsOwner: m.needs_owner,
-    needsOwnerReason: m.needs_owner ? (m.needs_owner_reason ?? "Take a look at this one.") : null,
+    needsOwnerReason: m.needs_owner ? (m.needs_owner_reason ?? MODEL_FLAG_REASON) : null,
     priority: m.priority,
     hits,
   };
@@ -454,7 +641,7 @@ const UNREADABLE: Omit<Classification, "summary"> = {
   category: "customer_question",
   priority: "normal",
   needsOwner: true,
-  needsOwnerReason: "Couldn't sort this one automatically — take a look.",
+  needsOwnerReason: UNREADABLE_REASON,
   confidence: 0,
   extracted: {
     service_requested: null,
@@ -464,7 +651,9 @@ const UNREADABLE: Omit<Classification, "summary"> = {
     urgency: "normal",
     permit: null,
     invoice: null,
+    other_invoices: [],
     invoice_direction: "unknown",
+    also_asks: [],
   },
   unreadable: true,
 };
@@ -477,13 +666,21 @@ export type ClassifyOpts = {
   /** Older unsorted emails on the thread: checked in code, never sent to the model (B3). */
   alsoCheck?: string[];
   /** Marks the thread already carries, kept whatever this email says (B3). */
-  sticky?: { injection?: boolean; paymentChange?: boolean; asksIfAi?: boolean };
+  sticky?: {
+    injection?: boolean;
+    paymentChange?: boolean;
+    asksIfAi?: boolean;
+    /** Check 37 P3: the thread already had a fake disconnect demand. */
+    utilityScam?: boolean;
+  };
   /** Leads package: where the email came from, decided in code from the sender. */
   channel?: { kind: ChannelKind; name: string } | null;
   /** Leads package (B9): the owner's towns; empty = no check. */
   serviceTowns?: readonly string[];
   /** Check 38 P3: dollar amounts the owner already wrote on this conversation. */
   ownerAmounts?: readonly number[];
+  /** Check 41 P5: days of mail we have for this mailbox (`applyOwnerRules`' `historyDays`). */
+  historyDays?: number;
   /**
    * Check 22 P5: the thread is a supplier's (its stored bills are owed BY the business), so
    * "our bank details changed" counts even without an explicit ask.
@@ -538,12 +735,24 @@ function codeChecks(email: EmailInput, opts: Pick<ClassifyOpts, "alsoCheck" | "s
   const asksAi = asksIfAi(checked) || opts.sticky?.asksIfAi === true;
   // Check 22 P3: lawyers, liens, small claims — anywhere in the email, in code.
   const legalThreat = mentionsLegalThreat(checked) || mentionsLegalThreat(fullText);
-  const municipalSender = looksMunicipal(email.fromAddress, email.fromName);
+  // Check 38 P5: cancelling the contract, the deposit back — the newest part and older unsorted
+  // emails (quoted text is often the owner's own contract wording).
+  const contractRights = mentionsContractRights(checked);
+  // Check 37 P3: the electric company first (a light plant on .gov isn't the building office).
+  const utilitySender = looksLikeUtility(email.fromAddress, email.fromName);
+  const utilityScam =
+    looksLikeUtilityScam(checked, email.fromAddress, email.fromName) ||
+    looksLikeUtilityScam(fullText, email.fromAddress, email.fromName) ||
+    opts.sticky?.utilityScam === true;
+  const municipalRead = readMunicipal(email.fromAddress, email.fromName, email.subject);
+  const municipalSender = !utilitySender && municipalRead.municipal;
+  const municipalNameOnly = municipalRead.nameOnlyWebmail;
   return {
     body,
     earlier,
     quoted,
     legalThreat,
+    contractRights,
     asksAi,
     allText,
     checked,
@@ -556,6 +765,9 @@ function codeChecks(email: EmailInput, opts: Pick<ClassifyOpts, "alsoCheck" | "s
     waterInText,
     paymentChangeInText,
     municipalSender,
+    municipalNameOnly,
+    utilitySender,
+    utilityScam,
   };
 }
 
@@ -572,7 +784,8 @@ function codeFallback(email: EmailInput, c: ReturnType<typeof codeChecks>): Clas
     ...(c.gasInText ? (["gas"] as const) : []),
     ...(co ? (["co_alarm"] as const) : []),
     ...(electrical ? (["electrical"] as const) : []),
-    ...(c.paymentChangeInText ? (["payment_change"] as const) : []),
+    ...(c.utilityScam ? (["utility_scam"] as const) : []),
+    ...(c.paymentChangeInText || c.utilityScam ? (["payment_change"] as const) : []),
   ];
   return {
     ...UNREADABLE,
@@ -584,22 +797,32 @@ function codeFallback(email: EmailInput, c: ReturnType<typeof codeChecks>): Clas
           ? { needsOwnerReason: CO_REASON }
           : electrical
             ? { needsOwnerReason: ELECTRICAL_HAZARD_REASON }
-            : c.paymentChangeInText
-              ? { needsOwnerReason: PAYMENT_CHANGE_REASON }
-              : {}),
-    ...(safety || c.paymentChangeInText ? { priority: "high" as const } : {}),
+            : c.utilityScam
+              ? { needsOwnerReason: UTILITY_SCAM_REASON }
+              : c.paymentChangeInText
+                ? { needsOwnerReason: PAYMENT_CHANGE_REASON }
+                : {}),
+    ...(safety || c.paymentChangeInText || c.utilityScam ? { priority: "high" as const } : {}),
     extracted: {
       ...UNREADABLE.extracted,
+      // Check 10 P7: nothing was decided by the model; screens say "Couldn't sort".
+      unreadable: true,
       ...(safety ? { urgency: "emergency" as const } : {}),
       ...(c.injection ? { injection: true, injection_reasons: c.injectionReasons } : {}),
       ...(c.municipalSender ? { municipal: true } : {}),
+      ...(c.municipalNameOnly ? { municipal_name_only: true } : {}),
       ...(c.gasInText ? { gas_smell: true } : {}),
       ...(co ? { co_alarm: true } : {}),
       ...(electrical ? { electrical_hazard: true } : {}),
       ...(c.waterInText ? { water_smell: true } : {}),
-      ...(c.paymentChangeInText ? { payment_change: true } : {}),
+      ...(c.paymentChangeInText || c.utilityScam ? { payment_change: true } : {}),
+      ...(c.utilityScam ? { utility_scam: true } : {}),
+      ...(c.utilitySender ? { utility: true } : {}),
       ...(c.asksAi ? { asks_if_ai: true } : {}),
+      ...(c.contractRights ? { contract_rights: true } : {}),
       ...(hits.length ? { owner_rule_hits: hits } : {}),
+      // Check 12 P1: unreadable always needs the owner; the first code check, else the model's.
+      owner_code: hits[0] ?? "model",
     },
     summary: email.subject ? `Email: ${email.subject}` : "Email with no subject.",
   };
@@ -617,7 +840,14 @@ export function codeOnlyClassification(
   opts: Pick<ClassifyOpts, "alsoCheck" | "sticky"> = {},
 ): Classification | null {
   const c = codeChecks(email, opts);
-  if (!(c.gasInText || c.coInText || c.electricalInText || c.paymentChangeInText || c.injection))
+  if (!(
+    c.gasInText ||
+    c.coInText ||
+    c.electricalInText ||
+    c.paymentChangeInText ||
+    c.utilityScam ||
+    c.injection
+  ))
     return null;
   return codeFallback(email, c);
 }
@@ -638,6 +868,7 @@ export async function classifyEmail(
     earlier,
     quoted,
     legalThreat,
+    contractRights,
     asksAi,
     allText,
     checked,
@@ -648,11 +879,16 @@ export async function classifyEmail(
     waterInText,
     paymentChangeInText,
     municipalSender,
+    municipalNameOnly,
+    utilitySender,
+    utilityScam,
   } = checks;
   const preCheck = { flagged: checks.injection };
   const request = {
     workspaceId,
     role: "classify" as const,
+    // Check 29 P4: sorting stops at its share of the day's limit; drafts and voice keep the rest.
+    purpose: "sort" as const,
     promptVersion: CLASSIFY_PROMPT_VERSION,
     maxTokens: 1024,
     system: [
@@ -669,7 +905,9 @@ export async function classifyEmail(
   if (!result) return codeFallback(email, checks);
 
   const injection = preCheck.flagged || result.signals.tries_to_instruct_assistant;
-  const municipal = municipalSender || result.signals.from_building_department;
+  // Check 37 P3: the electric company is never "the town", whatever the model says (a light
+  // plant is a town department, but its job emails are the utility's).
+  const municipal = !utilitySender && (municipalSender || result.signals.from_building_department);
   // Check 36 P1: when the code read sulfur WATER, the model's gas signal only wins if the email
   // itself names gas or propane somewhere.
   const gasSmell =
@@ -696,12 +934,28 @@ export async function classifyEmail(
     legalThreat ||
     (result.signals.mentions_legal &&
       !(result.signals.routine_paperwork && !mentionsRealLegal(allText)));
+  // Building departments are never noise. Check 37 P3: nor is the electric company (scheduling
+  // when it names a date).
+  const category: Category =
+    municipal && result.category === "noise"
+      ? result.extracted.permit?.result === "scheduled"
+        ? "scheduling"
+        : "customer_question"
+      : utilitySender && result.category === "noise"
+        ? result.extracted.dates.length > 0
+          ? "scheduling"
+          : "customer_question"
+        : result.category;
+  // The owner rules read the kind the email ends up with (Check 37 P3: a utility's job date
+  // the model called junk still needs the owner).
   const model: ModelClassification = {
     ...result,
+    category,
     signals: { ...result.signals, mentions_legal: legal },
   };
   const ownerCtx = {
     firstTimeSender: email.firstTimeSender,
+    historyDays: opts.historyDays,
     senderIsVip: opts.senderIsVip,
     senderNeedsMe: opts.senderNeedsMe,
     amountThresholdDollars: business.amountThresholdDollars,
@@ -710,8 +964,12 @@ export async function classifyEmail(
     coAlarm,
     electricalHazard,
     paymentChange,
+    utilityScam,
+    utilityDate: utilitySender && result.extracted.dates.length > 0,
+    municipal,
     legalThreat,
     asksIfAi: asksAi,
+    contractRights,
     ignoreAmounts: [...incentiveAmounts(allText), ...(opts.ownerAmounts ?? [])],
     waterSmell,
     channel: opts.channel ?? null,
@@ -722,27 +980,25 @@ export async function classifyEmail(
         towns: opts.serviceTowns ?? [],
       }) !== null,
   };
-  const { hits, ...rules } = applyOwnerRules(model, ownerCtx);
+  const { hits, needsOwnerCode, ...rules } = applyOwnerRules(model, ownerCtx);
+  // Check 21 P2: `wait_until` is stored only as the checked date `followupSignalsOf` gives.
+  const { wait_until: rawWaitUntil, ...modelFacts } = result.extracted;
+  void rawWaitUntil;
   // Check 22 P2: what the rules say with the attack mark left out, kept so the owner's "This is
   // a normal email" can put the card right without another model call.
   const withoutInjection = injection
     ? applyOwnerRules(model, { ...ownerCtx, injection: false })
     : null;
-  // Building departments are never noise.
-  const category: Category =
-    municipal && result.category === "noise"
-      ? result.extracted.permit?.result === "scheduled"
-        ? "scheduling"
-        : "customer_question"
-      : result.category;
   return {
     category,
     ...rules,
-    ...(municipal && rules.priority === "low" ? { priority: "normal" as const } : {}),
+    ...((municipal || utilitySender) && rules.priority === "low"
+      ? { priority: "normal" as const }
+      : {}),
     summary: result.summary.trim().slice(0, 300),
     confidence: Math.max(0, Math.min(1, result.confidence)),
     extracted: {
-      ...result.extracted,
+      ...modelFacts,
       ...(gasSmell || coAlarm || electricalHazard ? { urgency: "emergency" as const } : {}),
       ...(injection
         ? {
@@ -764,18 +1020,32 @@ export async function classifyEmail(
           }
         : {}),
       ...(municipal ? { municipal: true } : {}),
+      ...(municipalNameOnly ? { municipal_name_only: true } : {}),
       ...(gasSmell ? { gas_smell: true } : {}),
       ...(coAlarm ? { co_alarm: true } : {}),
       ...(electricalHazard ? { electrical_hazard: true } : {}),
       ...(waterSmell ? { water_smell: true } : {}),
-      ...(paymentChange ? { payment_change: true } : {}),
+      ...(paymentChange || utilityScam ? { payment_change: true } : {}),
+      ...(utilityScam ? { utility_scam: true } : {}),
+      ...(utilitySender ? { utility: true } : {}),
       ...(asksAi ? { asks_if_ai: true } : {}),
+      // Check 38 P5: the code's contract-rights read (jobs never draft it; autopilot refuses).
+      ...(contractRights ? { contract_rights: true } : {}),
+      // Check 22 P9: the model's own reads, kept as marks (the owner rules used them above).
+      ...(result.signals.not_the_payer === true ? { not_the_payer: true } : {}),
+      ...(result.signals.looks_like_fake_bill === true ? { fake_bill: true } : {}),
+      ...(result.signals.new_job_requested === true ? { new_job_requested: true } : {}),
       // Signals only — they never change needs_owner (applyOwnerRules ignores them).
       ...(result.signals.accepts_quote ? { accepts_quote: true } : {}),
       ...(result.signals.job_done ? { job_done: true } : {}),
+      // Check 21 P1: "thanks, got it, we'll get back to you" (classify.v6 carries the signal).
+      ...(result.signals.acknowledgment_only === true ? { acknowledgment_only: true } : {}),
       ...(result.signals.routine_paperwork ? { routine_paperwork: true } : {}),
       ...(result.signals.mentions_refund_or_dispute || legal ? { disputed: true } : {}),
       owner_rule_hits: hits,
+      ...(needsOwnerCode ? { owner_code: needsOwnerCode } : {}),
+      // Check 21 P2: read loosely, so a classify version without them simply has none.
+      ...followupSignalsOf(result, opts.now ?? new Date()),
     },
     unreadable: false,
   };

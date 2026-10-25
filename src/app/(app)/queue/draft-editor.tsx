@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useRef, useState, useTransition } from "react";
+import { useActionState, useEffect, useRef, useState, useTransition } from "react";
 import { useFormStatus } from "react-dom";
 import { editorGapsLeft, findGaps, fromEditorText, toEditorText } from "@/ai/gaps";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,7 @@ import { clearKept, writeKept } from "@/lib/kept-text";
 import { addNeverSayAction } from "../settings/wording-actions";
 import { editorAction, type EditorState } from "./actions";
 import { SendButton } from "./send-button";
+import { CardTargets } from "./focus";
 
 function SaveButton() {
   const { pending } = useFormStatus();
@@ -41,6 +42,9 @@ export const keptEditKey = (draftId: string) => `edit:${draftId}`;
  */
 export function DraftEditor(p: {
   draftId: string;
+  /** Check 9 P5: this card, and the one a send lands on. */
+  threadId: string;
+  nextThreadId?: string | null;
   /** The draft's text as the card shows it (gaps the owner filled on the card included). */
   body: string;
   /** What this tab kept from an earlier visit, if anything (already checked against seenHash). */
@@ -73,6 +77,16 @@ export function DraftEditor(p: {
   };
 
   const editor = useRef<HTMLTextAreaElement>(null);
+  // Check 8 P7: open with the cursor at the end (what's typed adds to the reply, not before
+  // "Hey Dana"), and the end of the text in view.
+  useEffect(() => {
+    const el = editor.current;
+    if (!el) return;
+    el.focus({ preventScroll: true });
+    el.setSelectionRange(el.value.length, el.value.length);
+    el.scrollTop = el.scrollHeight;
+    el.scrollIntoView({ block: "nearest" });
+  }, []);
   const [neverSayNote, setNeverSayNote] = useState<string | null>(null);
   const [savingPhrase, startSaving] = useTransition();
   const neverSay = () => {
@@ -88,6 +102,7 @@ export function DraftEditor(p: {
   return (
     <form action={formAction} className="flex flex-col gap-3">
       <input type="hidden" name="draftId" value={p.draftId} />
+      <CardTargets threadId={p.threadId} next={p.nextThreadId} />
       <input type="hidden" name="opened" value={opened} />
       <input type="hidden" name="seen" value={opened} />
       {p.toAddress ? <input type="hidden" name="seenTo" value={p.toAddress} /> : null}
@@ -107,7 +122,6 @@ export function DraftEditor(p: {
           value={text}
           onChange={(e) => change(e.target.value)}
           rows={10}
-          autoFocus
           className="w-full rounded-lg border border-input bg-paper px-3 py-2.5 text-base"
         />
       </label>
@@ -125,6 +139,8 @@ export function DraftEditor(p: {
           />
         </label>
       ) : null}
+      {/* Check 8 P7: a clear gap and a line between the box and Send reply (gloves). */}
+      <div aria-hidden className="mt-3 border-t" />
       {p.canSend ? (
         gapsLeft.length ? (
           <div

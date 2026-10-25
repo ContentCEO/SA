@@ -4,6 +4,7 @@ import { DrizzleQueryError } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { priceHistory } from "@/db/schema";
 import { scrubEvent, sentryOptions } from "@/lib/sentry";
+import { SafeQueryError } from "@/db";
 import { createTestDb } from "../support/db";
 
 describe("error alerts never carry customer details", () => {
@@ -93,8 +94,17 @@ describe("error alerts never carry customer details", () => {
         () => null,
         (e: unknown) => e,
       );
-    expect(err).toBeInstanceOf(DrizzleQueryError);
-    const query = err as DrizzleQueryError;
+    // Check 26 P5: the database layer already swaps Drizzle's error for one with no values.
+    expect(err).toBeInstanceOf(SafeQueryError);
+    expect(String((err as Error).message)).not.toContain(service);
+    expect(String((err as Error).stack)).not.toContain("1823457");
+
+    // Sentry's scrub still holds on its own, for Drizzle's original error (defence in depth).
+    const query = new DrizzleQueryError(
+      'insert into "price_history" ("workspace_id", "thread_id", "service", "amount_cents", "quoted_at") values ($1, $2, $3, $4, $5)',
+      [workspaceId, threadId, service, 1_823_457, "2026-03-01T15:00:00.000Z"],
+      new Error("insert or update violates foreign key constraint"),
+    );
     // The leak is real before scrubbing.
     expect(query.message).toContain(service);
     expect(query.message).toContain("1823457");

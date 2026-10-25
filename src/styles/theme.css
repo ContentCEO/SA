@@ -63,7 +63,9 @@
 }
 
 /* Inverted surface: charcoal panel. Used for the "squared away." moment,
-   status that needs attention, and the evaluation banner. */
+   status that needs attention, and the evaluation banner. In the app it means exactly these
+   (Check 7 P5): needs you now, status banners, confirm steps, the selected item in a control,
+   and the empty-queue moment. Summaries, suggestions and good news get a border-2 edge. */
 .sa-inverted {
   --background: var(--sa-charcoal);
   --foreground: var(--sa-offwhite);
@@ -98,6 +100,12 @@
   --font-weight-medium: 600;
   --font-weight-semibold: 700;
   --font-weight-bold: 800;
+  /* Check 7 P2: the weights above need the range face (layout.tsx's interTightRange); the
+     normal faces only draw 400 / 600 / 900. Utilities inline var(--font-inter-tight) (@theme
+     inline), so that variable is pointed at the range face too. */
+  --font-sans: var(--font-inter-tight-range), ui-sans-serif, system-ui, sans-serif;
+  --font-heading: var(--font-inter-tight-range), ui-sans-serif, system-ui, sans-serif;
+  --font-inter-tight: var(--font-inter-tight-range);
   font-size: 112.5%;
   font-weight: 500;
 }
@@ -112,6 +120,67 @@
 }
 :root:has([data-contrast="high"]) .border-2 {
   border-width: 3px;
+}
+
+/*
+ * Phones: the signed-in app's tab bar is fixed to the bottom (app-header.tsx, data-tabbar). When
+ * focus moves by keyboard or switch access, the browser scrolls the focused item only to the
+ * viewport's edge, under the bar; scroll-padding makes it stop above the bar instead (WCAG 2.2
+ * 2.4.11, technique C43; Check 32 P2). The bar is min-h-14 (3.5rem, so it grows with a bigger
+ * text setting and sunlight) plus its 1px border and the home-bar inset; 12px of air on top.
+ */
+@media (max-width: 639.98px) {
+  html:has([data-tabbar]) {
+    scroll-padding-top: 16px;
+    scroll-padding-bottom: calc(3.5rem + 1px + env(safe-area-inset-bottom) + 12px);
+  }
+}
+
+/*
+ * A phone held sideways (Check 8 P10): the header, a two-line headline and the tab bar used to
+ * fill the whole first screen. In the signed-in app only: no serif line on the headline, a
+ * smaller heavy line, tighter spacing, and a 48px tab bar with each label beside its icon.
+ * (The installed app is locked upright on Android by the manifest; browsers and iPhone aren't.)
+ */
+@media (orientation: landscape) and (max-height: 500px) {
+  .sa-app h1 .sa-headline-serif {
+    display: none;
+  }
+  .sa-app h1 .sa-headline-heavy {
+    font-size: 1.75rem;
+  }
+  .sa-app {
+    gap: 1rem;
+    padding-top: max(0.5rem, env(safe-area-inset-top));
+  }
+  .sa-app > main {
+    gap: 1rem;
+  }
+  [data-tabbar] .sa-tab {
+    flex-direction: row;
+    gap: 0.375rem;
+    min-height: 3rem;
+  }
+  [data-tabbar] .sa-tab-pill {
+    width: 2.75rem;
+    max-width: 50%;
+  }
+}
+@media (orientation: landscape) and (max-height: 500px) and (max-width: 639.98px) {
+  html:has([data-tabbar]) {
+    scroll-padding-bottom: calc(3rem + 1px + env(safe-area-inset-bottom) + 12px);
+  }
+}
+
+/*
+ * viewport-fit=cover (Check 8 P2): the signed-in app pads its own wrapper and tab bar for the
+ * safe areas; every other page (homepage, /growth, /signin, legal) gets the insets on <body>,
+ * which are 0 except on a notched phone held sideways or the installed app's home bar.
+ */
+html:not(:has([data-tabbar])) body {
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+  padding-bottom: env(safe-area-inset-bottom);
 }
 
 /* Light card on a dark surface (the Growth form). Restores the :root tokens.
@@ -131,6 +200,21 @@
   --ring: var(--sa-charcoal);
   background-color: var(--sa-offwhite);
   color: var(--sa-charcoal);
+}
+
+/*
+ * Public pages' sticky bars (Check 32 P3): the homepage header and /growth's header are a 44px
+ * row plus 8px padding top and bottom and a 1px border; the homepage's Growth bar, which covers
+ * the header in the Growth part, is a 56px row plus the same padding (73px). One height for all
+ * three, in rem so it grows with a bigger text setting. Focus scrolled into view stops 12px
+ * below it instead of under it (WCAG 2.2 2.4.11).
+ */
+:root {
+  --sa-sticky-top: calc(3.5rem + 1rem + 1px);
+}
+html:has([data-site-header]),
+html:has([data-growth-page]) {
+  scroll-padding-top: calc(var(--sa-sticky-top) + 12px);
 }
 
 /* /growth is charcoal edge to edge: no paper flash on overscroll. */
@@ -205,6 +289,29 @@ html:has([data-growth-page]) {
 }
 
 /*
+ * Focus on an element that is itself inverted (a chosen chip, a gap chip, the next step, Sunlight
+ * when on) sitting on paper: the global ring is var(--ring), which .sa-inverted makes off-white,
+ * so it vanished on paper (1.07:1). Check 32 P4: a charcoal ring outside (shows on paper) and an
+ * off-white ring inside (shows against the element itself, so also on a charcoal panel).
+ * Brand constants only; Sunlight uses its own; on the homepage's charcoal Growth page the outside
+ * ring would be charcoal on charcoal, so there the two swap.
+ */
+.sa-inverted:is(a, button, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--sa-k-charcoal);
+  outline-offset: 2px;
+  box-shadow: inset 0 0 0 2px var(--sa-k-offwhite);
+}
+:root:has([data-contrast="high"]) .sa-inverted:is(a, button, summary, [tabindex]):focus-visible {
+  outline-color: var(--sa-k-hc-charcoal);
+  box-shadow: inset 0 0 0 2px var(--sa-k-hc-offwhite);
+}
+:root[data-sa-theme="growth"] .sa-inverted:is(a, button, summary, [tabindex]):focus-visible,
+[data-growth-page] .sa-inverted:is(a, button, summary, [tabindex]):focus-visible {
+  outline-color: var(--sa-k-offwhite);
+  box-shadow: inset 0 0 0 2px var(--sa-k-charcoal);
+}
+
+/*
  * The stage: a fixed, decorative overlay shown only while data-sa-switching is set, playing
  * "Big words" (src/components/marketing/growth/big-words.tsx). Timings mirror
  * src/components/marketing/growth/big-words-rules.ts (change both together; a unit test reads the
@@ -218,6 +325,9 @@ html:has([data-growth-page]) {
  *   at 680ms · BW_REALIGN_AT_MS = 1220 · bands out 160ms each (forwards only), the outer two from
  *   1300ms, their neighbours from 1340ms, the middle one (with the words) from 1380ms, all gone by
  *   1540 · sa-land 300ms, delays 960ms / 1020ms after the swap · BW_DONE_MS = 1740 (cleanup).
+ *   Every moment from the swap on counts from the swap (the way out and sa-land are added by it;
+ *   the page's realign and cleanup count on the way out's clock), so a late swap on a slow phone
+ *   moves them with it and the bands still cover the screen while it happens.
  *   "out" / "in-quiet": bands of the old colour fly apart sideways, no words, 260ms
  *   (BW_QUIET_DONE_MS = 300, cleanup).
  * The stage is 100vh (the large viewport on phones, so a collapsing toolbar can't open a gap).
@@ -280,32 +390,51 @@ html:has([data-growth-page]) {
 :root[data-sa-switching] .sa-bw-band {
   will-change: transform;
 }
-/* In: the middle band first. Out (forwards only, so it can't hold the bands off before 1300ms):
-   the outer bands first, the words last, each back to the side it came from. */
+/* In: the middle band first. Out (forwards only, so it can't hold the bands off before they
+   start): the outer bands first, the words last, each back to the side it came from. The way out
+   is only added once the theme has swapped (E2E hardening, 2026-10-19), with delays counted from
+   the swap (1300 − 380 = 920ms for the outer two, then 960 and 1000): on a slow phone the swap can
+   come late, and the bands still never leave before it. The way in carries on untouched (same
+   name, same place in the list). */
 :root[data-sa-switching="in"] .sa-bw-band[data-band="2"] {
-  animation:
-    sa-bw-in-left 240ms cubic-bezier(0.6, 0, 0.2, 1) both,
-    sa-bw-out-left 160ms cubic-bezier(0.5, 0, 0.75, 0) 1380ms forwards;
+  animation: sa-bw-in-left 240ms cubic-bezier(0.6, 0, 0.2, 1) both;
 }
 :root[data-sa-switching="in"] .sa-bw-band[data-band="1"] {
-  animation:
-    sa-bw-in-right 240ms cubic-bezier(0.6, 0, 0.2, 1) 40ms both,
-    sa-bw-out-right 160ms cubic-bezier(0.5, 0, 0.75, 0) 1340ms forwards;
+  animation: sa-bw-in-right 240ms cubic-bezier(0.6, 0, 0.2, 1) 40ms both;
 }
 :root[data-sa-switching="in"] .sa-bw-band[data-band="3"] {
-  animation:
-    sa-bw-in-right 240ms cubic-bezier(0.6, 0, 0.2, 1) 40ms both,
-    sa-bw-out-right 160ms cubic-bezier(0.5, 0, 0.75, 0) 1340ms forwards;
+  animation: sa-bw-in-right 240ms cubic-bezier(0.6, 0, 0.2, 1) 40ms both;
 }
 :root[data-sa-switching="in"] .sa-bw-band[data-band="0"] {
-  animation:
-    sa-bw-in-left 240ms cubic-bezier(0.6, 0, 0.2, 1) 80ms both,
-    sa-bw-out-left 160ms cubic-bezier(0.5, 0, 0.75, 0) 1300ms forwards;
+  animation: sa-bw-in-left 240ms cubic-bezier(0.6, 0, 0.2, 1) 80ms both;
 }
 :root[data-sa-switching="in"] .sa-bw-band[data-band="4"] {
+  animation: sa-bw-in-left 240ms cubic-bezier(0.6, 0, 0.2, 1) 80ms both;
+}
+:root[data-sa-theme="growth"][data-sa-switching="in"] .sa-bw-band[data-band="2"] {
+  animation:
+    sa-bw-in-left 240ms cubic-bezier(0.6, 0, 0.2, 1) both,
+    sa-bw-out-left 160ms cubic-bezier(0.5, 0, 0.75, 0) 1000ms forwards;
+}
+:root[data-sa-theme="growth"][data-sa-switching="in"] .sa-bw-band[data-band="1"] {
+  animation:
+    sa-bw-in-right 240ms cubic-bezier(0.6, 0, 0.2, 1) 40ms both,
+    sa-bw-out-right 160ms cubic-bezier(0.5, 0, 0.75, 0) 960ms forwards;
+}
+:root[data-sa-theme="growth"][data-sa-switching="in"] .sa-bw-band[data-band="3"] {
+  animation:
+    sa-bw-in-right 240ms cubic-bezier(0.6, 0, 0.2, 1) 40ms both,
+    sa-bw-out-right 160ms cubic-bezier(0.5, 0, 0.75, 0) 960ms forwards;
+}
+:root[data-sa-theme="growth"][data-sa-switching="in"] .sa-bw-band[data-band="0"] {
   animation:
     sa-bw-in-left 240ms cubic-bezier(0.6, 0, 0.2, 1) 80ms both,
-    sa-bw-out-left 160ms cubic-bezier(0.5, 0, 0.75, 0) 1300ms forwards;
+    sa-bw-out-left 160ms cubic-bezier(0.5, 0, 0.75, 0) 920ms forwards;
+}
+:root[data-sa-theme="growth"][data-sa-switching="in"] .sa-bw-band[data-band="4"] {
+  animation:
+    sa-bw-in-left 240ms cubic-bezier(0.6, 0, 0.2, 1) 80ms both,
+    sa-bw-out-left 160ms cubic-bezier(0.5, 0, 0.75, 0) 920ms forwards;
 }
 /* The quiet paths fly apart, never fade: no third tone, and they move with the scroll. */
 :root[data-sa-switching="out"] .sa-bw-band[data-side="left"],
@@ -348,15 +477,15 @@ html:has([data-growth-page]) {
   white-space: nowrap;
 }
 /* Sized word by word, so each one fills the band's width on a phone (16px gutter kept, down to
-   320px; "One-on-one" is about 5.6em) and is capped by the band's height (20% of the screen) on
-   a wide one. */
+   320px; Check 6 P6's words "Your inbox" / "Your marketing") and is capped by the band's height
+   (20% of the screen) on a wide one. */
 .sa-bw-word[data-word="from"] {
-  font-size: 24vw;
-  font-size: min(24vw, 16vh);
+  font-size: 20vw;
+  font-size: min(20vw, 16vh);
 }
 .sa-bw-word[data-word="to"] {
-  font-size: 14.5vw;
-  font-size: min(14.5vw, 14vh);
+  font-size: 11.5vw;
+  font-size: min(11.5vw, 14vh);
   transform: translateY(100%);
 }
 :root[data-sa-switching="in"] .sa-bw-word {
@@ -549,5 +678,40 @@ html:has([data-growth-page]) {
       transition-duration: 0.01ms !important;
       scroll-behavior: auto !important;
     }
+  }
+}
+
+/*
+ * Check 8 P7: on a phone, the fixed tab bar hides while the owner types in the app (a reply, a
+ * note, a search), so it can't sit over Save changes or Never say this on a screen that shrinks
+ * for the keyboard. It comes back a moment after the box loses focus: the tap that moved focus
+ * (on a button near the bottom) finishes on that button, not on the bar reappearing under it.
+ */
+@media (max-width: 639px) {
+  nav[aria-label="Main"].fixed {
+    transition: visibility 0s linear 400ms;
+  }
+  body:has(
+      main textarea:focus,
+      main input[type="text"]:focus,
+      main input[type="search"]:focus,
+      main input:not([type]):focus
+    )
+    nav[aria-label="Main"].fixed {
+    visibility: hidden;
+    transition-delay: 0s;
+  }
+}
+
+/* Check 29 P9: off-screen homepage sections skip style work during the Growth switch's theme
+   swap (src/lib/deferred-section.ts sets the measured sizes). content-visibility: auto keeps the
+   content in the accessibility tree and findable; `auto` remembers each section's real size. */
+.sa-cv {
+  content-visibility: auto;
+  contain-intrinsic-size: auto var(--sa-cv-m, 900px);
+}
+@media (min-width: 64rem) {
+  .sa-cv {
+    contain-intrinsic-size: auto var(--sa-cv-d, 700px);
   }
 }

@@ -13,11 +13,23 @@ import {
   growthBlocksText,
   scrubMarker,
   splitWaitlistNote,
+  TRAP_FLAG,
   withBlockTradeGiven,
 } from "./growth-note";
+
+/** A typed line that reads exactly like the trap flag isn't one (Check 2 P3). */
+const scrubTrapFlag = (note: string) =>
+  note
+    .split("\n")
+    .map((l) => (l.trim() === TRAP_FLAG ? "(flag)" : l))
+    .join("\n");
 import { isReferralCode, referralsVisible } from "./referral-rules";
 import { firstTouch, NO_SOURCE, type SignupSource } from "./source-rules";
 import { workspaceByReferralCode } from "./referrals";
+import { tradeOtherField, tradeOtherFor } from "@/lib/trade-other";
+import { lookupMailHost, type MxResolver } from "./mail-host";
+import { needsInviteConfirm } from "./mail-host-rules";
+import { outlookOffered } from "@/config/outlook";
 
 export const TEAM_SIZES = ["Just me", "2–5", "6–15", "16+"] as const;
 
@@ -42,6 +54,8 @@ export const waitlistInput = z.object({
     .email("That doesn't look like an email address."),
   phone: optional(40),
   trade: z.enum(tradeEnum.enumValues, { message: "Pick your trade." }),
+  /** Check 41 P4: "Which trade?" for "Another trade" (optional, one line, max 60). */
+  tradeOther: tradeOtherField.optional(),
   teamSize: z.enum(TEAM_SIZES, { message: "Pick how many people are in the business." }),
   note: optional(1000),
   /** Plan #47: the code from a referral link (?ref=). Anything malformed is dropped, not an error. */
@@ -60,15 +74,31 @@ export const waitlistInput = z.object({
 export async function joinWaitlist(
   input: z.output<typeof waitlistInput>,
   source: SignupSource = NO_SOURCE,
+  /**
+   * Check 2 P3: `trapFilled`, the hidden trap field was filled (the note gets the flag line at its
+   * end). Check 47 P3: `resolveMx`, a stand-in DNS lookup for tests.
+   */
+  opts: { trapFilled?: boolean; resolveMx?: MxResolver } = {},
 ) {
   const email = normalizeEmail(input.email);
-  const note = input.note ? scrubMarker(input.note) : null;
+  const typed = input.note ? scrubTrapFlag(scrubMarker(input.note)) : null;
+  const note = [typed, opts.trapFilled ? TRAP_FLAG : null].filter(Boolean).join("\n") || null;
   // Plan #47: kept only while referrals are switched on (flag and amount).
   const referralCode = referralsVisible() ? (input.referralCode ?? null) : null;
+  // Check 47 P3: who hosts their email (best effort, 2 seconds at most; never blocks the sign-up).
+  const mailHost = await lookupMailHost(email, { resolveMx: opts.resolveMx });
   return db().transaction(async (tx) => {
     const [row] = await tx
       .insert(waitlist)
-      .values({ ...input, email, note, referralCode, ...source })
+      .values({
+        ...input,
+        tradeOther: tradeOtherFor(input.trade, input.tradeOther),
+        email,
+        note,
+        referralCode,
+        mailHost,
+        ...source,
+      })
       .onConflictDoNothing()
       .returning({ email: waitlist.email });
     if (row) return "joined" as const;
@@ -92,11 +122,13 @@ export async function joinWaitlist(
       .set({
         teamSize: input.teamSize,
         trade: input.trade,
+        tradeOther: tradeOtherFor(input.trade, input.tradeOther),
         // The growth-only row's phone came from Growth and is still in its block; this column
         // now holds only what the app form was given (so a later Growth request can't leave an
         // old number behind here).
         phone: input.phone ?? null,
-        // A Growth request never carries a referral; the app sign-up that upgrades it may.
+        mailHost,
+        // The first code kept wins (a Growth request's, while referrals were on, or this one).
         referralCode: existing.referralCode ?? referralCode,
         note: [note, blocks].filter(Boolean).join("\n\n") || null,
         ...firstTouch(existing, source),
@@ -186,7 +218,12 @@ async function waitlistRows(limit: number) {
  * Growth-only entry is never invited (a Growth call isn't an app sign-up), and the invite carries
  * the app note only, never the Growth request.
  */
-export async function inviteFromWaitlist(email: string, now: Date = new Date()) {
+export async function inviteFromWaitlist(
+  email: string,
+  now: Date = new Date(),
+  /** Check 47 P3: a non-Google address is only invited after Davi's "Invite anyway". */
+  opts: { confirmed?: boolean } = {},
+) {
   const [entry] = await db()
     .select()
     .from(waitlist)
@@ -194,6 +231,8 @@ export async function inviteFromWaitlist(email: string, now: Date = new Date()) 
   if (!entry) return "not_found" as const;
   const facts = describeWaitlistEntry(entry);
   if (!facts.app) return "growth_only" as const;
+  if (needsInviteConfirm(entry.mailHost, outlookOffered()) && !opts.confirmed)
+    return "needs_confirm" as const;
   // Plan #47: carry the referral only while referrals are on; an unknown code is ignored.
   const referredByWorkspaceId = referralsVisible()
     ? await workspaceByReferralCode(entry.referralCode)

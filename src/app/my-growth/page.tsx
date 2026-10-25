@@ -19,6 +19,7 @@ import {
 } from "@/server/growth-client-rules";
 import { growthDashboard, portalClient } from "@/server/growth-clients";
 import { requireOwner } from "@/server/session";
+import { SkipLink } from "@/components/app/skip-link";
 
 export const metadata: Metadata = { title: portalCopy.dashboard.title, robots: { index: false } };
 
@@ -91,6 +92,7 @@ export default async function MyGrowthPage() {
 
   return (
     <div className="mx-auto flex w-full max-w-xl flex-1 flex-col gap-8 px-4 pt-6 pb-10">
+      <SkipLink />
       <header className="flex items-center justify-between gap-3">
         <Link href="/start" className="inline-flex min-h-tap items-center rounded-md">
           <Wordmark />
@@ -104,7 +106,7 @@ export default async function MyGrowthPage() {
           </Link>
         </nav>
       </header>
-      <main className="flex flex-1 flex-col gap-10">
+      <main id="main" tabIndex={-1} className="flex flex-1 flex-col gap-10 outline-none">
         <div className="flex flex-col gap-3">
           <p className="font-semibold text-muted-foreground">{c.eyebrow}</p>
           <Headline serif={c.serif} heavy={c.heavy} />
